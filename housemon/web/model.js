@@ -29,14 +29,14 @@ const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "leaves", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof",
+  "leaves", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick",
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
-  vent: "Vent", appliance: "Appliance", porch: "Porch", patio: "Patio", driveway: "Driveway", walk: "Walk",
+  vent: "Vent", appliance: "Appliance", fireplace: "Fireplace", porch: "Porch", patio: "Patio", driveway: "Driveway", walk: "Walk",
   deciduous: "Tree", evergreen: "Evergreen tree",
 };
-const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Closets", "Steps", "Roof", "Yard"];
+const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Fireplaces", "Closets", "Steps", "Roof", "Yard"];
 // Each side of a plan as a line: the axis it runs along, where it is across
 // that axis, which way is inward (k), and where it starts and ends.
 const SIDE_LINES = {
@@ -177,7 +177,7 @@ function modelScene() {
     return [resolved];
   };
   const closets = details.closets.flatMap((c, i) => inRoom(c, i, "closet", "Closet", "Closets"));
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], f.kind === "vent" ? "Vents" : "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", fireplace: "Fireplaces" }[f.kind] ?? "Appliances"));
   const grade = details.grade;
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
@@ -750,6 +750,28 @@ function fence(mesh, scene, f) {
   });
 }
 
+// A fixture: a box in its finish. A fireplace's firebox is dark, a little proud of the side facing away from
+// the wall it's nearest, across its middle and from low on it to a little over halfway up.
+function fixture(mesh, C, f) {
+  box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
+  if (f.kind !== "fireplace" || !f.piece) return;
+  const p = f.piece;
+  const gaps = { left: f.x0 - p.x, right: p.x + p.width - f.x1, back: f.y0 - p.y, front: p.y + p.depth - f.y1 };
+  const wall = Object.keys(gaps).reduce((a, b) => (gaps[b] < gaps[a] ? b : a));
+  const middle = (a, b) => [a + 0.2 * (b - a), b - 0.2 * (b - a)];
+  const [z0, z1] = [f.z0 + 0.15 * (f.z1 - f.z0), f.z0 + 0.6 * (f.z1 - f.z0)];
+  const t = 0.03;
+  if (wall === "left" || wall === "right") {
+    const x = wall === "left" ? f.x1 : f.x0 - t;
+    const [y0, y1] = middle(f.y0, f.y1);
+    box(mesh, [x, y0, z0], [x + t, y1, z1], C.black, f.item.id);
+  } else {
+    const y = wall === "back" ? f.y1 : f.y0 - t;
+    const [x0, x1] = middle(f.x0, f.x1);
+    box(mesh, [x0, y, z0], [x1, y + t, z1], C.black, f.item.id);
+  }
+}
+
 function buildModel(scene, mode, view) {
   const mesh = modelMesh();
   const C = scene.colors;
@@ -757,7 +779,7 @@ function buildModel(scene, mode, view) {
   for (const q of scene.places) if (shows(q.item)) for (const p of q.pieces) placeWalls(mesh, scene, q, p, mode, view);
   for (const o of scene.openings) if (shows(o.item)) openingPanels(mesh, scene, o, mode, view);
   for (const c of scene.closets) if (shows(c.item)) closetWalls(mesh, scene, c, mode);
-  for (const f of scene.fixtures) if (shows(f.item)) box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
+  for (const f of scene.fixtures) if (shows(f.item)) fixture(mesh, C, f);
   earth(mesh, scene, shows);
   const grade = scene.details.grade;
   for (const g of scene.grounds) {

@@ -1,5 +1,5 @@
 """What the house map's detailed view draws besides the rooms: the doors, windows,
-vents, appliances and closets in them, the roof over them, and the yard around them.
+vents, appliances, fireplaces and closets in them, the roof over them, and the yard around them.
 
 A house file (example_house.py, or your own) gives its details as a Details.
 Like the rooms' plans, they're in feet, with x to the right, y toward the front
@@ -13,14 +13,14 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent")
+FIXTURES = ("appliance", "vent", "fireplace")
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk")
 PAVINGS = ("concrete", "flagstone", "wood")
 TREES = ("deciduous", "evergreen")
 CLADDINGS = ("siding", "paneling")
 FLOORINGS = ("carpet", "wood", "tile", "concrete", "dirt")
 WALLINGS = ("paint", "drywall", "concrete")
-FINISHES = ("white", "steel", "black", "grille")
+FINISHES = ("white", "steel", "black", "grille", "brick", "stone")
 
 
 def _check(value, allowed, what):
@@ -73,9 +73,10 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance or vent, drawn as a box: in a room, or outside (room None) at x and y on the plan.
+    """An appliance, vent or fireplace, drawn as a box: in a room, or outside (room None) at x and y on the plan.
 
-    lift is how high its bottom is above the floor, or outside above the ground.
+    lift is how high its bottom is above the floor, or outside above the ground. A fireplace is in a room,
+    against a wall, its firebox opening on the side away from that wall.
     """
 
     name: str
@@ -93,6 +94,8 @@ class Fixture:
     def __post_init__(self):
         _check(self.kind, FIXTURES, "a fixture's kind")
         _check(self.finish, FINISHES, "a fixture's finish")
+        if self.kind == "fireplace" and self.room is None:
+            raise ValueError(f"{self.name} is a fireplace, so it's in a room")
 
 
 @dataclass(frozen=True)

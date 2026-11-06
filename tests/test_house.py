@@ -11,7 +11,7 @@ from pathlib import Path
 
 from housemon import example_house
 from housemon import house as houses
-from housemon.details import Closet, Opening, Roof
+from housemon.details import Closet, Fixture, Opening, Roof
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit
 DOORS = ("door", "sliding door", "garage door", "opening")
@@ -267,6 +267,13 @@ class FixtureTest(HouseTestCase):
                 lowest = min(ceiling(p, x + u * width, y + v * depth) for u in (0, 1) for v in (0, 1))
                 self.assertLessEqual(fixture.lift + fixture.height, lowest, fixture.name)
 
+    def test_fireplaces_stand_against_a_wall(self):
+        for h in self.each():
+            for fireplace in (f for f in h.details.fixtures if f.kind == "fireplace"):
+                p = h.first(fireplace.room)
+                gaps = (fireplace.x, fireplace.y, p.width - fireplace.x - fireplace.width, p.depth - fireplace.y - fireplace.depth)
+                self.assertLessEqual(min(gaps), WALL + 0.25, fireplace.name)
+
     def test_fixtures_are_in_a_closet_or_clear_of_them(self):
         for h in self.each():
             for fixture, closet in itertools.product((f for f in h.details.fixtures if f.room), h.details.closets):
@@ -432,6 +439,8 @@ class KindsTest(unittest.TestCase):
             Opening("Hatch", "trapdoor", "Office", "left", 0, 2, 2)
         with self.assertRaises(ValueError):
             Closet("Closet", "Office", 0, 0, 2, 2, door="up")
+        with self.assertRaises(ValueError):
+            Fixture("Fire pit", "fireplace", None, 0, 0, 3, 3, 1)
 
     def test_a_roof_needs_a_ridge_or_a_drop(self):
         with self.assertRaises(ValueError):

@@ -147,6 +147,7 @@ DETAILS = Details(
         Fixture("Washer", "appliance", "Utility room", 0.5, 6, 2.3, 2.3, 3.2),
         Fixture("Dryer", "appliance", "Utility room", 0.5, 8.5, 2.3, 2.3, 3.2),
         Fixture("Space heater", "appliance", "Office", 1, 1, 1, 1.5, 2, finish="black"),
+        Fixture("Fireplace", "fireplace", "Living room", 15, 12.8, 5, 1.75, 4.5, finish="brick"),  # beside the window
         Fixture("Air conditioner", "appliance", None, -4, 15, 2.75, 2.75, 2.8, lift=0.2, finish="steel"),
         # Supply registers in the floors, and the bathroom's ceiling fan
         Fixture("Upstairs bedroom register", "vent", "Upstairs bedroom", 7, 0.6, 1, 0.33, 0.05, finish="grille"),
