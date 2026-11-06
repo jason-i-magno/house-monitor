@@ -13,14 +13,15 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent", "fireplace")
-GROUNDS = ("porch", "patio", "deck", "driveway", "walk")
-PAVINGS = ("concrete", "flagstone", "wood")
+FIXTURES = ("appliance", "vent", "plumbing", "fireplace")
+GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
+PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
-CLADDINGS = ("siding", "paneling")
+FENCES = ("wood", "chain link")
+CLADDINGS = ("siding", "paneling", "stone")
 FLOORINGS = ("carpet", "wood", "tile", "concrete", "dirt")
 WALLINGS = ("paint", "drywall", "concrete")
-FINISHES = ("white", "steel", "black", "grille", "brick", "stone")
+FINISHES = ("white", "steel", "black", "grille", "brick", "stone", "wood")
 
 
 def _check(value, allowed, what):
@@ -57,7 +58,8 @@ class Opening:
 
 @dataclass(frozen=True)
 class Closet:
-    """A closet in a room, walled to the room's ceiling, at most 8 ft, with its doors on one side."""
+    """A closet in a room, walled to the room's ceiling, at most 8 ft, with its doors on one side: into its room,
+    or, set into the room's wall on that side, through a door in that wall into the room beyond."""
 
     name: str
     room: str
@@ -66,6 +68,7 @@ class Closet:
     width: float
     depth: float
     door: str
+    known: bool = False
 
     def __post_init__(self):
         _check(self.door, SIDES, "a closet's door side")
@@ -73,7 +76,8 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance, vent or fireplace, drawn as a box: in a room, or outside (room None) at x and y on the plan.
+    """An appliance, vent, plumbing (a tub, toilet or sink) or fireplace, drawn as a box: in a room, or outside
+    (room None) at x and y on the plan.
 
     lift is how high its bottom is above the floor, or outside above the ground. A fireplace is in a room,
     against a wall, its firebox opening on the side away from that wall.
@@ -100,10 +104,13 @@ class Fixture:
 
 @dataclass(frozen=True)
 class Ground:
-    """A porch, patio, deck, driveway or walk, on the plan; height is how far its top stands above the ground.
+    """A porch, patio, deck, driveway, walk or bed (of flowers, or gravel), on the plan; height is how far its
+    top stands above the ground.
 
     Where it runs past the lot, as a driveway may to the street, it's cut off at the lot's edge. A flat one
-    can have cutouts, each x, y, width and depth, left as bare ground: around a tree, say.
+    can have cutouts, each x, y, width and depth, left as bare ground: around a tree, say. Or it can have an
+    outline, its corners on the plan in order, that cuts it to that shape within its rectangle and the lot:
+    along a slanting fence, say. railings are the sides it has a railing along, 3 ft over its top: a deck's.
     """
 
     name: str
@@ -115,12 +122,18 @@ class Ground:
     height: float = 0.0
     paving: str = "concrete"
     cutouts: tuple[tuple[float, float, float, float], ...] = ()
+    outline: tuple[tuple[float, float], ...] | None = None
+    railings: tuple[str, ...] = ()
     known: bool = False
 
     def __post_init__(self):
         _check(self.kind, GROUNDS, "a ground's kind")
+        for side in self.railings:
+            _check(side, SIDES, "a railing's side")
         if self.cutouts and self.height:
             raise ValueError(f"{self.name} stands above the ground, so it can't have cutouts")
+        if self.outline and (self.height or self.cutouts):
+            raise ValueError(f"{self.name} has an outline, so it's flat, with no cutouts")
         _check(self.paving, PAVINGS, "a paving")
 
 
@@ -163,19 +176,27 @@ class Shed:
 
 @dataclass(frozen=True)
 class Fence:
-    """A fence through these points on the plan, in order, with gates: each its middle, on the fence, and width."""
+    """A fence through these points on the plan, in order, with gates: each its middle, on the fence, and width.
+
+    kind is what it's made of: wood boards, or chain link.
+    """
 
     name: str
     points: tuple[tuple[float, float], ...]
     height: float = 6.0
     gates: tuple[tuple[float, float, float], ...] = ()
+    kind: str = "wood"
     known: bool = False
+
+    def __post_init__(self):
+        _check(self.kind, FENCES, "a fence's kind")
 
 
 @dataclass(frozen=True)
 class Steps:
     """A flight of steps over x, y, width and depth on the plan, climbing from bottom to top, heights above the
-    main floor, toward the side `up`. They're in a room, for what shows when the house is cut away, or outside."""
+    main floor, toward the side `up`. They're in a room, in any piece of it, for what shows when the house is cut
+    away, or outside. A flight in a room that climbs to the floor of a room above opens a stairwell in it."""
 
     name: str
     x: float

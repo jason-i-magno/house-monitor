@@ -29,14 +29,14 @@ const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "leaves", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick",
+  "leaves", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
-  vent: "Vent", appliance: "Appliance", fireplace: "Fireplace", porch: "Porch", patio: "Patio", driveway: "Driveway", walk: "Walk",
+  vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
   deciduous: "Tree", evergreen: "Evergreen tree",
 };
-const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Fireplaces", "Closets", "Steps", "Roof", "Yard"];
+const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Closets", "Steps", "Roof", "Yard"];
 // Each side of a plan as a line: the axis it runs along, where it is across
 // that axis, which way is inward (k), and where it starts and ends.
 const SIDE_LINES = {
@@ -177,7 +177,17 @@ function modelScene() {
     return [resolved];
   };
   const closets = details.closets.flatMap((c, i) => inRoom(c, i, "closet", "Closet", "Closets"));
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", fireplace: "Fireplaces" }[f.kind] ?? "Appliances"));
+  // A closet set into its room's wall opens through a door in that wall, which is drawn as its doors.
+  for (const c of closets) {
+    const p = c.piece;
+    const edge = { back: [c.y0, p.y], front: [c.y1, p.y + p.depth], left: [c.x0, p.x], right: [c.x1, p.x + p.width] }[c.door];
+    if (Math.abs(edge[0] - edge[1]) > 1e-6) continue;
+    const [lo, hi] = c.door === "back" || c.door === "front" ? [c.x0, c.x1] : [c.y0, c.y1];
+    for (const o of openings) {
+      if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
+    }
+  }
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces" }[f.kind] ?? "Appliances"));
   const grade = details.grade;
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
@@ -186,7 +196,7 @@ function modelScene() {
   const sheds = details.sheds.map((b, i) => ({ ...b, item: outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, grade, b.x + b.width, b.y + b.depth, grade + b.peak]) }));
   const fences = details.fences.map((f, i) => {
     const [xs, ys] = [f.points.map((p) => p[0]), f.points.map((p) => p[1])];
-    const item = outside(`fence:${i}`, f, "Fence", "Yard", [Math.min(...xs), Math.min(...ys), grade, Math.max(...xs), Math.max(...ys), grade + f.height]);
+    const item = outside(`fence:${i}`, f, f.kind === "chain link" ? "Chain-link fence" : "Fence", "Yard", [Math.min(...xs), Math.min(...ys), grade, Math.max(...xs), Math.max(...ys), grade + f.height]);
     const gates = (f.gates ?? []).map(([x, y, width], k) => {
       const gate = { name: `Gate in the ${f.name.toLowerCase()}`, known: f.known };
       return { x, y, width, item: outside(`gate:${i}:${k}`, gate, "Gate", "Yard", [x - width / 2, y - width / 2, grade, x + width / 2, y + width / 2, grade + f.height]) };
@@ -394,7 +404,10 @@ function placeWalls(mesh, scene, q, p, mode, view) {
   // The floor, its edges just inside the walls it has.
   const e = (side) => (p.walls[side].length ? 0.01 : 0);
   const sides = Array(4).fill(inner);
-  box(mesh, [p.x + e("left"), p.y + e("back"), p.elevation - 0.25], [p.x + p.width - e("right"), p.y + p.depth - e("front"), p.elevation], { top: C[q.finish.floor], bottom: inner, sides }, q.item.id);
+  const floor = [p.x + e("left"), p.y + e("back"), p.x + p.width - e("right"), p.y + p.depth - e("front")];
+  for (const [x0, y0, x1, y1] of stairwells(scene, p, floor)) {
+    box(mesh, [x0, y0, p.elevation - 0.25], [x1, y1, p.elevation], { top: C[q.finish.floor], bottom: inner, sides }, q.item.id);
+  }
 }
 
 // What fills a door or window from outside, or a vent's grilles, cut away with its wall.
@@ -409,6 +422,11 @@ function openingPanels(mesh, scene, o, mode, view) {
   if (o.kind === "vent") {
     part([s0, s1], [t, t + 0.04], [z0, z1], C.grille);
     part([s0, s1], [-0.04, 0], [z0, z1], C.grille);
+    return;
+  }
+  if (o.closet) { // a closet's doors, set into the wall, meeting in the middle
+    part([s0, s1], [0.35 * t, 0.65 * t], [z0, z1], C.white);
+    part([(s0 + s1) / 2 - 0.03, (s0 + s1) / 2 + 0.03], [0.3 * t, 0.7 * t], [z0, z1], C.seam);
     return;
   }
   if (!o.exterior || o.kind === "opening") return; // a doorway inside stands open
@@ -429,6 +447,26 @@ function openingPanels(mesh, scene, o, mode, view) {
   if (z1 >= o.z1 - 1e-6) part([s0, s1], frame, [z1 - bar, z1], C.sash);
   const mid = (s0 + s1) / 2;
   if (s1 - s0 > 3.5) part([mid - bar / 2, mid + bar / 2], frame, [z0, z1], C.sash);
+}
+
+// A floor's rectangle, x0, y0, x1, y1, in cells around its stairwells: wherever a flight in a room climbs to
+// this floor from below.
+function stairwells(scene, p, [x0, y0, x1, y1]) {
+  const holes = scene.steps
+    .filter((t) => t.room != null && Math.abs(t.top - p.elevation) < 1e-6 && t.bottom < t.top)
+    .map((t) => [Math.max(t.x, x0), Math.max(t.y, y0), Math.min(t.x + t.width, x1), Math.min(t.y + t.depth, y1)])
+    .filter(([a, b, c, d]) => c > a + 1e-6 && d > b + 1e-6);
+  if (!holes.length) return [[x0, y0, x1, y1]];
+  const cuts = (lo, hi, edges) => [...new Set([lo, hi, ...edges.filter((v) => v > lo && v < hi)])].sort((u, v) => u - v);
+  const [xs, ys] = [cuts(x0, x1, holes.flatMap((h) => [h[0], h[2]])), cuts(y0, y1, holes.flatMap((h) => [h[1], h[3]]))];
+  const cells = [];
+  for (let i = 0; i + 1 < xs.length; i++) {
+    for (let j = 0; j + 1 < ys.length; j++) {
+      const [x, y] = [(xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2];
+      if (!holes.some(([a, b, c, d]) => a < x && x < c && b < y && y < d)) cells.push([xs[i], ys[j], xs[i + 1], ys[j + 1]]);
+    }
+  }
+  return cells;
 }
 
 // A closet's walls, but where it's against its room's, with doors across one side.
@@ -523,7 +561,7 @@ function earth(mesh, scene, shows) {
   const C = scene.colors;
   const [{ grade }, lot, b] = [scene.details, scene.lot, scene.bottom];
   const [lx0, ly0, , lx1, ly1] = scene.lawn.bbox;
-  const rects = [...scene.pieces.map(([, p]) => p), ...scene.grounds];
+  const rects = [...scene.pieces.map(([, p]) => p), ...scene.grounds.filter((g) => !g.outline)];
   const breaks = (lo, hi, edges) => [...new Set([lo, hi, ...edges.map((v) => Math.min(Math.max(v, lo), hi))])].sort((u, v) => u - v);
   const cutouts = scene.grounds.flatMap((g) => g.cutouts ?? []);
   const xs = breaks(lx0, lx1, [...rects.flatMap((r) => [r.x, r.x + r.width]), ...cutouts.flatMap(([x, , w]) => [x, x + w]), ...lot.map((p) => p[0])]);
@@ -538,7 +576,7 @@ function earth(mesh, scene, shows) {
     const cell = { shape, top: grade, color: C.lawn, id: scene.lawn.id };
     if (shown.length) return { ...cell, top: Math.min(grade, ...shown.map(([, p]) => p.base)), color: C.soil, id: shown[0][0].item.id };
     if (covering.length) return { ...cell, color: C.slab, id: covering[0][0].item.id };
-    const ground = scene.grounds.find((g) => inside(g, x, y));
+    const ground = scene.grounds.find((g) => !g.outline && inside(g, x, y));
     if (!ground) return cell;
     const cut = (ground.cutouts ?? []).some(([cx, cy, w, d]) => inside({ x: cx, y: cy, width: w, depth: d }, x, y));
     return { ...cell, color: cut ? C.dirt : paving(C, ground), id: ground.item.id };
@@ -555,6 +593,11 @@ function earth(mesh, scene, shows) {
       if (low != null && low < z - 1e-6) mesh.face([[ax, ay, low], [bx, by, low], [bx, by, z], [ax, ay, z]], C.soil, scene.lawn.id, center);
     }
   }));
+  // A ground cut to an outline lies just over the lawn.
+  for (const g of scene.grounds.filter((g) => g.outline)) {
+    const center = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
+    for (const triangle of triangulate(g.outline)) mesh.face(triangle.map(([x, y]) => [x, y, grade + 0.03]), paving(C, g), g.item.id, center);
+  }
   // The lot's sides, down to its bottom.
   const sign = Math.sign(polygonArea(lot));
   lot.forEach(([ax, ay], i) => {
@@ -652,9 +695,9 @@ function roofSection(mesh, scene, r) {
   });
 }
 
-// What a porch, patio, deck or walk is paved with.
+// What a porch, patio, deck, walk, bed or flight of steps is paved with.
 function paving(C, g) {
-  return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck }[g.paving] ?? C.concrete;
+  return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck, gravel: C.gravel, mulch: C.mulch, carpet: C.carpet }[g.paving] ?? C.concrete;
 }
 
 // A roof section cut to its outline: its slope over the outline, a flat
@@ -705,6 +748,27 @@ function stepsFlight(mesh, scene, t) {
   }
 }
 
+// A ground's railings, in its paving, 3 ft over its top along each side it lists: posts about every 6 ft, a
+// top and a bottom rail, and balusters between them.
+function railings(mesh, scene, g) {
+  const color = paving(scene.colors, g);
+  const [z0, z1] = [scene.details.grade + g.height, scene.details.grade + g.height + 3];
+  for (const side of g.railings ?? []) {
+    const across = side === "back" || side === "front"; // runs along x
+    const [a0, a1] = across ? [g.x, g.x + g.width] : [g.y, g.y + g.depth];
+    const line = { back: g.y + 0.15, front: g.y + g.depth - 0.15, left: g.x + 0.15, right: g.x + g.width - 0.15 }[side];
+    const bar = (s0, s1, h0, h1, half) => box(mesh, across ? [s0, line - half, h0] : [line - half, s0, h0], across ? [s1, line + half, h1] : [line + half, s1, h1], color, g.item.id);
+    bar(a0, a1, z1 - 0.2, z1, 0.15);
+    bar(a0, a1, z0 + 0.25, z0 + 0.4, 0.08);
+    const posts = Math.max(1, Math.round((a1 - a0) / 6));
+    for (let k = 0; k <= posts; k++) {
+      const s = a0 + ((a1 - a0) * k) / posts;
+      bar(Math.max(a0, s - 0.15), Math.min(a1, s + 0.15), z0, z1, 0.15);
+    }
+    for (let s = a0 + 0.5; s < a1 - 0.3; s += 0.45) bar(s - 0.04, s + 0.04, z0 + 0.4, z1 - 0.2, 0.04);
+  }
+}
+
 // A shed: walls in siding under a gable roof, its eaves a little past them.
 function shed(mesh, scene, b) {
   const [C, grade, over] = [scene.colors, scene.details.grade, 0.5];
@@ -715,18 +779,45 @@ function shed(mesh, scene, b) {
 
 // A board fence along each run between its points, with posts about every 8
 // ft and either side of each gate, and its gates a shade darker.
+// A fence: wood boards between posts, or chain link, steel posts with a top rail and its mesh, a diamond
+// lattice of wires, between them. Each gate is a panel of the same between posts of its own.
 function fence(mesh, scene, f) {
   const [C, grade, id] = [scene.colors, scene.details.grade, f.item.id];
-  const [post, gateColor] = [C.fence.map((c) => c * 0.8), C.fence.map((c) => c * 0.88)];
+  const chain = f.kind === "chain link";
+  const color = chain ? C.steel : C.fence;
+  const [post, gateColor] = [color.map((c) => c * 0.8), color.map((c) => c * 0.88)];
+  const [half, postHalf, postTop] = chain ? [0.05, 0.1, 0.1] : [0.1, 0.2, 0.25]; // half its thickness, and its posts'
   f.points.slice(1).forEach((q, i) => {
     const p = f.points[i];
     const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
     if (length < 1e-6) return;
     const [dx, dy] = [(q[0] - p[0]) / length, (q[1] - p[1]) / length];
-    const at = (t, side, z) => [p[0] + dx * t - dy * 0.1 * side, p[1] + dy * t + dx * 0.1 * side, z]; // side: -1 or 1, across
+    const at = (t, side, z) => [p[0] + dx * t - dy * half * side, p[1] + dy * t + dx * half * side, z]; // side: -1 or 1, across
     const run = (t0, t1, z0, z1, color, itemId) => {
       const corners = (z) => [at(t0, -1, z), at(t1, -1, z), at(t1, 1, z), at(t0, 1, z)];
       hexa(mesh, corners(z0), corners(z1), color, itemId);
+    };
+    // A wire slanting up from ta at za to tb at zb.
+    const wire = (ta, za, tb, zb, color, itemId) => {
+      const corners = (t, z) => [at(t - 0.05, -1, z), at(t + 0.05, -1, z), at(t + 0.05, 1, z), at(t - 0.05, 1, z)];
+      hexa(mesh, corners(ta, za), corners(tb, zb), color, itemId);
+    };
+    // Boards, or chain link: a rail along its top, and a gate's bottom and sides, with the mesh between.
+    const panel = (t0, t1, z0, z1, color, itemId, gate = false) => {
+      if (!chain) return run(t0, t1, z0, z1, color, itemId);
+      const rail = 0.12;
+      run(t0, t1, z1 - rail, z1, color, itemId);
+      if (gate) for (const [a, b, c, d] of [[t0, t1, z0, z0 + rail], [t0, t0 + rail, z0, z1], [t1 - rail, t1, z0, z1]]) run(a, b, c, d, color, itemId);
+      const [lo, hi] = [z0 + (gate ? rail : 0.15), z1 - rail];
+      const h = hi - lo;
+      for (let c = t0 - h; c < t1; c += 1) { // rising to the right: t = c + (z - lo)
+        const [a, b] = [Math.max(c, t0), Math.min(c + h, t1)];
+        if (b - a > 0.05) wire(a, lo + a - c, b, lo + b - c, color, itemId);
+      }
+      for (let c = t0; c < t1 + h; c += 1) { // rising to the left: t = c - (z - lo)
+        const [a, b] = [Math.min(c, t1), Math.max(c - h, t0)];
+        if (a - b > 0.05) wire(a, lo + c - a, b, lo + c - b, color, itemId);
+      }
     };
     // This run's gates, as spans along it.
     const gates = f.gates.flatMap((g) => {
@@ -736,16 +827,16 @@ function fence(mesh, scene, f) {
     }).sort((a, b) => a.t0 - b.t0);
     let t = 0;
     for (const g of gates) {
-      if (g.t0 > t) run(t, g.t0, grade, grade + f.height, C.fence, id);
-      run(g.t0 + 0.2, g.t1 - 0.2, grade + 0.25, grade + f.height - 0.15, gateColor, g.item.id);
+      if (g.t0 > t) panel(t, g.t0, grade, grade + f.height, color, id);
+      panel(g.t0 + 0.2, g.t1 - 0.2, grade + 0.25, grade + f.height - 0.15, gateColor, g.item.id, true);
       t = g.t1;
     }
-    if (t < length) run(t, length, grade, grade + f.height, C.fence, id);
-    const posts = Math.max(1, Math.round(length / 8));
+    if (t < length) panel(t, length, grade, grade + f.height, color, id);
+    const posts = Math.max(1, Math.round(length / (chain ? 10 : 8)));
     const spots = Array.from({ length: posts + 1 }, (_, k) => (length * k) / posts).filter((s) => !gates.some((g) => g.t0 < s && s < g.t1));
     for (const s of [...spots, ...gates.flatMap((g) => [g.t0, g.t1])]) {
       const [x, y] = [p[0] + dx * s, p[1] + dy * s];
-      box(mesh, [x - 0.2, y - 0.2, grade], [x + 0.2, y + 0.2, grade + f.height + 0.25], post, id);
+      box(mesh, [x - postHalf, y - postHalf, grade], [x + postHalf, y + postHalf, grade + f.height + postTop], post, id);
     }
   });
 }
@@ -784,6 +875,7 @@ function buildModel(scene, mode, view) {
   const grade = scene.details.grade;
   for (const g of scene.grounds) {
     if (g.height > 0) box(mesh, [g.x, g.y, grade], [g.x + g.width, g.y + g.depth, grade + g.height], paving(C, g), g.item.id);
+    railings(mesh, scene, g);
   }
   for (const b of scene.sheds) shed(mesh, scene, b);
   for (const t of scene.steps) if (shows(t.item)) stepsFlight(mesh, scene, t);

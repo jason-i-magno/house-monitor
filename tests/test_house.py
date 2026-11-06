@@ -11,7 +11,7 @@ from pathlib import Path
 
 from housemon import example_house
 from housemon import house as houses
-from housemon.details import Closet, Fixture, Opening, Roof
+from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit
 DOORS = ("door", "sliding door", "garage door", "opening")
@@ -52,8 +52,30 @@ def rect(thing):
     return (thing.x, thing.y, thing.width, thing.depth)
 
 
+def covered(thing):
+    """The half-foot squares a thing covers: its rectangle's, or those within its outline, if it has one."""
+    outline = getattr(thing, "outline", None)
+    return {(x, y) for x, y in squares(rect(thing)) if not outline or in_polygon(x, y, list(outline))}
+
+
 def overlap(a, b):
     return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+
+
+def within_rect(x, y, area):
+    ax, ay, width, depth = area
+    return ax <= x <= ax + width and ay <= y <= ay + depth
+
+
+def closet_door(h, closet, opening):
+    """Whether an opening is the door of a closet set into its room's wall: a door in that wall, across the closet."""
+    if opening.room != closet.room or opening.wall != closet.door or opening.kind != "door":
+        return False
+    x, y, width, depth = h.absolute(closet)
+    _, axis, line, a, b, _ = h.wall(opening)
+    edge = {"back": y, "front": y + depth, "left": x, "right": x + width}[closet.door]
+    lo, hi = (x, x + width) if axis == "x" else (y, y + depth)
+    return abs(edge - line) < 1e-6 and lo <= a and b <= hi
 
 
 def corners(area):
@@ -217,14 +239,20 @@ class OpeningTest(HouseTestCase):
                 z0 = p.elevation + opening.sill
                 return axis, line, a, b, z0, z0 + opening.height
 
+            def face(opening):
+                """Which of its wall's faces a vent's grille is on; a door or window goes through, so both."""
+                return {"left": 1, "back": 1, "right": -1, "front": -1}[opening.wall] if opening.kind == "vent" else 0
+
             for one, other in itertools.combinations(h.details.openings, 2):
                 (axis, line, a, b, z0, z1), (axis2, line2, a2, b2, z02, z12) = extent(one), extent(other)
                 same_wall = axis == axis2 and abs(line - line2) < 1e-6
-                self.assertFalse(same_wall and a < b2 and a2 < b and z0 < z12 and z02 < z1, (one.name, other.name))
+                back_to_back = face(one) * face(other) < 0  # two grilles on its two faces, as a return through it
+                overlap = a < b2 and a2 < b and z0 < z12 and z02 < z1
+                self.assertFalse(same_wall and overlap and not back_to_back, (one.name, other.name))
 
 
 class ClosetTest(HouseTestCase):
-    def test_sits_in_its_room_with_its_doors_facing_in(self):
+    def test_sits_in_its_room_with_its_doors_facing_in_or_set_into_its_wall(self):
         for h in self.each():
             for closet in h.details.closets:
                 p = h.first(closet.room)
@@ -236,7 +264,8 @@ class ClosetTest(HouseTestCase):
                     "back": closet.y == 0,
                     "front": closet.y + closet.depth == p.depth,
                 }
-                self.assertFalse(on_wall[closet.door], closet.name)
+                set_in = any(closet_door(h, closet, o) for o in h.details.openings)
+                self.assertFalse(on_wall[closet.door] and not set_in, closet.name)
 
     def test_closets_do_not_overlap_or_cover_a_door_or_window(self):
         for h in self.each():
@@ -244,7 +273,7 @@ class ClosetTest(HouseTestCase):
                 if h.place(one.room) is h.place(other.room):
                     self.assertFalse(overlap(h.absolute(one), h.absolute(other)), (one.name, other.name))
             for closet, opening in itertools.product(h.details.closets, h.details.openings):
-                if opening.kind == "vent":
+                if opening.kind == "vent" or closet_door(h, closet, opening):
                     continue
                 p, axis, line, a, b, _ = h.wall(opening)
                 x, y, width, depth = h.absolute(closet)
@@ -291,13 +320,16 @@ class FixtureTest(HouseTestCase):
                     self.assertFalse(overlap(h.absolute(one), h.absolute(other)) and not stacked, (one.name, other.name))
 
     def test_nothing_blocks_a_door(self):
-        """The floor 2 ft either side of each door is clear of fixtures and closets, a closet's own doors included."""
+        """The floor 2 ft either side of each door is clear of fixtures and closets, a closet's own doors included.
+        An opening, a doorway with no door or an open wall, needs only a way through it: 2.5 ft of it clear."""
         for h in self.each():
             clear = []
             for opening in (o for o in h.details.openings if o.kind in DOORS):
                 p, axis, line, a, b, _ = h.wall(opening)
                 strip = (a, line - 2, b - a, 4) if axis == "x" else (line - 2, a, 4, b - a)
-                clear.append((opening.name, p.elevation, opening.sill + opening.height, strip))
+                owner = next((c for c in h.details.closets if closet_door(h, c, opening)), None)  # a closet's own door
+                way = 2.5 if opening.kind == "opening" else None
+                clear.append((opening.name, owner, p.elevation, opening.sill + opening.height, strip, axis, way))
             for closet in h.details.closets:
                 x, y, width, depth = h.absolute(closet)
                 strip = {
@@ -306,14 +338,21 @@ class FixtureTest(HouseTestCase):
                     "back": (x, y - 2, width, 2),
                     "front": (x, y + depth, width, 2),
                 }[closet.door]
-                clear.append((closet.name, h.first(closet.room).elevation, 6.67, strip))
-            for name, floor, top, strip in clear:
-                for fixture in (f for f in h.details.fixtures if f.room):
-                    blocks = fixture.lift < top and overlap(strip, h.absolute(fixture))
-                    self.assertFalse(h.first(fixture.room).elevation == floor and blocks, (name, fixture.name))
-                for closet in h.details.closets:
-                    blocks = name != closet.name and overlap(strip, h.absolute(closet))
-                    self.assertFalse(h.first(closet.room).elevation == floor and blocks, (name, closet.name))
+                clear.append((closet.name, closet, h.first(closet.room).elevation, 6.67, strip, None, None))
+            for name, owner, floor, top, strip, axis, way in clear:
+                fixtures = [f for f in h.details.fixtures if f.room and h.first(f.room).elevation == floor and f.lift < top]
+                closets = [c for c in h.details.closets if c is not owner and h.first(c.room).elevation == floor]
+                blocking = [(t.name, h.absolute(t)) for t in fixtures + closets if overlap(strip, h.absolute(t))]
+                if way is None:
+                    self.assertFalse(blocking, (name, [n for n, _ in blocking]))
+                    continue
+                # The stretches of the opening nothing stands in front of, along its wall.
+                lo, hi = (strip[0], strip[0] + strip[2]) if axis == "x" else (strip[1], strip[1] + strip[3])
+                spans = sorted((r[0], r[0] + r[2]) if axis == "x" else (r[1], r[1] + r[3]) for _, r in blocking)
+                widest, at = 0.0, lo
+                for s0, s1 in spans:
+                    widest, at = max(widest, s0 - at), max(at, s1)
+                self.assertGreaterEqual(max(widest, hi - at), way, (name, [n for n, _ in blocking]))
 
 
 class YardTest(HouseTestCase):
@@ -325,18 +364,22 @@ class YardTest(HouseTestCase):
     def test_things_outside_are_in_the_lot_off_the_house_and_apart(self):
         for h in self.each():
             d = h.details
-            # A ground may run past the lot's edge, as a driveway does to the street, but starts in it.
-            outside = [(g.name, rect(g)) for g in d.grounds]
-            for name, (x, y, width, depth) in outside:
-                self.assertTrue(h.in_lot(x + width / 2, y + depth / 2), name)
+            # A ground may run past the lot's edge, as a driveway does to the street, but starts in it; one with
+            # an outline stays in it.
+            for g in d.grounds:
+                if g.outline:
+                    self.assertTrue(all(h.in_lot(x, y, slack=0.5) for x, y in g.outline), g.name)
+                else:
+                    self.assertTrue(h.in_lot(g.x + g.width / 2, g.y + g.depth / 2), g.name)
             built = [(f.name, rect(f)) for f in d.fixtures if not f.room] + [(s.name, rect(s)) for s in d.sheds]
             for name, area in built:
                 self.assertTrue(all(h.in_lot(x, y) for x, y in corners(area)), name)
-            for name, area in outside + built:
-                self.assertFalse(squares(area) & h.footprint, name)
-            sheds = [(s.name, rect(s)) for s in d.sheds]
-            for (name, area), (other, area2) in itertools.combinations(outside + sheds, 2):
-                self.assertFalse(squares(area) & squares(area2), (name, other))
+            grounds = [(g.name, covered(g)) for g in d.grounds]
+            for name, cover in grounds + [(name, squares(area)) for name, area in built]:
+                self.assertFalse(cover & h.footprint, name)
+            sheds = [(s.name, squares(rect(s))) for s in d.sheds]
+            for (name, cover), (other, cover2) in itertools.combinations(grounds + sheds, 2):
+                self.assertFalse(cover & cover2, (name, other))
 
     def test_trees_stand_in_the_lawn_or_a_cutout(self):
         def within(x, y, area):
@@ -349,7 +392,15 @@ class YardTest(HouseTestCase):
                 self.assertFalse(h.on_house(tree.x, tree.y), tree.name)
                 for thing in (*h.details.grounds, *h.details.sheds):
                     cut = any(within(tree.x, tree.y, c) for c in getattr(thing, "cutouts", ()))
-                    self.assertFalse(within(tree.x, tree.y, rect(thing)) and not cut, (tree.name, thing.name))
+                    outline = getattr(thing, "outline", None)
+                    on = within(tree.x, tree.y, rect(thing)) and (not outline or in_polygon(tree.x, tree.y, list(outline)))
+                    self.assertFalse(on and not cut, (tree.name, thing.name))
+
+    def test_outlines_are_in_their_grounds(self):
+        for h in self.each():
+            for ground in (g for g in h.details.grounds if g.outline):
+                for x, y in ground.outline:
+                    self.assertTrue(within_rect(x, y, rect(ground)), ground.name)
 
     def test_cutouts_are_in_their_grounds(self):
         for h in self.each():
@@ -394,13 +445,13 @@ class StepsTest(HouseTestCase):
                 self.assertFalse(squares(rect(steps)) & h.footprint, steps.name)
                 self.assertEqual(steps.bottom, h.details.grade, steps.name)
 
-    def test_steps_in_a_room_start_on_its_floor(self):
+    def test_steps_in_a_room_are_in_a_piece_of_it_and_start_on_its_floor(self):
         for h in self.each():
             for steps in (s for s in h.details.steps if s.room):
-                p = h.first(steps.room)
                 x, y, width, depth = rect(steps)
-                self.assertTrue(p.x <= x and x + width <= p.x + p.width and p.y <= y and y + depth <= p.y + p.depth, steps.name)
-                self.assertEqual(steps.bottom, p.elevation, steps.name)
+                fits = [p for p in pieces(h.place(steps.room).plan) if within_rect(x, y, rect(p)) and within_rect(x + width, y + depth, rect(p))]
+                self.assertTrue(fits, steps.name)
+                self.assertEqual(steps.bottom, fits[0].elevation, steps.name)
 
     def test_steps_climb(self):
         for h in self.each():
@@ -441,6 +492,12 @@ class KindsTest(unittest.TestCase):
             Closet("Closet", "Office", 0, 0, 2, 2, door="up")
         with self.assertRaises(ValueError):
             Fixture("Fire pit", "fireplace", None, 0, 0, 3, 3, 1)
+        with self.assertRaises(ValueError):
+            Fence("Fence", ((0, 0), (10, 0)), kind="stone")
+        with self.assertRaises(ValueError):
+            Ground("Mound", "bed", 0, 0, 10, 10, height=1, outline=((0, 0), (10, 0), (5, 10)))
+        with self.assertRaises(ValueError):
+            Ground("Deck", "deck", 0, 0, 10, 10, height=1, railings=("up",))
 
     def test_a_roof_needs_a_ridge_or_a_drop(self):
         with self.assertRaises(ValueError):
