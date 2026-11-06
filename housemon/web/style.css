@@ -1,0 +1,532 @@
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --hover: rgba(11, 11, 11, 0.05);
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  /* Chart series, in this order: the order is what keeps neighbors colorblind-safe. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  --series-other: #898781;
+  /* The house map's temperature gradient stops, coldest to warmest: blue and red
+     arms in equal lightness steps around a neutral comfortable gray. */
+  --temp-0: #104281;
+  --temp-1: #2a78d6;
+  --temp-2: #86b6ef;
+  --temp-3: #f0efec;
+  --temp-4: #ea9a93;
+  --temp-5: #c74845;
+  --temp-6: #762221;
+  --wall: #898781;
+  /* The house map's detailed view, colored like the things themselves (model.js). A house
+     can give its own in place of these, its siding or roof, say (Details.colors). */
+  --model-lawn: #86a85e;
+  --model-soil: #8b6f53;
+  --model-concrete: #cdc9bf;
+  --model-slab: #b4afa4;
+  --model-foundation: #a8a499;
+  --model-siding: #d8ccb2;
+  --model-trim: #f3f1eb;
+  --model-roof: #5f5c58;
+  --model-shed-roof: #8b8985;
+  --model-glass: #a9c8d8;
+  --model-door: #7b3a2c;
+  --model-garage-door: #ebe8e0;
+  --model-seam: #8f8b82;
+  --model-paint: #eeeae2;
+  --model-drywall: #dedad1;
+  --model-cut: #3b3a37;
+  --model-carpet: #bdb2a1;
+  --model-wood: #b88c5f;
+  --model-tile: #dcd8cf;
+  --model-dirt: #8f7a62;
+  --model-white: #f4f3ef;
+  --model-steel: #a9abad;
+  --model-black: #3a3a3a;
+  --model-grille: #74736f;
+  --model-trunk: #6d5037;
+  --model-leaves: #5f9142;
+  --model-needles: #3f6c4a;
+  --model-focus: #2a6fdb;
+  --model-sash: #f3f1eb;
+  --model-paneling: #4f4034;
+  --model-flagstone: #b48a72;
+  --model-stone: #a39b8e;
+  --model-fence: #9a8366;
+  --model-deck: #a07a55;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --hover: rgba(255, 255, 255, 0.06);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    /* Brighter away from the neutral gray, which sits near the dark surface. */
+    --temp-0: #86b6ef;
+    --temp-1: #3987e5;
+    --temp-2: #1c5cab;
+    --temp-3: #383835;
+    --temp-4: #9e3432;
+    --temp-5: #d75853;
+    --temp-6: #ea9a93;
+    /* The detailed view by night: dimmer, so it doesn't glare on the dark page. */
+    --model-lawn: #4f6a37;
+    --model-soil: #5a4836;
+    --model-concrete: #7d7a73;
+    --model-slab: #6b6760;
+    --model-foundation: #6a675f;
+    --model-siding: #8f8672;
+    --model-trim: #a9a69e;
+    --model-roof: #3c3a37;
+    --model-shed-roof: #5c5a57;
+    --model-glass: #5d7d8f;
+    --model-door: #5a2c22;
+    --model-garage-door: #9d9a92;
+    --model-seam: #5d5a54;
+    --model-paint: #a29f98;
+    --model-drywall: #938f87;
+    --model-cut: #121211;
+    --model-carpet: #7d7468;
+    --model-wood: #7d5f40;
+    --model-tile: #96928a;
+    --model-dirt: #5e5040;
+    --model-white: #b3b1ab;
+    --model-steel: #7a7c7e;
+    --model-black: #262626;
+    --model-grille: #4f4e4b;
+    --model-trunk: #4a3726;
+    --model-leaves: #3f6430;
+    --model-needles: #2b4a34;
+    --model-focus: #5b9bf0;
+    --model-sash: #a9a69e;
+    --model-paneling: #34291f;
+    --model-flagstone: #7a5d4d;
+    --model-stone: #6e685f;
+    --model-fence: #665744;
+    --model-deck: #6b5139;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 1100px;
+  padding: 16px 16px 48px;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1, h2, h3, p { margin: 0; }
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+h1 { font-size: 1.5rem; font-weight: 600; }
+
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.connection.is-live .dot { background: var(--status-good); }
+.connection.is-reconnecting .dot { background: var(--status-warning); }
+
+/* Rooms, one section per floor, top floor first like the house. */
+
+#rooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 20px;
+}
+
+@media (max-width: 400px) {
+  #rooms { grid-template-columns: 1fr; }
+}
+
+.floor h2 {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.room {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.room h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.key {
+  flex: none;
+  width: 20px;
+  height: 3px;
+}
+
+.temp { margin-top: 6px; }
+.temp .value { font-size: 2rem; font-weight: 600; }
+.temp .unit { margin-left: 2px; color: var(--text-secondary); font-size: 1rem; }
+.room.updated .value { animation: arrive 0.8s ease-out; }
+.room.is-stale .temp, .room.is-stale .humidity { opacity: 0.45; }
+
+@keyframes arrive {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+
+.humidity { color: var(--text-secondary); }
+
+.meta {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.meta.updated-at { margin-top: 6px; }
+.nowrap { white-space: nowrap; }
+
+.stale {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.stale .icon { margin-right: 4px; color: var(--status-warning); }
+
+/* The range filter scopes every chart below it. */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 28px 0 12px;
+}
+
+.filters button, .segmented button, .turns button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.filters button:hover, .segmented button:hover, .turns button:hover { background: var(--hover); }
+
+.filters button[aria-pressed="true"], .segmented button[aria-pressed="true"] {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Charts */
+
+.chart {
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  transition: opacity 0.2s;
+}
+
+.chart.is-loading { opacity: 0.5; }
+
+.chart figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.chart h2 { font-size: 1rem; font-weight: 600; }
+.chart figcaption .unit { color: var(--text-muted); font-size: 0.875rem; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 4px;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.legend li { display: flex; align-items: center; }
+
+/* Each entry hides or shows its room's line. A hidden one is struck through,
+   not only faded, so its state doesn't rest on color. */
+.legend button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.legend button:hover { background: var(--hover); }
+.legend button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 1px; }
+.legend button[aria-pressed="false"] { color: var(--text-muted); text-decoration: line-through; }
+.legend button[aria-pressed="false"] .key { opacity: 0.35; }
+.legend .all { color: var(--text-muted); text-decoration: underline; text-underline-offset: 2px; }
+
+.plot { position: relative; }
+.plot > svg { display: block; width: 100%; overflow: visible; touch-action: pan-y; }
+.plot > svg:focus { outline: none; }
+.plot > svg:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 4px; border-radius: 4px; }
+
+.plot .tick { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.plot .empty { fill: var(--text-muted); font-size: 13px; }
+
+.tooltip {
+  position: absolute;
+  top: 4px;
+  min-width: 150px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 0.8125rem;
+  pointer-events: none;
+}
+
+.tooltip .time { margin-bottom: 4px; color: var(--text-muted); }
+
+.tooltip .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.6;
+}
+
+.tooltip .row strong {
+  min-width: 3.5em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.tooltip .row .name { color: var(--text-secondary); }
+
+.table-view { margin-top: 8px; }
+
+.table-view summary {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.table-wrap {
+  max-height: 320px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-wrap th, .table-wrap td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--grid);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table-wrap th:first-child, .table-wrap td:first-child { text-align: left; }
+
+.table-wrap th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* House map */
+
+#map { margin-top: 20px; }
+#map .chart { margin: 0; }
+
+.map figcaption { flex-wrap: wrap; }
+.map figcaption .unit { margin-right: auto; }
+.segmented { display: flex; gap: 4px; }
+.map .plot { margin-top: 12px; }
+.map .plot > svg { border-radius: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.map .plot > canvas { display: block; width: 100%; border-radius: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.map .plot > canvas:focus { outline: none; }
+.map .plot > canvas:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 4px; }
+.map .note { margin: 24px 0; color: var(--text-muted); font-size: 0.8125rem; text-align: center; }
+
+.map-floor { fill: var(--text-secondary); font-size: 13px; font-weight: 600; }
+.chip-value { fill: var(--text-primary); font-size: 13px; font-weight: 600; }
+.chip-name { fill: var(--text-secondary); font-size: 11px; }
+.chip-stale { fill: var(--status-warning); }
+.area-name { fill: var(--text-muted); font-size: 11px; }
+
+.map .tooltip { z-index: 1; }
+
+/* Readings from outside, which have no room to color, in the map's top-right
+   corner: the floor plan's first title row, or the space around the 3D house.
+   They let a drag through to the map. */
+.map .outside {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.map .outside div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.map .outside strong { color: var(--text-primary); }
+.map .outside .swatch { width: 10px; height: 10px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--border); }
+.map .outside .chip-stale { color: var(--status-warning); }
+
+.map-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin-top: 16px;
+}
+
+.turns { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; margin-left: auto; }
+
+.turns[hidden], .cuts[hidden] { display: none; }
+
+/* The detailed view's colors don't encode temperature, so it has no scale or swatches. */
+.map.is-model .scale, .map.is-model .outside .swatch { display: none; }
+.map:not(.is-model) .model-only { display: none; }
+.cuts { display: flex; align-items: center; gap: 4px; }
+.cuts .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
+.cuts .segmented { flex-wrap: wrap; min-width: 0; }
+
+/* On a narrow screen the hint gets a row of its own, above the buttons. */
+@media (max-width: 600px) {
+  .turns .hint { flex-basis: 100%; margin-right: 0; text-align: right; }
+}
+
+.map .table-view { margin-top: 12px; }
+.map .table-wrap th, .map .table-wrap td { text-align: left; white-space: normal; }
+.map .table-wrap tr.group th { position: static; padding-top: 10px; color: var(--text-primary); }
+.turns .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
+.turns button { padding: 4px 10px; font-size: 1rem; line-height: 1.2; }
+
+/* A touch can't tilt by dragging, as dragging up and down scrolls the page. */
+@media (pointer: coarse) {
+  .turns .with-mouse { display: none; }
+}
+
+.tooltip .head { margin-bottom: 4px; }
+.tooltip .head span { color: var(--text-muted); }
+.tooltip .stale { margin-top: 2px; }
+
+.scale {
+  display: flex;
+  align-items: flex-start;
+  flex: 0 1 380px;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 12px;
+}
+
+.scale .bar { flex: 1 1 auto; max-width: 280px; }
+/* The same blend as tempColor in app.js: the stops evenly spaced, mixed in OKLab. */
+.scale .gradient {
+  height: 12px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  background: linear-gradient(to right, var(--temp-0), var(--temp-1), var(--temp-2), var(--temp-3), var(--temp-4), var(--temp-5), var(--temp-6));
+  background: linear-gradient(in oklab to right, var(--temp-0), var(--temp-1), var(--temp-2), var(--temp-3), var(--temp-4), var(--temp-5), var(--temp-6));
+}
+.scale .ticks { position: relative; height: 14px; margin-top: 4px; }
+
+.scale .ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}

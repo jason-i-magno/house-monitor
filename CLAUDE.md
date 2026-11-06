@@ -1,0 +1,82 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+A web app, run at home, that shows live temperature and humidity for each room. A Python backend (`housemon/`, **standard library only**, Python 3.10+) collects readings, stores them in SQLite and pushes them to a plain HTML/CSS/JavaScript page (`housemon/web/`, with no build step, framework or CDN scripts). Readings come from simulated sensors for now. Real Govee H5075 Bluetooth sensors, read with `bleak`, are planned and will be the first third-party dependency; don't add others unless asked. There is no linter, formatter or packaging config.
+
+## Commands
+
+```sh
+python3 -m unittest                                      # all tests, private/'s too if it's there
+python3 -m unittest tests.test_store.StoreTest           # one class (append .test_name for one test)
+python3 -m housemon                                      # serves http://127.0.0.1:8000/ with simulated sensors
+python3 -m housemon --db <tmpdir>/house.sqlite3 --port 0 # a throwaway run: its own database, any free port (printed at startup)
+python3 -m housemon --house housemon/example_house.py    # the example house, even with a private one there
+```
+
+## Houses and `private/`
+
+The simulator models a house file: a module with `HOUSE` (its rooms as `SimulatedRoom`, each sensor with its plan), `AREAS` (the parts with no sensor) and `DETAILS` (what the detailed view draws, or None). `house.load()` picks `--house`, else `private/house.py` if it exists, else `housemon/example_house.py`, a made-up house; the startup line says which.
+
+`private/` is the owner's real house, a separate private repo cloned into this one's ignored `private/` folder, with its own `house.py` and tests. Never commit it here, copy its rooms, sizes, colors or details into this repo, or describe them in code, comments, docs, commits or PRs. Changes to the real house are made, and committed, in `private/`'s own repo. This repo's code, tests and docs use the example house.
+
+`tests/test_house.py` checks what every house file must get right, once per house as subtests: the example, and the private house when it's there. Checks of one house in particular live with it: the example's in `tests/test_simulator.py`, the private house's in `private/test_house.py`, which `python3 -m unittest` finds too.
+
+`--host 0.0.0.0` serves the whole network with no login, so keep it off the internet.
+
+`data/` (gitignored) holds the user's readings, one database per source (`data/<source>.sqlite3`). Run tests and experiments against a `--db` elsewhere rather than writing to or deleting it. At startup an empty database is backfilled with `--backfill-hours` (default 24) of simulated history.
+
+The server rereads `web/` files on every request, so page changes need only a browser reload; Python changes need a restart. There are no frontend tests, so check page changes in a browser, in light and dark mode and at phone width. The map's detailed view needs WebGL, which headless Chromium gets from SwiftShader with `--enable-unsafe-swiftshader`. `firefox --screenshot` captures at the load event, before the page's fetches finish, so its screenshots show empty charts.
+
+## Architecture
+
+```
+source.run() ──publish──► Hub ──► Store.add()  (thinned, SQLite)
+ (collector thread)        └────► a queue per open page ──► /api/stream (SSE) ──► app.js
+```
+
+`__main__.py` wires this together. The source runs on a daemon collector thread, and `HouseServer` (a `ThreadingHTTPServer`) handles each request on its own thread, including each open SSE stream for as long as the page stays open.
+
+- **Source interface:** a source is anything with a `sensors` list of `Sensor(id, name, floor, plan, heated, outside)` and a `run(publish, stop)` that calls `publish(Reading)` until the `threading.Event` is set. It may also have an `areas` list of `Area(name, floor, plan)`, the parts of the house with no sensor (a hall, say), which the map draws as outlines, and `details`, a `Details` (`details.py`): the doors, windows, vents, appliances, closets, roof and yard the map's detailed view draws, naming rooms as the sensors and areas do. `SimulatedSource` gets all three from the house file. `/api/sensors` sends them, or null. A room or area that isn't a rectangle, like an L, has a tuple of plans, one per piece, which `/api/sensors` sends as a list. Only `SimulatedSource` has `backfill()`, but `__main__` calls it whenever the database is empty, so guard that when adding a real source (and add the source to `--source`'s choices).
+- **Units:** readings are stored and sent in the sensors' own units, °C and percent relative humidity (`Reading` in `readings.py`), and only `app.js` converts to °F. The simulator computes in °F internally and rounds its output to the sensors' resolution, 0.1 °C and 0.1 %.
+- **Stored vs. latest:** `Store.add` keeps at most one reading per sensor per `--store-every` seconds, and its per-sensor clock resumes from the database after a restart. `add_many` stores everything, for backfills and imports. `Hub.latest()` holds the newest reading from each sensor whether or not it was stored; `/api/sensors` returns it.
+- **Threads:** all threads share one SQLite connection (WAL mode, `check_same_thread=False`), guarded by `Store._lock`. Each SSE client gets a bounded queue, and `Hub.publish` drops readings for a full queue rather than block the collector.
+- **History buckets:** `/api/history?hours=N` picks a bucket of whole minutes, at least `min_interval`, that gives at most `HISTORY_POINTS` (500) points per sensor. `Store.history` averages each bucket, including its timestamp. `test_server.py` pins the resulting bucket sizes. On the page, a live reading is added to the chart only if it comes at least one bucket after the last point. A gap longer than `max(3 × bucket, 180 s)` breaks the line.
+- **Static files:** only the paths in the `STATIC` whitelist in `server.py` are served, so a new file in `web/` needs an entry there.
+- **Sensor order matters:** `/api/sensors` lists sensors in the source's order (the house file's `HOUSE` for the simulator). The page groups cards by `floor` in order of first appearance. Each sensor gets the color slot of its index (`--series-1` to `--series-8`, then the gray `--series-other`), so reordering sensors changes their colors.
+- **The simulator is pure:** `reading_at(room, t)` depends only on the room and the time (the local time of day, plus noise seeded from the sensor id and `t // 30`), so the backfilled history matches the live readings. Keep it that way. `tests/test_simulator.py` looks the example house's rooms up by name and checks how they relate (the basement colder than upstairs, the office heater on in the afternoon but not at night), so renaming or retuning them means updating those tests.
+- **Page (`app.js`):**
+  - All state lives in one `state` object.
+  - `CHARTS` gives each chart its measure and rooms. Unheated spaces (`Sensor.heated` false, like the garage) and the outside get a temperature chart of their own, so their range doesn't flatten the rooms' lines; humidity charts every room. A room keeps its color in every chart. Each legend entry is a button that hides or shows its room's line in that chart, with Hide all / Show all at the end. The hidden rooms are kept per viewer in localStorage, and the scale, readout and table follow the rooms shown.
+  - Each chart's `<svg>` is created once, since it holds the focus and pointer listeners. Its contents are redrawn on new data, on resize, and every minute so the time axis slides.
+  - A history response for a range the user has since switched away from is dropped (`historyRequest`).
+  - After the SSE stream drops, the page reloads sensors and history to fill the gap.
+- **House map:** a floor plan per level, or a 3D view you can turn, with each room colored by its latest temperature, or a detailed view of the house as it looks.
+  - A sensor outside (`Sensor.outside`) has no plan or room. The map shows its reading in its top-right corner in every view, with the swatch of its temperature on the scale, and in the floor plan and 3D view tints its background with that color, mixed 30% into the surface so the rooms, at full strength, and the labels stand out. Inside the house's outline, the floor plan stays the surface color. The map leaves the sensor out of the rooms and the keyboard focus, and its card goes under the floor name alone, not "… level".
+  - Rooms are placed by `Sensor.plan` (`Plan` in `readings.py`, in feet, with each floor's elevation above the main floor, a height at the ceiling's highest, 8 ft unless set, and for a sloped ceiling a `drop`: the wall it slopes down to and how much lower it is there), and areas by `Area.plan`. Unless every sensor has one, the map puts each floor's rooms in a row instead and leaves areas out.
+  - The example house (`example_house.py`) is a two-story house over a basement: dining room, kitchen, living room and entry on the main floor, with a garage a step down on the right and a sunroom off the kitchen, its ceiling dropping to the back; two bedrooms, a bathroom and a guest room off a hall upstairs; and an office and utility room off an L-shaped family room in the basement. The garage is unheated, and an outside sensor reads the weather the simulator models (`outdoor_f`). The bathroom's humidity spikes at shower times (`SimulatedRoom.showers`), and the entry, hall, guest room and utility room have no sensors, so they're `AREAS`. Sensor ids are stored with every reading, so renaming a room keeps its id. `test_house.py` checks every house's layout: nothing on a floor overlaps, and each floor is level but for a step down of up to a foot, as a garage is.
+  - Colors are a gradient. The `--temp-0` to `--temp-6` tokens in `style.css`, blue and red arms in equal lightness steps around a neutral gray, flipped for dark mode, sit at `TEMP_STOPS` in `app.js`, 3 °F apart around 68.5 °F. `tempColor` blends a room's value, rounded to a tenth as shown, between its two nearest stops in OKLab, holding past either end; the legend's CSS gradient blends the same way (`in oklab`), so the two match. A label inside a room takes white or near-black, whichever has more APCA contrast on its color. The stops are read from the theme, and read again when it changes.
+  - The 3D view is an orthographic projection from any direction: turned by `state.mapAngle` and tilted by `state.mapTilt`, from -90 (below) to 90 (above). Dragging turns and tilts it, though a touch drags only sideways, since swiping up and down scrolls the page; the buttons below it turn, tilt and reset it. It's sized to the house's bounding sphere, so turning or tilting neither zooms it nor changes the map's height. From below, rooms show their floors instead of their tops.
+  - It's drawn back to front (`paintOrder`). Each axis that separates two boxes votes on which is nearer, the one on the viewer's side; when the votes disagree, the boxes can't overlap on screen and get no order, since ordering them by one axis made cycles that drew lower rooms over upper ones. A box with a sloped ceiling votes as if it were as tall as its ceiling's highest point.
+  - A room or area in pieces is labeled once, and on the floor plan it's walled as one shape (`unionOutline`), its focus outline too.
+  - A room's label goes on its first visible face; a room hidden from the current angle gets none. Areas are empty frames, and their names show only beside full labels, at the first visible spot clear of the rooms and other labels.
+  - Focusing a room redraws only the focus layer, not the rooms, so the element under a tap stays put and the tap can focus the map.
+- **Detailed view** (`model.js`): the house drawn with WebGL from the source's `Details`, turning and tilting with the 3D view.
+  - It's colored like the things themselves, from the `--model-*` tokens in `style.css`, or a house's own in their place (`Details.colors`, light and dark), not by temperature, so it has no scale and the outside reading no swatch. Its rooms' readings are in the readout.
+  - In a house file's `DETAILS`, each thing is either `known`, from photos of the house or someone who knows it, or a guess to correct; the readout and the list under the map say which, but for a made-up house (`Details.example`). Things in a room are placed from its plan's back-left corner, an opening by its room's wall and its offset along it, and things outside on the plan. The lot is an outline (its corners in order), and paving that runs past it, like a driveway to the street, is cut off at its edge. A flat ground can have cutouts left as bare earth (around a tree), and a fence gates, each its middle on the fence and width. A roof section is a solid down to its underside, 0.6 ft below its eaves unless given lower, for a section of a longer slope; its ends are flush with the walls under it, with trim along their sloped edges. An outline cuts a section to a shape within its rectangle, as where two slopes meet in a valley, and the edges sections share get no trim. Steps climb over their rectangle toward a side, outside or in a room. `test_house.py` checks, for every house, that openings fit their walls and don't overlap, windows open to the outside, doors lead outside or into one place, its floor at or a little below their sill, nothing blocks a door, closets and fixtures sit in their rooms clear of the walls and under the ceiling, the house and everything outside is in the lot and off the house, trees stand in the lawn or a cutout, fences run in the lot with their gates on them, steps start on the ground or their room's floor, roof vents stand on a roof, and the roofs cover every room with nothing over it, down to its ceiling.
+  - Each room's walls stand just inside its plan, so neighbors' walls never overlap, down to the top of whatever is under the room or to a footing. A run of wall is split into cells around its openings and wherever what's beyond it changes, so each cell's outside face is siding, foundation or paint for what it faces. Doors and windows cut through every wall on their line; vents are grilles on their room's wall.
+  - Cut away to a level, the roof and its vents, the trees and the levels above come off, and walls stop 4 ft above their floors, all but outside walls at the back as seen with none of the house beyond them. Which walls those are depends on which way the view faces, so the geometry is rebuilt only when the cut changes or the view turns past an axis; otherwise a turn just redraws.
+  - The ground is the lot's outline cut into cells at the edges of the house and paving, each clipped to the outline, and steps down under the house to its lowest walls.
+  - Hovering or tapping picks what's under the pointer from a render of ids to a buffer of its own; arrow keys step through every part shown. A list under the map names every part, by kind, and whether it's known or guessed. The view first frames the house; double-clicking a part, pinching or the + and − buttons zoom, centered on the part, out to the whole lot at 1. Reset frames the house again.
+
+## Chart conventions
+
+Keep these rules when changing or adding charts:
+
+- One measure per chart, never two y-axes.
+- Series colors are the CSS tokens in `style.css`, assigned in fixed order. The order keeps neighboring colors distinguishable for colorblind readers. Dark mode has its own values, under `prefers-color-scheme`. Rooms past the eighth share the gray `--series-other`, told apart by dash pattern (`OTHER_DASHES` in `app.js`) in their lines and line keys.
+- Identity is never shown by color alone: there's a legend, line keys beside room names, and a table view.
+- The house map's colors encode temperature, not identity: each room is labeled with its name and value, the scale legend sits below, and the room cards are its table view.
+- Text uses the text colors, never a series color.
+- The status colors (`--status-good`, `--status-warning`) are only for status, and always come with a label or icon.
+- Every chart has the hover readout, also reachable by keyboard (arrow keys, Escape).

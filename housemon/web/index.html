@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>House monitor</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>House</h1>
+    <p class="connection" id="connection" role="status">
+      <span class="dot" aria-hidden="true"></span><span class="label">Connecting…</span>
+    </p>
+  </header>
+  <main>
+    <div id="rooms"></div>
+    <div id="map"></div>
+    <div class="filters" id="ranges" role="group" aria-label="Chart time range"></div>
+    <div id="charts"></div>
+  </main>
+  <script src="/model.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
