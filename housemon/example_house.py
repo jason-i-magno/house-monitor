@@ -142,6 +142,10 @@ DETAILS = Details(
         Fixture("Range", "appliance", "Kitchen", 1, 10.5, 2.5, 2, 3, finish="steel"),
         Fixture("Range hood", "vent", "Kitchen", 1.1, 10.5, 2.3, 2, 1, lift=5.5, finish="steel"),
         Fixture("Dishwasher", "appliance", "Kitchen", 6, 10.5, 2, 2, 2.8, finish="steel"),
+        Fixture("Kitchen sink", "plumbing", "Kitchen", 14.5, 0.4, 3, 2, 3),  # under the window
+        Fixture("Bathtub", "plumbing", "Bathroom", 0.4, 0.4, 5, 2.5, 1.75),
+        Fixture("Toilet", "plumbing", "Bathroom", 6.2, 3, 2.4, 1.6, 1.3),
+        Fixture("Bathroom sink", "plumbing", "Bathroom", 0.4, 3.5, 1.7, 2, 2.8),
         Fixture("Furnace", "appliance", "Utility room", 0.5, 0.5, 2.5, 2.5, 4.5, finish="steel"),
         Fixture("Water heater", "appliance", "Utility room", 3.5, 0.5, 1.5, 1.5, 4.8),
         Fixture("Washer", "appliance", "Utility room", 0.5, 6, 2.3, 2.3, 3.2),
@@ -152,7 +156,7 @@ DETAILS = Details(
         # Supply registers in the floors, and the bathroom's ceiling fan
         Fixture("Upstairs bedroom register", "vent", "Upstairs bedroom", 7, 0.6, 1, 0.33, 0.05, finish="grille"),
         Fixture("Front bedroom register", "vent", "Front bedroom", 7, 13.1, 1, 0.33, 0.05, finish="grille"),
-        Fixture("Bathroom register", "vent", "Bathroom", 0.6, 4, 0.33, 1, 0.05, finish="grille"),
+        Fixture("Bathroom register", "vent", "Bathroom", 6.5, 8.1, 1, 0.33, 0.05, finish="grille"),
         Fixture("Bathroom fan", "vent", "Bathroom", 4, 4, 1, 1, 0.25, lift=7.75, finish="grille"),
         Fixture("Living room register", "vent", "Living room", 8, 14.1, 1, 0.33, 0.05, finish="grille"),
         Fixture("Dining room register", "vent", "Dining room", 0.6, 6, 0.33, 1, 0.05, finish="grille"),
@@ -165,8 +169,11 @@ DETAILS = Details(
         Ground("Front porch", "porch", 26, 28, 8, 6, height=0.9),
         Ground("Front walk", "walk", 28.5, 34, 3, 26),
         Ground("Driveway", "driveway", 38, 28, 18, 32),
-        Ground("Deck", "deck", 32, -10, 12, 10, height=0.9, paving="wood"),
+        Ground("Deck", "deck", 32, -10, 12, 10, height=0.9, paving="wood", railings=("right",)),
         Ground("Patio", "patio", 0, -10, 14, 10, paving="flagstone"),
+        Ground("Flower bed", "bed", 0, 28, 26, 3, paving="mulch"),  # along the front
+        # From the side gate to the patio.
+        Ground("Gravel path", "walk", -12, -10, 12, 30, paving="gravel", outline=((-12, 20), (-8, 20), (0, -6), (0, -10))),
     ),
     trees=(
         Tree("Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4),
@@ -175,7 +182,9 @@ DETAILS = Details(
     ),
     sheds=(Shed("Shed", 52, -42, 10, 8),),
     fences=(
-        Fence("Backyard fence", ((0, 20), (-20, 20), (-20, -45), (75, -45), (75, 20), (58, 20)), gates=((-10, 20, 4),)),
+        Fence("Left fence", ((0, 20), (-20, 20), (-20, -45)), gates=((-10, 20, 4),)),
+        Fence("Back fence", ((-20, -45), (75, -45)), height=4, kind="chain link"),
+        Fence("Right fence", ((75, -45), (75, 20), (58, 20))),
     ),
     steps=(
         Steps("Porch steps", 28.5, 34, 3, 2, bottom=-1, top=-0.1, up="back"),

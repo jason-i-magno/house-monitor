@@ -66,6 +66,8 @@
   --model-flagstone: #b48a72;
   --model-stone: #a39b8e;
   --model-brick: #9a5a46;
+  --model-gravel: #b8b1a6;
+  --model-mulch: #6e4b34;
   --model-fence: #9a8366;
   --model-deck: #a07a55;
 }
@@ -130,6 +132,8 @@
     --model-flagstone: #7a5d4d;
     --model-stone: #6e685f;
     --model-brick: #6a3f32;
+    --model-gravel: #7a746b;
+    --model-mulch: #4a3223;
     --model-fence: #665744;
     --model-deck: #6b5139;
   }
