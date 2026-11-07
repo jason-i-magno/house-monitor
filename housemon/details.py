@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent", "plumbing", "fireplace")
+FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall")
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
@@ -79,11 +79,12 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance, vent, plumbing (a tub, toilet or sink) or fireplace, drawn as a box: in a room, or outside
-    (room None) at x and y on the plan.
+    """An appliance, vent, plumbing (a tub, toilet or sink), fireplace or half wall, drawn as a box: in a room,
+    or outside (room None) at x and y on the plan.
 
     lift is how high its bottom is above the floor, or outside above the ground. A fireplace is in a room,
-    against a wall, its firebox opening on the side away from that wall.
+    against a wall, its firebox opening on the side away from that wall. A half wall is in a room too, out
+    from one of its walls, in the room's wall color with a cap in its finish.
     """
 
     name: str
@@ -101,8 +102,8 @@ class Fixture:
     def __post_init__(self):
         _check(self.kind, FIXTURES, "a fixture's kind")
         _check(self.finish, FINISHES, "a fixture's finish")
-        if self.kind == "fireplace" and self.room is None:
-            raise ValueError(f"{self.name} is a fireplace, so it's in a room")
+        if self.kind in ("fireplace", "half wall") and self.room is None:
+            raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
 
 
 @dataclass(frozen=True)

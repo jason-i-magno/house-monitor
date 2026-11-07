@@ -222,6 +222,14 @@ class OpeningTest(HouseTestCase):
                     ceilings = [ceiling(p, s, line) for s in (a, b)]
                 self.assertTrue(0 <= opening.sill and opening.sill + opening.height <= min(ceilings), opening.name)
 
+    def test_side_wall_openings_clear_the_walls_across_their_ends(self):
+        """A left or right wall stops at the back and front walls, which run past it, so a door, window or vent in it
+        stays clear of them. One running into them would show through their tops where a level is cut away."""
+        for h in self.each():
+            for opening in (o for o in h.openings if o.wall in ("left", "right") and o.kind != "opening"):
+                length = h.wall(opening)[5]
+                self.assertTrue(WALL <= opening.offset and opening.offset + opening.width <= length - WALL, opening.name)
+
     def test_windows_open_to_the_outside(self):
         for h in self.each():
             for opening in (o for o in h.openings if o.kind == "window"):
@@ -310,9 +318,9 @@ class FixtureTest(HouseTestCase):
                 lowest = min(ceiling(p, x + u * width, y + v * depth) for u in (0, 1) for v in (0, 1))
                 self.assertLessEqual(fixture.lift + fixture.height, lowest, fixture.name)
 
-    def test_fireplaces_stand_against_a_wall(self):
+    def test_fireplaces_and_half_walls_stand_against_a_wall(self):
         for h in self.each():
-            for fireplace in (f for f in h.details.fixtures if f.kind == "fireplace"):
+            for fireplace in (f for f in h.details.fixtures if f.kind in ("fireplace", "half wall")):
                 p = h.piece(fireplace)
                 x, y, width, depth = h.absolute(fireplace)
                 gaps = (x - p.x, y - p.y, p.x + p.width - x - width, p.y + p.depth - y - depth)
@@ -521,6 +529,8 @@ class KindsTest(unittest.TestCase):
             Closet("Closet", "Office", 0, 0, 2, 2, door="up")
         with self.assertRaises(ValueError):
             Fixture("Fire pit", "fireplace", None, 0, 0, 3, 3, 1)
+        with self.assertRaises(ValueError):
+            Fixture("Garden wall", "half wall", None, 0, 0, 6, 0.5, 3)
         with self.assertRaises(ValueError):
             Fence("Fence", ((0, 0), (10, 0)), kind="stone")
         with self.assertRaises(ValueError):
