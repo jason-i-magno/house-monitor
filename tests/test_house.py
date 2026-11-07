@@ -13,7 +13,8 @@ from housemon import example_house
 from housemon import house as houses
 from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Steps, Tree
 
-WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit
+WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from an
+# edge shared with another place, where each of the two stands half the wall between them
 DOORS = ("door", "sliding door", "garage door", "opening")
 
 
@@ -108,6 +109,9 @@ class Layout:
         # The openings in the house's walls; the rest are in a shed's, naming it.
         self.openings = [o for o in self.details.openings if o.room not in {s.name for s in self.details.sheds}]
         self.footprint = set().union(*(squares(rect(p)) for _, p in self.pieces))
+        # Each piece's base, where its walls start: the top of whatever's under it, or its floor.
+        tops = lambda place, p: [b.elevation + b.height for q, b in self.pieces if q is not place and overlap(rect(b), rect(p)) and b.elevation + b.height <= p.elevation + 1e-6]
+        self.bases = {id(p): max(tops(q, p), default=p.elevation) for q, p in self.pieces}
 
     def place(self, name):
         (match,) = [p for p in self.places if p.name == name]  # one place, so it's clear which is meant
@@ -162,6 +166,24 @@ class Layout:
             if math.hypot(x - x1 - t * (x2 - x1), y - y1 - t * (y2 - y1)) <= slack:
                 return True
         return in_polygon(x, y, lot)
+
+    def clearance(self, place, p, side, span, heights):
+        """How far a thing in a place's piece p stays from a side, along span and over heights: WALL, or half that
+        where another place is just beyond the side all along it, so the wall there is shared, half on each side."""
+        (lo, hi), (z0, z1) = span, heights
+        for s in (lo + 0.05, (lo + hi) / 2, hi - 0.05):
+            x, y = {"left": (p.x - 0.01, s), "right": (p.x + p.width + 0.01, s), "back": (s, p.y - 0.01), "front": (s, p.y + p.depth + 0.01)}[side]
+            for z in (z0 + 0.01, (z0 + z1) / 2, z1 - 0.01):
+                if not self.occupied(x, y, z, place):
+                    return WALL
+        return WALL / 2
+
+    def occupied(self, x, y, z, place):
+        """Whether another place's piece is at x, y, z, from its base up to its ceiling, as its walls stand."""
+        return any(
+            q.name != place.name and b.x < x < b.x + b.width and b.y < y < b.y + b.depth and self.bases[id(b)] < z < b.elevation + ceiling(b, x, y)
+            for q, b in self.pieces
+        )
 
     def on_house(self, x, y):
         return any(p.x < x < p.x + p.width and p.y < y < p.y + p.depth for _, p in self.pieces)
@@ -222,13 +244,32 @@ class OpeningTest(HouseTestCase):
                     ceilings = [ceiling(p, s, line) for s in (a, b)]
                 self.assertTrue(0 <= opening.sill and opening.sill + opening.height <= min(ceilings), opening.name)
 
-    def test_side_wall_openings_clear_the_walls_across_their_ends(self):
-        """A left or right wall stops at the back and front walls, which run past it, so a door, window or vent in it
-        stays clear of them. One running into them would show through their tops where a level is cut away."""
+    def test_openings_clear_the_walls_meeting_theirs(self):
+        """A door, window or vent stays clear of the walls meeting its wall: its room's back and front walls, which run
+        past a left or right wall's ends, and the walls of a place beyond meeting it from the other side, half of a
+        wall shared between them standing on that side. One running into them would show through their tops where a
+        level is cut away."""
         for h in self.each():
-            for opening in (o for o in h.openings if o.wall in ("left", "right") and o.kind != "opening"):
-                length = h.wall(opening)[5]
-                self.assertTrue(WALL <= opening.offset and opening.offset + opening.width <= length - WALL, opening.name)
+            for opening in (o for o in h.openings if o.kind != "opening"):
+                p, axis, line, a, b, length = h.wall(opening)
+                place = h.place(opening.room)
+                heights = (p.elevation + opening.sill, p.elevation + opening.sill + opening.height)
+                if opening.wall in ("left", "right"):
+                    across = (line, line + WALL) if opening.wall == "left" else (line - WALL, line)  # in its room, as they meet
+                    back = h.clearance(place, p, "back", across, heights) if opening.offset < WALL else WALL
+                    front = h.clearance(place, p, "front", across, heights) if opening.offset + opening.width > length - WALL else WALL
+                    self.assertTrue(back <= opening.offset and opening.offset + opening.width <= length - front, opening.name)
+                # Where a piece of a place beyond the wall starts or ends along it, the walls there meet it.
+                out = -0.01 if opening.wall in ("left", "back") else 0.01
+                for q, o in h.pieces:
+                    if q.name == place.name:
+                        continue
+                    lo, hi = (o.y, o.y + o.depth) if axis == "y" else (o.x, o.x + o.width)
+                    across = (o.x < line + out < o.x + o.width) if axis == "y" else (o.y < line + out < o.y + o.depth)
+                    over = o.elevation < heights[1] and heights[0] < o.elevation + o.height
+                    for edge in (lo, hi):
+                        if across and over and a - WALL / 2 < edge < b + WALL / 2:
+                            self.assertTrue(b <= edge - WALL / 2 + 1e-9 or a >= edge + WALL / 2 - 1e-9, (opening.name, q.name))
 
     def test_windows_open_to_the_outside(self):
         for h in self.each():
@@ -311,10 +352,13 @@ class FixtureTest(HouseTestCase):
     def test_fits_in_its_room_under_the_ceiling(self):
         for h in self.each():
             for fixture in (f for f in h.details.fixtures if f.room):
-                p = h.piece(fixture)
+                p, place = h.piece(fixture), h.place(fixture.room)
                 x, y, width, depth = h.absolute(fixture)
-                self.assertTrue(p.x + WALL <= x + 1e-9 and x + width <= p.x + p.width - WALL + 1e-9, fixture.name)
-                self.assertTrue(p.y + WALL <= y + 1e-9 and y + depth <= p.y + p.depth - WALL + 1e-9, fixture.name)
+                heights = (p.elevation + fixture.lift, p.elevation + fixture.lift + max(fixture.height, 0.1))
+                left, right = (h.clearance(place, p, side, (y, y + depth), heights) for side in ("left", "right"))
+                back, front = (h.clearance(place, p, side, (x, x + width), heights) for side in ("back", "front"))
+                self.assertTrue(p.x + left <= x + 1e-9 and x + width <= p.x + p.width - right + 1e-9, fixture.name)
+                self.assertTrue(p.y + back <= y + 1e-9 and y + depth <= p.y + p.depth - front + 1e-9, fixture.name)
                 lowest = min(ceiling(p, x + u * width, y + v * depth) for u in (0, 1) for v in (0, 1))
                 self.assertLessEqual(fixture.lift + fixture.height, lowest, fixture.name)
 
