@@ -33,10 +33,10 @@ const MODEL_TOKENS = [
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
-  vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
+  vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
   deciduous: "Tree", evergreen: "Evergreen tree",
 };
-const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Closets", "Steps", "Roof", "Yard"];
+const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Closets", "Steps", "Roof", "Yard"];
 // Each side of a plan as a line: the axis it runs along, where it is across
 // that axis, which way is inward (k), and where it starts and ends.
 const SIDE_LINES = {
@@ -190,7 +190,7 @@ function modelScene() {
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces" }[f.kind] ?? "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls" }[f.kind] ?? "Appliances"));
   const grade = details.grade;
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
@@ -337,7 +337,11 @@ function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
 // straight line along it, but no higher than cap. It's cut into cells at the
 // edges of its holes and at the heights in zs, each with its outside face in
 // outer(z) at its height, its inside face in inner, and its top dark where
-// the wall stops, or trim as the sill under a hole. Its ends are inner too,
+// the wall stops, or trim as the sill under a hole: the floor's color for a
+// hole down to the floor at floorZ, as a doorway's threshold, which lies in
+// the floor's plane, so the two look alike. A top under a floor above, which
+// lies in that floor's plane, is that floor's color, topColor, for the same
+// reason, where a doorway above bares it. Its ends are inner too,
 // but for an end at its room's corner, end0(z) or end1(z), which is part of
 // the wall around the corner's outside face.
 function wallRun(mesh, C, w, id) {
@@ -363,11 +367,13 @@ function wallRun(mesh, C, w, id) {
       const within = (h) => h.s0 <= sa + 1e-6 && sb <= h.s1 + 1e-6;
       if (w.holes.some((h) => within(h) && h.z0 <= za + 1e-6 && zc <= h.z1 + 1e-6)) continue;
       const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
+      const underFloor = atTop && w.topColor && ha >= raw(sa) - 1e-6 && hb >= raw(sb) - 1e-6; // not cut away
       const sill = w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
+      const threshold = sill && w.floorZ != null && Math.abs(zc - w.floorZ) < 1e-6;
       const z = (za + Math.min(ha, hb)) / 2;
       const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner;
       const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
-      const colors = { bottom: w.inner, top: atTop ? C.cut : sill ? C.sash : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
+      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? w.floorColor : sill ? C.sash : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
       slab(mesh, w, [sa, sb], [0, w.thick], za, [ha, hb], colors, id);
     }
   }
@@ -435,7 +441,12 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const ends = line.axis === "x" ? [["left", p.x], ["right", p.x + p.width]] : [["back", p.y], ["front", p.y + p.depth]];
         const [end0, end1] = [corner(sa, ends[0]), corner(sb, ends[1])];
         const outer = outside(side, fx, fy);
-        wallRun(mesh, C, { ...line, thick: MODEL_WALL, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1 }, q.item.id);
+        // A floor over the wall's top, as a room's over the crawlspace under it.
+        const [mx, my] = linePoint(line, (sa + sb) / 2, MODEL_WALL / 2);
+        const over = scene.pieces.find(([o, b2]) => o !== q && b2.x < mx && mx < b2.x + b2.width && b2.y < my && my < b2.y + b2.depth
+          && Math.abs(b2.elevation - raw(sa)) < 1e-6 && Math.abs(b2.elevation - raw(sb)) < 1e-6);
+        const topColor = over ? C[over[0].finish.floor] : null;
+        wallRun(mesh, C, { ...line, thick: MODEL_WALL, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorZ: p.elevation, floorColor: C[q.finish.floor], topColor }, q.item.id);
       }
     }
   }
@@ -464,7 +475,7 @@ function openingPanels(mesh, scene, o, mode, view) {
   }
   if (o.closet) { // a closet's doors, set into the wall, meeting in the middle
     part([s0, s1], [0.35 * t, 0.65 * t], [z0, z1], C.white);
-    part([(s0 + s1) / 2 - 0.03, (s0 + s1) / 2 + 0.03], [0.3 * t, 0.7 * t], [z0, z1], C.seam);
+    part([(s0 + s1) / 2 - 0.03, (s0 + s1) / 2 + 0.03], [0.3 * t, 0.7 * t], [z0, z1 - 0.01], C.seam); // just under their tops
     return;
   }
   if (o.kind === "opening") return; // a doorway with no door stands open
@@ -477,7 +488,8 @@ function openingPanels(mesh, scene, o, mode, view) {
 
 // An outside door or window from s0 to s1 and z0 to z1, its parts at depths d(f), for f from 0 at the wall's
 // outside face to 1 at its inside: a door's panel, a garage door's with its seams, or a window's or sliding
-// door's glass in a frame, split down the middle if it's wide.
+// door's glass in a frame, split down the middle if it's wide. The glass stops just inside the frame's edges,
+// so the two never share a face, which would flicker where it shows: atop a level cut away, or on a shed.
 function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
   const across = (f0, f1) => [d(f0), d(f1)];
   if (o.kind === "door" || o.kind === "garage door") {
@@ -489,7 +501,7 @@ function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
     return;
   }
   const [bar, frame] = [0.15, across(0.2, 0.8)];
-  part([s0, s1], across(0.45, 0.55), [z0, z1], C.glass);
+  part([s0 + 0.01, s1 - 0.01], across(0.45, 0.55), [z0 + 0.01, z1 - 0.01], C.glass);
   part([s0, s0 + bar], frame, [z0, z1], C.sash);
   part([s1 - bar, s1], frame, [z0, z1], C.sash);
   part([s0, s1], frame, [z0, z0 + bar], C.sash);
@@ -544,7 +556,7 @@ function closetWalls(mesh, scene, c, mode) {
       const z1 = Math.min(doors.z1, cap);
       slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C.white, c.item.id);
       const mid = (doors.s0 + doors.s1) / 2; // where the two doors meet
-      slab(mesh, w, [mid - 0.03, mid + 0.03], [0.25 * t, 0.75 * t], doors.z0, [z1, z1], C.seam, c.item.id);
+      slab(mesh, w, [mid - 0.03, mid + 0.03], [0.25 * t, 0.75 * t], doors.z0, [z1 - 0.01, z1 - 0.01], C.seam, c.item.id); // just under their tops
     }
   }
 }
@@ -883,9 +895,11 @@ function fence(mesh, scene, f) {
       const corners = (z) => [at(t0, -1, z), at(t1, -1, z), at(t1, 1, z), at(t0, 1, z)];
       hexa(mesh, corners(z0), corners(z1), color, itemId);
     };
-    // A wire slanting up from ta at za to tb at zb.
+    // A wire slanting up from ta at za to tb at zb, its ends square to it, so where two wires meet, their ends
+    // cross rather than lying in one plane.
     const wire = (ta, za, tb, zb, color, itemId) => {
-      const corners = (t, z) => [at(t - 0.05, -1, z), at(t + 0.05, -1, z), at(t + 0.05, 1, z), at(t - 0.05, 1, z)];
+      const k = 0.05 * Math.sign((zb - za) * (tb - ta)); // rising to the right, or to the left
+      const corners = (t, z) => [at(t - 0.05, -1, z + k), at(t + 0.05, -1, z - k), at(t + 0.05, 1, z - k), at(t - 0.05, 1, z + k)];
       hexa(mesh, corners(ta, za), corners(tb, zb), color, itemId);
     };
     // Boards, or chain link: a rail along its top, and a gate's bottom and sides, with the mesh between.
@@ -922,14 +936,24 @@ function fence(mesh, scene, f) {
     const spots = Array.from({ length: posts + 1 }, (_, k) => (length * k) / posts).filter((s) => !gates.some((g) => g.t0 < s && s < g.t1));
     for (const s of [...spots, ...gates.flatMap((g) => [g.t0, g.t1])]) {
       const [x, y] = [p[0] + dx * s, p[1] + dy * s];
-      box(mesh, [x - postHalf, y - postHalf, grade], [x + postHalf, y + postHalf, grade + f.height + postTop], post, id);
+      // Its bottom a hair over the ground, a chain-link post's another, so it meets no panel's or other post's.
+      const foot = grade + (chain ? 0.04 : 0.02);
+      box(mesh, [x - postHalf, y - postHalf, foot], [x + postHalf, y + postHalf, grade + f.height + postTop], post, id);
     }
   });
 }
 
 // A fixture: a box in its finish. A fireplace's firebox is dark, a little proud of the side facing away from
 // the wall it's nearest, across its middle and from low on it to a little over halfway up.
+// A fixture: a box in its finish. A half wall is in its room's wall color, with a cap in its finish; a
+// fireplace has a firebox on the side away from the wall it's against.
 function fixture(mesh, C, f) {
+  if (f.kind === "half wall") {
+    const cap = Math.max(f.z0, f.z1 - 0.15);
+    box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, cap], C[f.place?.finish.walls] ?? C.paint, f.item.id);
+    box(mesh, [f.x0, f.y0, cap], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
+    return;
+  }
   box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
   if (f.kind !== "fireplace" || !f.piece) return;
   const p = f.piece;

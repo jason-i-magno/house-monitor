@@ -95,7 +95,7 @@ DETAILS = Details(
         # Outside doors
         Opening("Front door", "door", "Entry", "front", 4.5, 3, 6.67),
         Opening("Garage door", "garage door", "Garage", "front", 3, 16, 7),
-        Opening("Sliding door", "sliding door", "Sunroom", "right", 4, 6, 6.67),
+        Opening("Sliding door", "sliding door", "Sunroom", "right", 3.5, 6, 6.67),
         # Inside doors and openings
         Opening("Door from the garage", "door", "Garage", "left", 10, 3, 6.67, sill=1),  # up steps
         Opening("Opening to the sunroom", "opening", "Sunroom", "front", 3, 8, 6.5),
@@ -154,6 +154,7 @@ DETAILS = Details(
         Fixture("Washer", "appliance", "Utility room", 0.5, 6, 2.3, 2.3, 3.2),
         Fixture("Dryer", "appliance", "Utility room", 0.5, 8.5, 2.3, 2.3, 3.2),
         Fixture("Space heater", "appliance", "Office", 1, 1, 1, 1.5, 2, finish="black"),
+        Fixture("Family room half wall", "half wall", "Family room", 14.55, 4, 5, 0.4, 3.5, finish="wood"),  # out from the office's wall
         Fixture("Fireplace", "fireplace", "Living room", 15, 12.8, 5, 1.75, 4.5, finish="brick"),  # beside the window
         Fixture("Air conditioner", "appliance", None, -4, 15, 2.75, 2.75, 2.8, lift=0.2, finish="steel"),
         # Supply registers in the floors, and the bathroom's ceiling fan
