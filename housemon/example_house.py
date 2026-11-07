@@ -131,6 +131,9 @@ DETAILS = Details(
         # Return air grilles
         Opening("Main floor return", "vent", "Living room", "right", 11, 2, 1, sill=0.5),
         Opening("Upstairs return", "vent", "Hall", "left", 15, 2, 1, sill=0.5),
+        # The shed's
+        Opening("Shed door", "door", "Shed", "front", 3.5, 3, 6.5),
+        Opening("Shed window", "window", "Shed", "left", 2.5, 3, 2, sill=3.5),
     ),
     closets=(
         Closet("Upstairs bedroom closet", "Upstairs bedroom", 1.5, 11.5, 7, 2.5, door="back"),
@@ -171,7 +174,7 @@ DETAILS = Details(
         Ground("Driveway", "driveway", 38, 28, 18, 32),
         Ground("Deck", "deck", 32, -10, 12, 10, height=0.9, paving="wood", railings=("right",)),
         Ground("Patio", "patio", 0, -10, 14, 10, paving="flagstone"),
-        Ground("Flower bed", "bed", 0, 28, 26, 3, paving="mulch"),  # along the front
+        Ground("Flower bed", "bed", 0, 28, 26, 3, height=0.75, paving="mulch", edging="stone"),  # raised, along the front
         # From the side gate to the patio.
         Ground("Gravel path", "walk", -12, -10, 12, 30, paving="gravel", outline=((-12, 20), (-8, 20), (0, -6), (0, -10))),
     ),

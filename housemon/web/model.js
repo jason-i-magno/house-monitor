@@ -168,8 +168,11 @@ function modelScene() {
   const inRoom = (thing, i, prefix, kind, group) => {
     const q = thing.room != null ? named(thing.room) : null;
     if (thing.room != null && !q) return [];
-    const p = q?.pieces[0];
-    const [x, y] = p ? [p.x + thing.x, p.y + thing.y] : [thing.x, thing.y];
+    const first = q?.pieces[0];
+    const [x, y] = first ? [first.x + thing.x, first.y + thing.y] : [thing.x, thing.y];
+    // The piece it stands in: the one its rectangle is in, else the first.
+    const within = (o) => o.x - 1e-6 <= x && x + thing.width <= o.x + o.width + 1e-6 && o.y - 1e-6 <= y && y + thing.depth <= o.y + o.depth + 1e-6;
+    const p = q ? q.pieces.find(within) ?? first : null;
     const z = p ? p.elevation : details.grade;
     const resolved = { ...thing, place: q, piece: p, x0: x, y0: y, x1: x + thing.width, y1: y + thing.depth, z0: z + (thing.lift ?? 0) };
     resolved.z1 = resolved.z0 + (thing.height ?? MODEL_CLOSET_HEIGHT);
@@ -193,7 +196,20 @@ function modelScene() {
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
   // Trees, like roofs, come off when the house is cut away, so they don't hide it.
   const trees = details.trees.map((t, i) => ({ ...t, item: outside(`tree:${i}`, t, MODEL_KINDS[t.kind], "Yard", [t.x - t.spread / 2, t.y - t.spread / 2, grade, t.x + t.spread / 2, t.y + t.spread / 2, grade + t.height], { whole: true }) }));
-  const sheds = details.sheds.map((b, i) => ({ ...b, item: outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, grade, b.x + b.width, b.y + b.depth, grade + b.peak]) }));
+  // A shed's doors and windows are the openings naming it, placed on its walls as a room's are, from the ground.
+  const sheds = details.sheds.map((b, i) => {
+    const item = outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, grade, b.x + b.width, b.y + b.depth, grade + b.peak]);
+    const openings = details.openings.flatMap((o, k) => {
+      if (o.room !== b.name || named(o.room)) return [];
+      const side = SIDE_LINES[o.wall](b);
+      const [s0, z0] = [side.a + o.offset, grade + o.sill];
+      const [p, q] = [linePoint(side, s0, 0), linePoint(side, s0 + o.width, 0)];
+      const bbox = [Math.min(p[0], q[0]), Math.min(p[1], q[1]), z0, Math.max(p[0], q[0]), Math.max(p[1], q[1]), z0 + o.height];
+      const more = { group: o.kind === "vent" ? "Vents" : "Doors and windows", where: `${b.name}, ${o.wall} wall` };
+      return [{ ...o, ...side, s0, s1: s0 + o.width, z0, z1: z0 + o.height, item: outside(`opening:${k}`, o, MODEL_KINDS[o.kind], null, bbox, more) }];
+    });
+    return { ...b, item, openings };
+  });
   const fences = details.fences.map((f, i) => {
     const [xs, ys] = [f.points.map((p) => p[0]), f.points.map((p) => p[1])];
     const item = outside(`fence:${i}`, f, f.kind === "chain link" ? "Chain-link fence" : "Fence", "Yard", [Math.min(...xs), Math.min(...ys), grade, Math.max(...xs), Math.max(...ys), grade + f.height]);
@@ -321,7 +337,9 @@ function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
 // straight line along it, but no higher than cap. It's cut into cells at the
 // edges of its holes and at the heights in zs, each with its outside face in
 // outer(z) at its height, its inside face in inner, and its top dark where
-// the wall stops, or trim as the sill under a hole.
+// the wall stops, or trim as the sill under a hole. Its ends are inner too,
+// but for an end at its room's corner, end0(z) or end1(z), which is part of
+// the wall around the corner's outside face.
 function wallRun(mesh, C, w, id) {
   const raw = (s) => w.raw0 + ((w.raw1 - w.raw0) * (s - w.s0)) / (w.s1 - w.s0);
   const top = (s) => Math.min(raw(s), w.cap);
@@ -346,7 +364,10 @@ function wallRun(mesh, C, w, id) {
       if (w.holes.some((h) => within(h) && h.z0 <= za + 1e-6 && zc <= h.z1 + 1e-6)) continue;
       const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
       const sill = w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
-      const colors = { bottom: w.inner, top: atTop ? C.cut : sill ? C.sash : w.inner, sides: [w.outer((za + Math.min(ha, hb)) / 2), w.inner, w.inner, w.inner] };
+      const z = (za + Math.min(ha, hb)) / 2;
+      const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner;
+      const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
+      const colors = { bottom: w.inner, top: atTop ? C.cut : sill ? C.sash : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
       slab(mesh, w, [sa, sb], [0, w.thick], za, [ha, hb], colors, id);
     }
   }
@@ -384,20 +405,37 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const whole = mode === "outside" || (!occupant(p.elevation + 2) && standsWhole(scene, line, (sa + sb) / 2, view));
         const raw = (s) => p.top(...linePoint(line, s, 0));
         const zs = [p.elevation];
-        for (const [o, b2] of scene.pieces) {
-          if (o !== q && b2.x < fx && fx < b2.x + b2.width && b2.y < fy && fy < b2.y + b2.depth) zs.push(b2.base, b2.top(fx, fy));
-        }
+        const beyond = (x, y) => {
+          for (const [o, b2] of scene.pieces) {
+            if (o !== q && b2.x < x && x < b2.x + b2.width && b2.y < y && y < b2.y + b2.depth) zs.push(b2.base, b2.top(x, y));
+          }
+        };
+        beyond(fx, fy);
         const highest = Math.max(raw(sa), raw(sb));
         const holes = scene.openings
           .filter((o) => o.through && o.axis === line.axis && Math.abs(o.line - line.line) < 1e-6)
           .filter((o) => o.s0 < sb && sa < o.s1 && o.z0 < highest && p.base < o.z1)
           .map((o) => ({ s0: Math.max(o.s0, sa), s1: Math.min(o.s1, sb), z0: o.z0, z1: o.z1 }));
-        const outer = (z) => {
-          if (occupant(z)) return inner;
+        // The outside face of the wall on a side, at height z, with x, y just past it.
+        const outside = (wallSide, x, y) => (z) => {
+          if (occupiedAt(scene.pieces, x, y, z, q)) return inner;
           if (z < p.elevation) return p.ground ? C.foundation : C.siding;
-          return q.finish.walls === "concrete" ? C.foundation : C[scene.cladding[`${q.name}|${side}`]] ?? C.siding;
+          return q.finish.walls === "concrete" ? C.foundation : C[scene.cladding[`${q.name}|${wallSide}`]] ?? C.siding;
         };
-        wallRun(mesh, C, { ...line, thick: MODEL_WALL, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer }, q.item.id);
+        // An end at the room's corner is part of the outside face of the wall around the corner, so it's
+        // colored as that is just past it, across the middle of this wall.
+        const corner = (s, [endSide, at]) => {
+          if (Math.abs(s - at) > 1e-6) return null;
+          const out = endSide === "left" || endSide === "back" ? -0.01 : 0.01;
+          const middle = line.line + (line.k * MODEL_WALL) / 2;
+          const [x, y] = line.axis === "x" ? [at + out, middle] : [middle, at + out];
+          beyond(x, y);
+          return outside(endSide, x, y);
+        };
+        const ends = line.axis === "x" ? [["left", p.x], ["right", p.x + p.width]] : [["back", p.y], ["front", p.y + p.depth]];
+        const [end0, end1] = [corner(sa, ends[0]), corner(sb, ends[1])];
+        const outer = outside(side, fx, fy);
+        wallRun(mesh, C, { ...line, thick: MODEL_WALL, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1 }, q.item.id);
       }
     }
   }
@@ -429,18 +467,29 @@ function openingPanels(mesh, scene, o, mode, view) {
     part([(s0 + s1) / 2 - 0.03, (s0 + s1) / 2 + 0.03], [0.3 * t, 0.7 * t], [z0, z1], C.seam);
     return;
   }
-  if (!o.exterior || o.kind === "opening") return; // a doorway inside stands open
-  const [bar, frame] = [0.15, [0.2 * t, 0.8 * t]];
+  if (o.kind === "opening") return; // a doorway with no door stands open
+  if (!o.exterior) { // a door inside, closed, in white
+    if (o.kind === "door") part([s0, s1], [0.35 * t, 0.65 * t], [z0, z1], C.white);
+    return;
+  }
+  doorOrWindow(part, C, o, [s0, s1, z0, z1], (f) => f * t);
+}
+
+// An outside door or window from s0 to s1 and z0 to z1, its parts at depths d(f), for f from 0 at the wall's
+// outside face to 1 at its inside: a door's panel, a garage door's with its seams, or a window's or sliding
+// door's glass in a frame, split down the middle if it's wide.
+function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
+  const across = (f0, f1) => [d(f0), d(f1)];
   if (o.kind === "door" || o.kind === "garage door") {
-    part([s0, s1], [0.35 * t, 0.65 * t], [z0, z1], o.kind === "door" ? C.door : C["garage-door"]);
+    part([s0, s1], across(0.35, 0.65), [z0, z1], o.kind === "door" ? C.door : C["garage-door"]);
     for (const f of o.kind === "garage door" ? [0.25, 0.5, 0.75] : []) { // its panels' seams
       const z = z0 + f * o.height;
-      if (z + 0.04 < z1) part([s0 + 0.2, s1 - 0.2], [0.3 * t, 0.35 * t], [z - 0.04, z + 0.04], C.seam);
+      if (z + 0.04 < z1) part([s0 + 0.2, s1 - 0.2], across(0.3, 0.35), [z - 0.04, z + 0.04], C.seam);
     }
     return;
   }
-  // A window or sliding door: glass in a frame, split down the middle if it's wide.
-  part([s0, s1], [0.45 * t, 0.55 * t], [z0, z1], C.glass);
+  const [bar, frame] = [0.15, across(0.2, 0.8)];
+  part([s0, s1], across(0.45, 0.55), [z0, z1], C.glass);
   part([s0, s0 + bar], frame, [z0, z1], C.sash);
   part([s1 - bar, s1], frame, [z0, z1], C.sash);
   part([s0, s1], frame, [z0, z0 + bar], C.sash);
@@ -593,8 +642,8 @@ function earth(mesh, scene, shows) {
       if (low != null && low < z - 1e-6) mesh.face([[ax, ay, low], [bx, by, low], [bx, by, z], [ax, ay, z]], C.soil, scene.lawn.id, center);
     }
   }));
-  // A ground cut to an outline lies just over the lawn.
-  for (const g of scene.grounds.filter((g) => g.outline)) {
+  // A flat ground cut to an outline lies just over the lawn.
+  for (const g of scene.grounds.filter((g) => g.outline && !(g.height > 0))) {
     const center = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
     for (const triangle of triangulate(g.outline)) mesh.face(triangle.map(([x, y]) => [x, y, grade + 0.03]), paving(C, g), g.item.id, center);
   }
@@ -642,9 +691,9 @@ const MODEL_BALL = (() => {
 function tree(mesh, scene, t) {
   const [C, grade, id] = [scene.colors, scene.details.grade, t.item.id];
   round(mesh, [t.x, t.y], Math.max(0.35, t.spread * 0.03), grade, grade + t.height * 0.6, C.trunk, id);
-  if (t.ring > 0) { // a raised stone ring, filled with soil
-    round(mesh, [t.x, t.y], t.ring, grade, grade + 0.9, C.stone, id, false, 16);
-    round(mesh, [t.x, t.y], t.ring - 0.4, grade + 0.9, grade + 0.95, C.soil, id, false, 16);
+  if (t.ring > 0) { // a raised ring of stone or brick, filled with mulch
+    round(mesh, [t.x, t.y], t.ring, grade, grade + 0.9, C[t.edging] ?? C.stone, id, false, 16);
+    round(mesh, [t.x, t.y], t.ring - 0.4, grade + 0.9, grade + 0.95, C.mulch, id, false, 16);
   }
   if (t.kind === "evergreen") {
     for (const [from, to, width] of [[0.18, 0.62, 1], [0.4, 0.82, 0.74], [0.6, 1, 0.48]]) {
@@ -736,7 +785,7 @@ function roofOutline(mesh, scene, r) {
 // part of the flight and everything above it.
 function stepsFlight(mesh, scene, t) {
   const C = scene.colors;
-  const n = Math.max(1, Math.round((t.top - t.bottom) / 0.6));
+  const n = t.count ?? Math.max(1, Math.round((t.top - t.bottom) / 0.6));
   for (let k = 0; k < n; k++) {
     const f = k / n; // how far up the flight this step starts
     let [x0, y0, x1, y1] = [t.x, t.y, t.x + t.width, t.y + t.depth];
@@ -746,6 +795,36 @@ function stepsFlight(mesh, scene, t) {
     if (t.up === "right") x0 += f * t.width;
     box(mesh, [x0, y0, t.bottom], [x1, y1, t.bottom + ((k + 1) * (t.top - t.bottom)) / n], paving(C, t), t.item.id);
   }
+}
+
+// A raised ground: a block of its paving up to its top, over its rectangle or cut to its outline. With
+// edging, its sides are a low wall of stone or brick 0.4 ft thick instead, with its paving filled in a
+// little below the wall's top.
+function raisedGround(mesh, scene, g) {
+  const [C, grade, id] = [scene.colors, scene.details.grade, g.item.id];
+  const top = grade + g.height;
+  const shape = g.outline ?? [[g.x, g.y], [g.x + g.width, g.y], [g.x + g.width, g.y + g.depth], [g.x, g.y + g.depth]];
+  const sign = Math.sign(polygonArea(shape));
+  const fill = g.edging ? top - 0.1 : top;
+  const below = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
+  for (const triangle of triangulate(shape)) mesh.face(triangle.map(([x, y]) => [x, y, fill]), paving(C, g), id, below);
+  shape.forEach((a, i) => {
+    const [b, c] = [shape[(i + 1) % shape.length], shape[(i + 2) % shape.length]];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (length < 1e-9) return;
+    const [dx, dy] = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    const [ix, iy] = [-sign * dy, sign * dx]; // inward
+    const at = (s, d, z) => [a[0] + dx * s + ix * d, a[1] + dy * s + iy * d, z];
+    if (!g.edging) {
+      mesh.face([at(0, 0, grade), at(length, 0, grade), at(length, 0, top), at(0, 0, top)], paving(C, g), id, at(length / 2, 1, grade));
+      return;
+    }
+    // At a corner turning in, the wall runs on its thickness past it, to close the corner inside.
+    const turnsIn = sign * ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) < -1e-9;
+    const [end, t] = [length + (turnsIn ? 0.4 : 0), 0.4];
+    const corners = (z) => [at(0, 0, z), at(end, 0, z), at(end, t, z), at(0, t, z)];
+    hexa(mesh, corners(grade), corners(top), C[g.edging] ?? C.stone, id);
+  });
 }
 
 // A ground's railings, in its paving, 3 ft over its top along each side it lists: posts about every 6 ft, a
@@ -769,12 +848,19 @@ function railings(mesh, scene, g) {
   }
 }
 
-// A shed: walls in siding under a gable roof, its eaves a little past them.
+// A shed: walls in siding under a gable roof, its eaves a little past them, and its doors and windows.
 function shed(mesh, scene, b) {
   const [C, grade, over] = [scene.colors, scene.details.grade, 0.5];
   box(mesh, [b.x, b.y, grade], [b.x + b.width, b.y + b.depth, grade + b.wall], C.siding, b.item.id);
   const span = b.ridge === "x" ? { x: b.x, y: b.y - over, width: b.width, depth: b.depth + 2 * over } : { x: b.x - over, y: b.y, width: b.width + 2 * over, depth: b.depth };
   roofSection(mesh, scene, { ...span, ridge: b.ridge, eave: grade + b.wall + MODEL_ROOF_DEPTH, peak: grade + b.peak, item: b.item, color: C["shed-roof"] });
+  // Its doors and windows, standing just out from its walls.
+  for (const o of b.openings) {
+    const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
+    if (o.kind === "vent") part([o.s0, o.s1], [-0.04, 0], [o.z0, o.z1], C.grille);
+    else if (o.kind === "opening") part([o.s0, o.s1], [-0.02, 0], [o.z0, o.z1], C.black); // a dark doorway
+    else doorOrWindow(part, C, o, [o.s0, o.s1, o.z0, o.z1], (f) => (f - 1) * 0.12);
+  }
 }
 
 // A board fence along each run between its points, with posts about every 8
@@ -872,9 +958,8 @@ function buildModel(scene, mode, view) {
   for (const c of scene.closets) if (shows(c.item)) closetWalls(mesh, scene, c, mode);
   for (const f of scene.fixtures) if (shows(f.item)) fixture(mesh, C, f);
   earth(mesh, scene, shows);
-  const grade = scene.details.grade;
   for (const g of scene.grounds) {
-    if (g.height > 0) box(mesh, [g.x, g.y, grade], [g.x + g.width, g.y + g.depth, grade + g.height], paving(C, g), g.item.id);
+    if (g.height > 0) raisedGround(mesh, scene, g);
     railings(mesh, scene, g);
   }
   for (const b of scene.sheds) shed(mesh, scene, b);

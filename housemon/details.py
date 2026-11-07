@@ -4,7 +4,8 @@ vents, appliances, fireplaces and closets in them, the roof over them, and the y
 A house file (example_house.py, or your own) gives its details as a Details.
 Like the rooms' plans, they're in feet, with x to the right, y toward the front
 (the street) and heights above the main floor. Rooms are named as the house
-names them, and things in a room are placed from its plan's back-left corner.
+names them, and things in a room are placed from its plan's back-left corner
+(its first piece's, for a room in pieces), standing in any of its pieces.
 Each thing is either known, from photos of the house or someone who knows it,
 or a guess to correct.
 """
@@ -18,6 +19,7 @@ GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
 FENCES = ("wood", "chain link")
+EDGINGS = ("stone", "brick")
 CLADDINGS = ("siding", "paneling", "stone")
 FLOORINGS = ("carpet", "wood", "tile", "concrete", "dirt")
 WALLINGS = ("paint", "drywall", "concrete")
@@ -31,14 +33,15 @@ def _check(value, allowed, what):
 
 @dataclass(frozen=True)
 class Opening:
-    """A door, window or vent in one of a room's walls.
+    """A door, window or vent in one of a room's walls, or a shed's, named as its room.
 
     wall is the room's side it's in, and offset how far along that wall it
     starts: from the left end of a back or front wall, from the back end of a
     left or right wall. A room in pieces uses its piece furthest out on that
-    side. sill is how high its bottom is above the room's floor. A door, window
-    or opening goes through the wall to whatever is on the other side; an
-    opening has no door in it. A vent is a grille on the wall.
+    side. sill is how high its bottom is above the room's floor, or the ground
+    for a shed's. A door, window or opening goes through the wall to whatever
+    is on the other side; an opening has no door in it. A vent is a grille on
+    the wall.
     """
 
     name: str
@@ -108,9 +111,11 @@ class Ground:
     top stands above the ground.
 
     Where it runs past the lot, as a driveway may to the street, it's cut off at the lot's edge. A flat one
-    can have cutouts, each x, y, width and depth, left as bare ground: around a tree, say. Or it can have an
-    outline, its corners on the plan in order, that cuts it to that shape within its rectangle and the lot:
-    along a slanting fence, say. railings are the sides it has a railing along, 3 ft over its top: a deck's.
+    can have cutouts, each x, y, width and depth, left as bare ground: around a tree, say. Any can instead
+    have an outline, its corners on the plan in order, that cuts it to that shape within its rectangle and
+    the lot: along a slanting fence, say. railings are the sides it has a railing along, 3 ft over its top: a
+    deck's. edging, for a raised one, is a low wall of stone or brick along its edges, up to its top, holding
+    in its paving: a raised bed's.
     """
 
     name: str
@@ -124,6 +129,7 @@ class Ground:
     cutouts: tuple[tuple[float, float, float, float], ...] = ()
     outline: tuple[tuple[float, float], ...] | None = None
     railings: tuple[str, ...] = ()
+    edging: str | None = None
     known: bool = False
 
     def __post_init__(self):
@@ -132,15 +138,19 @@ class Ground:
             _check(side, SIDES, "a railing's side")
         if self.cutouts and self.height:
             raise ValueError(f"{self.name} stands above the ground, so it can't have cutouts")
-        if self.outline and (self.height or self.cutouts):
-            raise ValueError(f"{self.name} has an outline, so it's flat, with no cutouts")
+        if self.outline and self.cutouts:
+            raise ValueError(f"{self.name} has an outline, so it has no cutouts")
+        if self.edging is not None:
+            _check(self.edging, EDGINGS, "an edging")
+            if not self.height:
+                raise ValueError(f"{self.name} has edging, so it stands above the ground")
         _check(self.paving, PAVINGS, "a paving")
 
 
 @dataclass(frozen=True)
 class Tree:
     """A tree, its trunk at x and y on the plan; spread is its canopy's width, and ring the radius of a
-    raised stone ring around its trunk, if it has one."""
+    raised bed around its trunk, if it has one, edged in stone or brick (edging) and filled with mulch."""
 
     name: str
     kind: str
@@ -149,16 +159,18 @@ class Tree:
     height: float
     spread: float
     ring: float = 0.0
+    edging: str = "stone"
     known: bool = False
 
     def __post_init__(self):
         _check(self.kind, TREES, "a tree's kind")
+        _check(self.edging, EDGINGS, "an edging")
 
 
 @dataclass(frozen=True)
 class Shed:
     """A shed or other outbuilding on the plan: walls `wall` ft high under a gable roof up to `peak`,
-    its ridge along x or y."""
+    its ridge along x or y. Its doors and windows are openings that name it as their room."""
 
     name: str
     x: float
@@ -196,7 +208,8 @@ class Fence:
 class Steps:
     """A flight of steps over x, y, width and depth on the plan, climbing from bottom to top, heights above the
     main floor, toward the side `up`. They're in a room, in any piece of it, for what shows when the house is cut
-    away, or outside. A flight in a room that climbs to the floor of a room above opens a stairwell in it."""
+    away, or outside. A flight in a room that climbs to the floor of a room above opens a stairwell in it. count is how many steps, if not one
+    for every 7 in or so of rise."""
 
     name: str
     x: float
@@ -208,11 +221,14 @@ class Steps:
     up: str
     room: str | None = None
     paving: str = "concrete"
+    count: int | None = None
     known: bool = False
 
     def __post_init__(self):
         _check(self.up, SIDES, "the way steps go up")
         _check(self.paving, PAVINGS, "a paving")
+        if self.count is not None and self.count < 1:
+            raise ValueError(f"{self.name} needs a step or more, not {self.count}")
 
 
 @dataclass(frozen=True)

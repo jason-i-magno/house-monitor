@@ -11,7 +11,7 @@ from pathlib import Path
 
 from housemon import example_house
 from housemon import house as houses
-from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof
+from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Steps, Tree
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit
 DOORS = ("door", "sliding door", "garage door", "opening")
@@ -105,6 +105,8 @@ class Layout:
         self.details = module.DETAILS
         self.places = [room.sensor for room in module.HOUSE if room.sensor.plan] + list(module.AREAS)
         self.pieces = [(place, plan) for place in self.places for plan in pieces(place.plan)]
+        # The openings in the house's walls; the rest are in a shed's, naming it.
+        self.openings = [o for o in self.details.openings if o.room not in {s.name for s in self.details.sheds}]
         self.footprint = set().union(*(squares(rect(p)) for _, p in self.pieces))
 
     def place(self, name):
@@ -113,6 +115,14 @@ class Layout:
 
     def first(self, name):
         return pieces(self.place(name).plan)[0]
+
+    def piece(self, thing):
+        """The piece of its room a closet or fixture stands in: the one its rectangle is in, else the first."""
+        x, y, width, depth = self.absolute(thing)
+        for p in pieces(self.place(thing.room).plan):
+            if p.x - 1e-9 <= x and x + width <= p.x + p.width + 1e-9 and p.y - 1e-9 <= y and y + depth <= p.y + p.depth + 1e-9:
+                return p
+        return self.first(thing.room)
 
     def wall(self, opening: Opening):
         """The piece an opening's wall belongs to, the wall's axis and line, and the opening's span along it."""
@@ -188,17 +198,20 @@ class PlacesTest(HouseTestCase):
     def test_every_room_named_is_in_the_house(self):
         for h in self.each():
             d = h.details
-            names = [o.room for o in d.openings] + [c.room for c in d.closets] + [c.room for c in d.claddings]
+            names = [o.room for o in h.openings] + [c.room for c in d.closets] + [c.room for c in d.claddings]
             names += [f.room for f in d.fixtures if f.room] + [s.room for s in d.steps if s.room]
             for name in names:
                 h.place(name)  # exactly one
             self.assertLessEqual(set(d.finishes), {q.name for q in h.places})
+            for name in {s.name for s in d.sheds}:
+                self.assertEqual([s.name for s in d.sheds].count(name), 1, name)
+                self.assertFalse(any(q.name == name for q in h.places), name)
 
 
 class OpeningTest(HouseTestCase):
     def test_fits_in_its_wall(self):
         for h in self.each():
-            for opening in h.details.openings:
+            for opening in h.openings:
                 p, _, _, a, b, length = h.wall(opening)
                 self.assertTrue(0 <= opening.offset and opening.offset + opening.width <= length, opening.name)
                 if opening.wall in ("left", "right"):
@@ -211,7 +224,7 @@ class OpeningTest(HouseTestCase):
 
     def test_windows_open_to_the_outside(self):
         for h in self.each():
-            for opening in (o for o in h.details.openings if o.kind == "window"):
+            for opening in (o for o in h.openings if o.kind == "window"):
                 for x, y, z in h.beyond(opening):
                     hit = [q.name for q, p in h.pieces if inside(x, y, z, p)]
                     self.assertEqual(hit, [], opening.name)
@@ -219,7 +232,7 @@ class OpeningTest(HouseTestCase):
     def test_doors_lead_outside_or_into_one_place_at_their_sill(self):
         """A door's sill is the floor beyond it, or a little above it, as a crawlspace's hatch is."""
         for h in self.each():
-            for opening in (o for o in h.details.openings if o.kind in DOORS):
+            for opening in (o for o in h.openings if o.kind in DOORS):
                 sill = h.wall(opening)[0].elevation + opening.sill
                 hits = {
                     (q.name, p.elevation)
@@ -243,7 +256,7 @@ class OpeningTest(HouseTestCase):
                 """Which of its wall's faces a vent's grille is on; a door or window goes through, so both."""
                 return {"left": 1, "back": 1, "right": -1, "front": -1}[opening.wall] if opening.kind == "vent" else 0
 
-            for one, other in itertools.combinations(h.details.openings, 2):
+            for one, other in itertools.combinations(h.openings, 2):
                 (axis, line, a, b, z0, z1), (axis2, line2, a2, b2, z02, z12) = extent(one), extent(other)
                 same_wall = axis == axis2 and abs(line - line2) < 1e-6
                 back_to_back = face(one) * face(other) < 0  # two grilles on its two faces, as a return through it
@@ -255,16 +268,17 @@ class ClosetTest(HouseTestCase):
     def test_sits_in_its_room_with_its_doors_facing_in_or_set_into_its_wall(self):
         for h in self.each():
             for closet in h.details.closets:
-                p = h.first(closet.room)
-                self.assertTrue(0 <= closet.x and closet.x + closet.width <= p.width, closet.name)
-                self.assertTrue(0 <= closet.y and closet.y + closet.depth <= p.depth, closet.name)
+                p = h.piece(closet)
+                x, y, width, depth = h.absolute(closet)
+                self.assertTrue(p.x - 1e-9 <= x and x + width <= p.x + p.width + 1e-9, closet.name)
+                self.assertTrue(p.y - 1e-9 <= y and y + depth <= p.y + p.depth + 1e-9, closet.name)
                 on_wall = {
-                    "left": closet.x == 0,
-                    "right": closet.x + closet.width == p.width,
-                    "back": closet.y == 0,
-                    "front": closet.y + closet.depth == p.depth,
+                    "left": abs(x - p.x) < 1e-6,
+                    "right": abs(x + width - p.x - p.width) < 1e-6,
+                    "back": abs(y - p.y) < 1e-6,
+                    "front": abs(y + depth - p.y - p.depth) < 1e-6,
                 }
-                set_in = any(closet_door(h, closet, o) for o in h.details.openings)
+                set_in = any(closet_door(h, closet, o) for o in h.openings)
                 self.assertFalse(on_wall[closet.door] and not set_in, closet.name)
 
     def test_closets_do_not_overlap_or_cover_a_door_or_window(self):
@@ -272,7 +286,7 @@ class ClosetTest(HouseTestCase):
             for one, other in itertools.combinations(h.details.closets, 2):
                 if h.place(one.room) is h.place(other.room):
                     self.assertFalse(overlap(h.absolute(one), h.absolute(other)), (one.name, other.name))
-            for closet, opening in itertools.product(h.details.closets, h.details.openings):
+            for closet, opening in itertools.product(h.details.closets, h.openings):
                 if opening.kind == "vent" or closet_door(h, closet, opening):
                     continue
                 p, axis, line, a, b, _ = h.wall(opening)
@@ -289,18 +303,19 @@ class FixtureTest(HouseTestCase):
     def test_fits_in_its_room_under_the_ceiling(self):
         for h in self.each():
             for fixture in (f for f in h.details.fixtures if f.room):
-                p = h.first(fixture.room)
-                self.assertTrue(WALL <= fixture.x and fixture.x + fixture.width <= p.width - WALL, fixture.name)
-                self.assertTrue(WALL <= fixture.y and fixture.y + fixture.depth <= p.depth - WALL, fixture.name)
+                p = h.piece(fixture)
                 x, y, width, depth = h.absolute(fixture)
+                self.assertTrue(p.x + WALL <= x + 1e-9 and x + width <= p.x + p.width - WALL + 1e-9, fixture.name)
+                self.assertTrue(p.y + WALL <= y + 1e-9 and y + depth <= p.y + p.depth - WALL + 1e-9, fixture.name)
                 lowest = min(ceiling(p, x + u * width, y + v * depth) for u in (0, 1) for v in (0, 1))
                 self.assertLessEqual(fixture.lift + fixture.height, lowest, fixture.name)
 
     def test_fireplaces_stand_against_a_wall(self):
         for h in self.each():
             for fireplace in (f for f in h.details.fixtures if f.kind == "fireplace"):
-                p = h.first(fireplace.room)
-                gaps = (fireplace.x, fireplace.y, p.width - fireplace.x - fireplace.width, p.depth - fireplace.y - fireplace.depth)
+                p = h.piece(fireplace)
+                x, y, width, depth = h.absolute(fireplace)
+                gaps = (x - p.x, y - p.y, p.x + p.width - x - width, p.y + p.depth - y - depth)
                 self.assertLessEqual(min(gaps), WALL + 0.25, fireplace.name)
 
     def test_fixtures_are_in_a_closet_or_clear_of_them(self):
@@ -324,7 +339,7 @@ class FixtureTest(HouseTestCase):
         An opening, a doorway with no door or an open wall, needs only a way through it: 2.5 ft of it clear."""
         for h in self.each():
             clear = []
-            for opening in (o for o in h.details.openings if o.kind in DOORS):
+            for opening in (o for o in h.openings if o.kind in DOORS):
                 p, axis, line, a, b, _ = h.wall(opening)
                 strip = (a, line - 2, b - a, 4) if axis == "x" else (line - 2, a, 4, b - a)
                 owner = next((c for c in h.details.closets if closet_door(h, c, opening)), None)  # a closet's own door
@@ -408,6 +423,20 @@ class YardTest(HouseTestCase):
                 for x, y, width, depth in ground.cutouts:
                     across = ground.x <= x and x + width <= ground.x + ground.width
                     self.assertTrue(across and ground.y <= y and y + depth <= ground.y + ground.depth, ground.name)
+
+    def test_a_sheds_doors_and_windows_fit_its_walls_apart(self):
+        """Up to its eaves, from the ground."""
+        for h in self.each():
+            for shed in h.details.sheds:
+                openings = [o for o in h.details.openings if o.room == shed.name]
+                for o in openings:
+                    length = shed.width if o.wall in ("back", "front") else shed.depth
+                    self.assertTrue(0 <= o.offset and o.offset + o.width <= length, o.name)
+                    self.assertTrue(0 <= o.sill and o.sill + o.height <= shed.wall, o.name)
+                for one, other in itertools.combinations(openings, 2):
+                    along = one.offset < other.offset + other.width and other.offset < one.offset + one.width
+                    up = one.sill < other.sill + other.height and other.sill < one.sill + one.height
+                    self.assertFalse(one.wall == other.wall and along and up, (one.name, other.name))
 
     def test_gates_are_on_their_fences(self):
         for h in self.each():
@@ -495,9 +524,17 @@ class KindsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Fence("Fence", ((0, 0), (10, 0)), kind="stone")
         with self.assertRaises(ValueError):
-            Ground("Mound", "bed", 0, 0, 10, 10, height=1, outline=((0, 0), (10, 0), (5, 10)))
+            Ground("Bed", "bed", 0, 0, 10, 10, outline=((0, 0), (10, 0), (5, 10)), cutouts=((4, 1, 2, 2),))
+        with self.assertRaises(ValueError):
+            Ground("Bed", "bed", 0, 0, 10, 3, height=1, edging="wood")
+        with self.assertRaises(ValueError):
+            Ground("Bed", "bed", 0, 0, 10, 3, edging="brick")  # edging holds in a raised one
+        with self.assertRaises(ValueError):
+            Tree("Tree", "deciduous", 0, 0, height=30, spread=20, ring=3, edging="wood")
         with self.assertRaises(ValueError):
             Ground("Deck", "deck", 0, 0, 10, 10, height=1, railings=("up",))
+        with self.assertRaises(ValueError):
+            Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", count=0)
 
     def test_a_roof_needs_a_ridge_or_a_drop(self):
         with self.assertRaises(ValueError):
