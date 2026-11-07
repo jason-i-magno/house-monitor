@@ -141,26 +141,26 @@ DETAILS = Details(
         Closet("Coat closet", "Entry", 9, 0, 3, 3, door="left"),
     ),
     fixtures=(
-        Fixture("Refrigerator", "appliance", "Kitchen", 15, 6.5, 2.5, 3, 5.75, finish="steel"),
-        Fixture("Range", "appliance", "Kitchen", 1, 10.5, 2.5, 2, 3, finish="steel"),
-        Fixture("Range hood", "vent", "Kitchen", 1.1, 10.5, 2.3, 2, 1, lift=5.5, finish="steel"),
-        Fixture("Dishwasher", "appliance", "Kitchen", 6, 10.5, 2, 2, 2.8, finish="steel"),
+        Fixture("Refrigerator", "appliance", "Kitchen", 15.15, 6.5, 2.5, 3, 5.75, finish="steel"),
+        Fixture("Range", "appliance", "Kitchen", 1, 10.65, 2.5, 2, 3, finish="steel"),
+        Fixture("Range hood", "vent", "Kitchen", 1.1, 10.65, 2.3, 2, 1, lift=5.5, finish="steel"),
+        Fixture("Dishwasher", "appliance", "Kitchen", 6, 10.65, 2, 2, 2.8, finish="steel"),
         Fixture("Kitchen sink", "plumbing", "Kitchen", 14.5, 0.4, 3, 2, 3),  # under the window
-        Fixture("Bathtub", "plumbing", "Bathroom", 0.4, 0.4, 5, 2.5, 1.75),
-        Fixture("Toilet", "plumbing", "Bathroom", 6.2, 3, 2.4, 1.6, 1.3),
-        Fixture("Bathroom sink", "plumbing", "Bathroom", 0.4, 3.5, 1.7, 2, 2.8),
-        Fixture("Furnace", "appliance", "Utility room", 0.5, 0.5, 2.5, 2.5, 4.5, finish="steel"),
+        Fixture("Bathtub", "plumbing", "Bathroom", 0.25, 0.4, 5, 2.5, 1.75),
+        Fixture("Toilet", "plumbing", "Bathroom", 6.35, 3, 2.4, 1.6, 1.3),
+        Fixture("Bathroom sink", "plumbing", "Bathroom", 0.25, 3.5, 1.7, 2, 2.8),
+        Fixture("Furnace", "appliance", "Utility room", 0.35, 0.5, 2.5, 2.5, 4.5, finish="steel"),
         Fixture("Water heater", "appliance", "Utility room", 3.5, 0.5, 1.5, 1.5, 4.8),
-        Fixture("Washer", "appliance", "Utility room", 0.5, 6, 2.3, 2.3, 3.2),
-        Fixture("Dryer", "appliance", "Utility room", 0.5, 8.5, 2.3, 2.3, 3.2),
+        Fixture("Washer", "appliance", "Utility room", 0.35, 6, 2.3, 2.3, 3.2),
+        Fixture("Dryer", "appliance", "Utility room", 0.35, 8.5, 2.3, 2.3, 3.2),
         Fixture("Space heater", "appliance", "Office", 1, 1, 1, 1.5, 2, finish="black"),
-        Fixture("Family room half wall", "half wall", "Family room", 14.55, 4, 5, 0.4, 3.5, finish="wood"),  # out from the office's wall
+        Fixture("Family room half wall", "half wall", "Family room", 14.7, 4, 5, 0.4, 3.5, finish="wood"),  # out from the office's wall
         Fixture("Fireplace", "fireplace", "Living room", 15, 12.8, 5, 1.75, 4.5, finish="brick"),  # beside the window
         Fixture("Air conditioner", "appliance", None, -4, 15, 2.75, 2.75, 2.8, lift=0.2, finish="steel"),
         # Supply registers in the floors, and the bathroom's ceiling fan
         Fixture("Upstairs bedroom register", "vent", "Upstairs bedroom", 7, 0.6, 1, 0.33, 0.05, finish="grille"),
         Fixture("Front bedroom register", "vent", "Front bedroom", 7, 13.1, 1, 0.33, 0.05, finish="grille"),
-        Fixture("Bathroom register", "vent", "Bathroom", 6.5, 8.1, 1, 0.33, 0.05, finish="grille"),
+        Fixture("Bathroom register", "vent", "Bathroom", 6.5, 8.25, 1, 0.33, 0.05, finish="grille"),
         Fixture("Bathroom fan", "vent", "Bathroom", 4, 4, 1, 1, 0.25, lift=7.75, finish="grille"),
         Fixture("Living room register", "vent", "Living room", 8, 14.1, 1, 0.33, 0.05, finish="grille"),
         Fixture("Dining room register", "vent", "Dining room", 0.6, 6, 0.33, 1, 0.05, finish="grille"),
