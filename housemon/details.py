@@ -1,5 +1,6 @@
 """What the house map's detailed view draws besides the rooms: the doors, windows,
-vents, appliances, fireplaces and closets in them, the roof over them, and the yard around them.
+vents, appliances, fireplaces and closets in them, the roof over them, and the yard around them, with its
+sprinklers.
 
 A house file (example_house.py, or your own) gives its details as a Details.
 Like the rooms' plans, they're in feet, with x to the right, y toward the front
@@ -14,10 +15,11 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing")
+FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller")
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
+SPRINKLERS = ("rotor", "spray")
 FENCES = ("wood", "chain link")
 EDGINGS = ("stone", "brick")
 CLADDINGS = ("siding", "paneling", "stone")
@@ -92,15 +94,20 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance, vent, plumbing (a tub, toilet or sink), fireplace, half wall or railing, drawn as a box: in a
-    room, or outside (room None) at x and y on the plan.
+    """An appliance, vent, plumbing (a tub, toilet, sink or spigot), fireplace, half wall or railing, or a part of a
+    sprinkler system, drawn as a box: in a room, or outside (room None) at x and y on the plan.
 
-    lift is how high its bottom is above the floor, or outside above the ground. against lists the sides of its
-    room it stands flush against the walls of, wherever their faces are, in place of x or y on that side's axis.
-    A fireplace is in a room, against a wall, its firebox opening on the side away from that wall. A half wall
-    is in a room too, out from one of its walls, in the room's wall color with a cap in its finish. A railing
-    runs along its longer side, in its finish: posts at its ends, a handrail as wide as it on top, and poles
-    between, as along the open edge of a floor.
+    lift is how high its bottom is above the floor, or outside above the ground, or the top of a raised ground
+    it's in, as a bed's. against lists the sides of its room it stands flush against the walls of, wherever their
+    faces are, in place of x or y on that side's axis. A fireplace is in a room, against a wall, its firebox
+    opening on the side away from that wall. A half wall is in a room too, out from one of its walls, in the
+    room's wall color with a cap in its finish. A railing runs along its longer side, in its finish: posts at its
+    ends, a handrail as wide as it on top, and poles between, as along the open edge of a floor.
+
+    A sprinkler system's parts: a backflow, its backflow preventer, the pipe its water comes up out of the ground
+    through, past a valve on either side, and goes back down, along the fixture's longer side and as high as its
+    height; a valve box, outside, sunk in the ground with its lid `height` above it, holding the valves of some of
+    its zones; and a controller, the box on a wall that runs them.
     """
 
     name: str
@@ -121,6 +128,8 @@ class Fixture:
         _check(self.finish, FINISHES, "a fixture's finish")
         if self.kind in ("fireplace", "half wall") and self.room is None:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
+        if self.kind == "valve box" and self.room is not None:
+            raise ValueError(f"{self.name} is a valve box, sunk in the ground outside, so its room is None")
         _check_against(self.name, self.against, self.room)
 
 
@@ -184,6 +193,23 @@ class Tree:
     def __post_init__(self):
         _check(self.kind, TREES, "a tree's kind")
         _check(self.edging, EDGINGS, "an edging")
+
+
+@dataclass(frozen=True)
+class Sprinklers:
+    """One zone of a sprinkler system: its heads, each at x and y on the plan, in the lawn or a bed, standing in
+    whichever they're in. kind is what they are: rotors, throwing far across a lawn, or sprays, smaller and closer
+    together. Its valve is in a valve box, a fixture, and so is the controller that runs it."""
+
+    name: str
+    heads: tuple[tuple[float, float], ...]
+    kind: str = "rotor"
+    known: bool = False
+
+    def __post_init__(self):
+        _check(self.kind, SPRINKLERS, "a sprinkler's kind")
+        if not self.heads:
+            raise ValueError(f"{self.name} needs a head or more")
 
 
 @dataclass(frozen=True)
@@ -344,7 +370,8 @@ class Details:
     painted walls. colors replaces the detailed view's colors, the --model-*
     tokens in style.css, by name, each as light and dark: the house's siding
     and roof, say. example marks a made-up house, with nothing in it to check,
-    so the view calls none of it a guess.
+    so the view calls none of it a guess. sprinklers are the sprinkler
+    system's zones.
     """
 
     lot: tuple[tuple[float, float], ...]
@@ -363,3 +390,4 @@ class Details:
     sheds: tuple[Shed, ...] = ()
     fences: tuple[Fence, ...] = ()
     steps: tuple[Steps, ...] = ()
+    sprinklers: tuple[Sprinklers, ...] = ()

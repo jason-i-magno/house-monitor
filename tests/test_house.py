@@ -15,7 +15,7 @@ from pathlib import Path
 from housemon import example_house
 from housemon import house as houses
 from housemon import layout
-from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Steps, Tree
+from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Sprinklers, Steps, Tree
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
 # side where half the wall stands, and none where it stands past the side, in the place beyond (layout.py)
@@ -101,6 +101,14 @@ def in_polygon(x, y, points):
         if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
             hit = not hit
     return hit
+
+
+def stands_on(x, y, thing):
+    """Whether a point on the plan is on a ground or shed: in its rectangle and any outline, but not in a cutout."""
+    if any(within_rect(x, y, c) for c in getattr(thing, "cutouts", ())):
+        return False
+    outline = getattr(thing, "outline", None)
+    return within_rect(x, y, rect(thing)) and (not outline or in_polygon(x, y, list(outline)))
 
 
 def on_roof(r, x, y):
@@ -476,19 +484,27 @@ class YardTest(HouseTestCase):
                 self.assertFalse(cover & cover2, (name, other))
 
     def test_trees_stand_in_the_lawn_or_a_cutout(self):
-        def within(x, y, area):
-            ax, ay, width, depth = area
-            return ax <= x <= ax + width and ay <= y <= ay + depth
-
         for h in self.each():
             for tree in h.details.trees:
                 self.assertTrue(h.in_lot(tree.x, tree.y), tree.name)
                 self.assertFalse(h.on_house(tree.x, tree.y), tree.name)
                 for thing in (*h.details.grounds, *h.details.sheds):
-                    cut = any(within(tree.x, tree.y, c) for c in getattr(thing, "cutouts", ()))
-                    outline = getattr(thing, "outline", None)
-                    on = within(tree.x, tree.y, rect(thing)) and (not outline or in_polygon(tree.x, tree.y, list(outline)))
-                    self.assertFalse(on and not cut, (tree.name, thing.name))
+                    self.assertFalse(stands_on(tree.x, tree.y, thing), (tree.name, thing.name))
+
+    def test_sprinklers_and_valve_boxes_are_in_the_lawn_or_a_bed(self):
+        """Not on paving, a shed or the house, and no two heads in one spot."""
+        for h in self.each():
+            d = h.details
+            spots = [(z.name, x, y) for z in d.sprinklers for x, y in z.heads]
+            spots += [(f.name, f.x + f.width / 2, f.y + f.depth / 2) for f in d.fixtures if f.kind == "valve box"]
+            for name, x, y in spots:
+                self.assertTrue(h.in_lot(x, y), (name, x, y))
+                self.assertFalse(h.on_house(x, y), (name, x, y))
+                for thing in (*(g for g in d.grounds if g.kind != "bed"), *d.sheds):
+                    self.assertFalse(stands_on(x, y, thing), (name, x, y, thing.name))
+            heads = [(z.name, x, y) for z in d.sprinklers for x, y in z.heads]
+            for (name, x1, y1), (other, x2, y2) in itertools.combinations(heads, 2):
+                self.assertGreater(math.hypot(x2 - x1, y2 - y1), 0.5, (name, x1, y1, other))
 
     def test_outlines_are_in_their_grounds(self):
         for h in self.each():
@@ -623,6 +639,12 @@ class KindsTest(unittest.TestCase):
             Fixture("Fire pit", "fireplace", None, 0, 0, 3, 3, 1)
         with self.assertRaises(ValueError):
             Fixture("Garden wall", "half wall", None, 0, 0, 6, 0.5, 3)
+        with self.assertRaises(ValueError):
+            Fixture("Valve box", "valve box", "Garage", 0, 0, 1.4, 1, 0.05)  # sunk in the ground outside
+        with self.assertRaises(ValueError):
+            Sprinklers("Zone 1", ((0, 0),), kind="drip")
+        with self.assertRaises(ValueError):
+            Sprinklers("Zone 1", ())
         with self.assertRaises(ValueError):
             Fence("Fence", ((0, 0), (10, 0)), kind="stone")
         with self.assertRaises(ValueError):
