@@ -45,6 +45,7 @@ const MAP_VIEWS = [
 const ROOM_HEIGHT = 8; // feet, floor to ceiling, for rooms without a plan, as in Plan
 const MAP_HOME = { angle: 35, tilt: 30 }; // the 3D view's first angle, and where Reset goes back to
 const MAP_KEY_TURN = 15; // degrees the 3D view turns or tilts for a press of shift and an arrow key
+const MAP_KEY_ZOOM = 1.25; // times the detailed view zooms in, or out, for a press of plus or minus
 // Where to try a room's label on a face of its box, as fractions across it: the middle first.
 const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
 
@@ -535,8 +536,8 @@ function createMap() {
     el("span", { class: "with-mouse" }, " and tilt"),
     el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "shift-drag to pan, scroll or "), "double-click to zoom"),
   );
-  const zoom = (label, text, factor) => {
-    const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: label }, text);
+  const zoom = (label, text, factor, key) => {
+    const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: `${label} (${key})` }, text);
     node.addEventListener("click", () => zoomModel(factor));
     return node;
   };
@@ -548,8 +549,8 @@ function createMap() {
     button("Turn right", "⟳", 45, 0, "Shift+→"),
     button("Look from higher", "↑", 0, 30, "Shift+↑"),
     button("Look from lower", "↓", 0, -30, "Shift+↓"),
-    zoom("Zoom out", "−", 1 / 1.5),
-    zoom("Zoom in", "+", 1.5),
+    zoom("Zoom out", "−", 1 / 1.5, "−"),
+    zoom("Zoom in", "+", 1.5, "+"),
     button("Reset the view", "Reset", null, null),
   );
   const root = svg("svg", { tabindex: 0, role: "img" });
@@ -883,7 +884,7 @@ function drawMap() {
   if (model) {
     map.layout = drawModel(width, fill);
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
-      + "Arrow keys step through its parts, and with shift turn and tilt it; the list below the map names each one.");
+      + "Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.");
   } else {
     map.canvas.style.display = "none";
     map.note.hidden = true;
@@ -1340,11 +1341,18 @@ function mapPointerHover(event) {
 }
 
 // The arrow keys step through the rooms, or the detailed view's parts. With shift they turn the 3D and detailed
-// views, as the buttons below them do, a step a press: left and right turn it, up and down tilt it.
+// views, as the buttons below them do, a step a press: left and right turn it, up and down tilt it. Plus and
+// minus zoom the detailed view in and out, = as plus so it needs no shift, but with ctrl or cmd they're left to
+// zoom the page.
 function mapKey(event) {
   const moves = { ArrowLeft: -1, ArrowRight: 1 };
   const turns = { ArrowLeft: [-MAP_KEY_TURN, 0], ArrowRight: [MAP_KEY_TURN, 0], ArrowUp: [0, MAP_KEY_TURN], ArrowDown: [0, -MAP_KEY_TURN] };
+  const zooms = { "+": MAP_KEY_ZOOM, "=": MAP_KEY_ZOOM, "-": 1 / MAP_KEY_ZOOM, _: 1 / MAP_KEY_ZOOM };
   if (event.key === "Escape") return setMapFocus(null);
+  if (event.key in zooms && state.mapView === "model" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    return zoomModel(zooms[event.key]);
+  }
   if (event.shiftKey && event.key in turns && state.mapView !== "plan") {
     event.preventDefault();
     return moveMap(...turns[event.key]);
