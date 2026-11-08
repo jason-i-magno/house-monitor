@@ -44,6 +44,8 @@ const MAP_VIEWS = [
 ];
 const ROOM_HEIGHT = 8; // feet, floor to ceiling, for rooms without a plan, as in Plan
 const MAP_HOME = { angle: 35, tilt: 30 }; // the 3D view's first angle, and where Reset goes back to
+const MAP_KEY_TURN = 15; // degrees the 3D view turns or tilts for a press of shift and an arrow key
+const MAP_KEY_ZOOM = 1.25; // times the detailed view zooms in, or out, for a press of plus or minus
 // Where to try a room's label on a face of its box, as fractions across it: the middle first.
 const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
 
@@ -518,23 +520,24 @@ function createMap() {
   const views = el("div", { class: "segmented", role: "group", "aria-label": "Map view" });
   const plot = el("div", { class: "plot" });
   const tooltip = el("div", { class: "tooltip", hidden: "" });
-  const button = (label, text, turn, tilt) => {
-    const node = el("button", { type: "button", "aria-label": label, title: label }, text);
+  // Each with the keys that do the same on the map, a step at a time, in its tooltip (mapKey).
+  const button = (label, text, turn, tilt, keys) => {
+    const node = el("button", { type: "button", "aria-label": label, title: keys ? `${label} (${keys})` : label }, text);
     node.addEventListener("click", () => moveMap(turn, tilt));
     return node;
   };
   // A touch drags only sideways, since up and down it scrolls the page, so a phone tilts with the buttons.
-  // The detailed view also zooms: in on a part by double-clicking it, about the pointer with the wheel or by
-  // pinching, or with the buttons.
+  // The detailed view also pans, dragged with shift or the right button, or with two fingers, and zooms: in on a
+  // part by double-clicking it, about the pointer with the wheel or by pinching, or with the buttons.
   const hint = el(
     "span",
     { class: "hint" },
     "Drag to turn",
     el("span", { class: "with-mouse" }, " and tilt"),
-    el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "scroll or "), "double-click to zoom"),
+    el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "shift-drag to pan, scroll or "), "double-click to zoom"),
   );
-  const zoom = (label, text, factor) => {
-    const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: label }, text);
+  const zoom = (label, text, factor, key) => {
+    const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: `${label} (${key})` }, text);
     node.addEventListener("click", () => zoomModel(factor));
     return node;
   };
@@ -542,12 +545,12 @@ function createMap() {
     "div",
     { class: "turns" },
     hint,
-    button("Turn left", "⟲", -45, 0),
-    button("Turn right", "⟳", 45, 0),
-    button("Look from higher", "↑", 0, 30),
-    button("Look from lower", "↓", 0, -30),
-    zoom("Zoom out", "−", 1 / 1.5),
-    zoom("Zoom in", "+", 1.5),
+    button("Turn left", "⟲", -45, 0, "Shift+←"),
+    button("Turn right", "⟳", 45, 0, "Shift+→"),
+    button("Look from higher", "↑", 0, 30, "Shift+↑"),
+    button("Look from lower", "↓", 0, -30, "Shift+↓"),
+    zoom("Zoom out", "−", 1 / 1.5, "−"),
+    zoom("Zoom in", "+", 1.5, "+"),
     button("Reset the view", "Reset", null, null),
   );
   const root = svg("svg", { tabindex: 0, role: "img" });
@@ -569,24 +572,51 @@ function createMap() {
     el("div", { class: "map-foot" }, scaleLegend(), cuts, turns),
     list,
   );
-  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, turns, list, listWrap, layout: null, drag: null };
+  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, turns, list, listWrap, layout: null, drag: null, pointers: new Map() };
   for (const surface of [root, canvas]) {
     surface.addEventListener("focus", () => setMapFocus(state.mapFocus ?? map.layout?.keys?.[0] ?? indoors()[0]?.id ?? null));
     surface.addEventListener("blur", () => setMapFocus(null));
     surface.addEventListener("keydown", mapKey);
+    // A drag turns and tilts the 3D and detailed views. In the detailed view, one with the right or middle button,
+    // or with shift, pans it instead, and two fingers pan it and pinch to zoom it.
     surface.addEventListener("pointerdown", (event) => {
       mapPointerHover(event); // a tap on a phone
       if (state.mapView === "plan") return;
-      const { clientX: x, clientY: y, pointerType } = event;
+      const { clientX: x, clientY: y, pointerType, pointerId } = event;
+      map.pointers.set(pointerId, { x, y });
+      try {
+        surface.setPointerCapture(pointerId);
+      } catch {} // a pointer already gone
+      const model = state.mapView === "model";
+      if (model && map.pointers.size === 2) {
+        map.drag = { fingers: fingers(map.pointers), moved: true };
+        return;
+      }
+      if (map.pointers.size > 1) return;
+      const pan = model && (event.button === 1 || event.button === 2 || event.shiftKey);
       // A touch drags only sideways, as up and down scrolls the page, but for full screen, where there's none to scroll.
-      map.drag = { x, y, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, moved: false };
-      surface.setPointerCapture(event.pointerId);
+      map.drag = { x, y, last: { x, y }, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, pan, moved: false };
     });
     surface.addEventListener("pointermove", (event) => {
       const drag = map.drag;
+      if (map.pointers.has(event.pointerId)) map.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (drag?.fingers) { // panning as far as their middle moves, zooming about it as far as they spread
+        const now = fingers(map.pointers);
+        if (!now) return;
+        panModel(now.x - drag.fingers.x, now.y - drag.fingers.y);
+        const box = canvas.getBoundingClientRect();
+        if (drag.fingers.apart > 0) zoomModelAt(now.apart / drag.fingers.apart, now.x - box.left, now.y - box.top);
+        drag.fingers = now;
+        return;
+      }
       const [dx, dy] = drag ? [event.clientX - drag.x, drag.touch ? 0 : event.clientY - drag.y] : [0, 0];
       if (drag && (drag.moved || Math.hypot(dx, dy) > 4)) {
         drag.moved = true;
+        if (drag.pan) {
+          panModel(event.clientX - drag.last.x, event.clientY - drag.last.y);
+          drag.last = { x: event.clientX, y: event.clientY };
+          return;
+        }
         state.mapAngle = drag.angle - dx * 0.5;
         state.mapTilt = clampTilt(drag.tilt + dy * 0.5); // dragging down shows more of the top
         drawMapSoon();
@@ -594,16 +624,20 @@ function createMap() {
         mapPointerHover(event);
       }
     });
-    surface.addEventListener("pointerup", () => {
+    // Lifting a finger of two ends their gesture; the one left does nothing until it's lifted too.
+    const lift = (event) => {
+      map.pointers.delete(event.pointerId);
       const moved = map.drag?.moved;
-      map.drag = null;
-      if (moved) renderMapTooltip(); // back, beside the room's new place
-    });
-    surface.addEventListener("pointercancel", () => (map.drag = null));
+      if (map.drag?.fingers || !map.pointers.size) map.drag = null;
+      if (moved && !map.pointers.size) renderMapTooltip(); // back, beside the room's new place
+    };
+    surface.addEventListener("pointerup", lift);
+    surface.addEventListener("pointercancel", lift);
     surface.addEventListener("pointerleave", () => {
       if (!map.drag && document.activeElement !== surface) setMapFocus(null);
     });
   }
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault()); // the right button pans
   canvas.addEventListener("dblclick", (event) => {
     const box = canvas.getBoundingClientRect();
     const key = map.layout?.pick?.(event.clientX - box.left, event.clientY - box.top);
@@ -658,6 +692,12 @@ function showMapFull(on) {
   icon.append(svg("path", { d, fill: "none", stroke: "currentColor", "stroke-width": 1.75, "stroke-linecap": "round", "stroke-linejoin": "round" }));
   map.full.replaceChildren(icon);
   drawMapSoon();
+}
+
+// Two pointers' middle and how far apart they are, or null for fewer.
+function fingers(pointers) {
+  const [a, b] = [...pointers.values()];
+  return b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, apart: Math.hypot(a.x - b.x, a.y - b.y) } : null;
 }
 
 function renderMapViews() {
@@ -844,13 +884,13 @@ function drawMap() {
   if (model) {
     map.layout = drawModel(width, fill);
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
-      + "Arrow keys step through its parts; the list below the map names each one.");
+      + "Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.");
   } else {
     map.canvas.style.display = "none";
     map.note.hidden = true;
     map.svg.replaceChildren();
     map.svg.setAttribute("aria-label", `House map${view === "3d" ? " in 3D" : ""}, each room colored by its temperature. `
-      + "Arrow keys step through the rooms; the room cards above list every reading.");
+      + `Arrow keys step through the rooms${view === "3d" ? ", and with shift turn and tilt it" : ""}; the room cards above list every reading.`);
     map.layout = view === "3d" ? draw3d(map.svg, width, fill) : drawPlan(map.svg, width, fill);
     map.svg.setAttribute("viewBox", `0 0 ${width} ${map.layout.height}`);
     map.svg.setAttribute("height", map.layout.height);
@@ -1300,9 +1340,23 @@ function mapPointerHover(event) {
   setMapFocus(room ? room.dataset.sensor : null);
 }
 
+// The arrow keys step through the rooms, or the detailed view's parts. With shift they turn the 3D and detailed
+// views, as the buttons below them do, a step a press: left and right turn it, up and down tilt it. Plus and
+// minus zoom the detailed view in and out, = as plus so it needs no shift, but with ctrl or cmd they're left to
+// zoom the page.
 function mapKey(event) {
   const moves = { ArrowLeft: -1, ArrowRight: 1 };
+  const turns = { ArrowLeft: [-MAP_KEY_TURN, 0], ArrowRight: [MAP_KEY_TURN, 0], ArrowUp: [0, MAP_KEY_TURN], ArrowDown: [0, -MAP_KEY_TURN] };
+  const zooms = { "+": MAP_KEY_ZOOM, "=": MAP_KEY_ZOOM, "-": 1 / MAP_KEY_ZOOM, _: 1 / MAP_KEY_ZOOM };
   if (event.key === "Escape") return setMapFocus(null);
+  if (event.key in zooms && state.mapView === "model" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    return zoomModel(zooms[event.key]);
+  }
+  if (event.shiftKey && event.key in turns && state.mapView !== "plan") {
+    event.preventDefault();
+    return moveMap(...turns[event.key]);
+  }
   const ids = state.map.layout?.keys ?? indoors().map((s) => s.id); // outside has no place to focus
   if (!(event.key in moves) || !ids.length) return;
   event.preventDefault();

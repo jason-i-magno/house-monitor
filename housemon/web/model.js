@@ -34,9 +34,9 @@ const MODEL_TOKENS = [
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
-  deciduous: "Tree", evergreen: "Evergreen tree",
+  deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller",
 };
-const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard"];
+const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard", "Sprinklers"];
 // Each side of a plan as a line: the axis it runs along, where it is across
 // that axis, which way is inward (k), and where it starts and ends.
 const SIDE_LINES = {
@@ -122,6 +122,13 @@ function onRoof(r, x, y) {
   return r.x < x && x < r.x + r.width && r.y < y && y < r.y + r.depth && (!r.outline || inPolygon([x, y], r.outline));
 }
 
+// How high the ground is at x, y on the plan: the top of a raised ground there, as a bed's, its paving's where it's
+// edged, else the grade.
+function groundTop(details, x, y) {
+  const g = details.grounds.find((g) => g.height > 0 && g.x < x && x < g.x + g.width && g.y < y && y < g.y + g.depth && (!g.outline || inPolygon([x, y], g.outline)));
+  return details.grade + (g ? g.height - (g.edging ? 0.1 : 0) : 0);
+}
+
 // The height of a roof section's top at x, y on the plan.
 function roofTop(r, x, y) {
   if (r.ridge) {
@@ -141,7 +148,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   if (!rooms.length || !rooms.every((s) => s.plan)) return { note: "The detailed view needs every room's plan." };
   const raw = [...rooms, ...areas].flatMap((q) => [q.plan].flat());
   const details = {
-    finishes: {}, colors: {}, claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], sheds: [], fences: [], steps: [],
+    finishes: {}, colors: {}, claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], sheds: [], fences: [], steps: [], sprinklers: [],
     ...(given ?? modelFallback(raw)),
   };
   const items = [];
@@ -209,7 +216,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     // The piece it stands in: the one its rectangle is in, else the first.
     const within = (o) => o.x - 1e-6 <= x && x + thing.width <= o.x + o.width + 1e-6 && o.y - 1e-6 <= y && y + thing.depth <= o.y + o.depth + 1e-6;
     const p = q ? q.pieces.find(within) ?? first : null;
-    const z = p ? p.elevation : details.grade;
+    const z = p ? p.elevation : groundTop(details, x + (thing.width ?? 0) / 2, y + (thing.depth ?? 0) / 2);
     const resolved = { ...thing, place: q, piece: p, x0: x, y0: y, x1: x + thing.width, y1: y + thing.depth, z0: z + (thing.lift ?? 0) };
     resolved.z1 = resolved.z0 + (thing.height ?? MODEL_CLOSET_HEIGHT);
     resolved.item = add({ key: `${prefix}:${i}`, name: thing.name, kind, group, where: q ? q.name : "Outside", known: thing.known, level: p ? p.elevation : null, bbox: [x, y, resolved.z0, resolved.x1, resolved.y1, resolved.z1] });
@@ -226,7 +233,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings" }[f.kind] ?? "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
   const grade = details.grade;
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
@@ -254,6 +261,17 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       return { x, y, width, item: outside(`gate:${i}:${k}`, gate, "Gate", "Yard", [x - width / 2, y - width / 2, grade, x + width / 2, y + width / 2, grade + f.height]) };
     });
     return { ...f, item, gates };
+  });
+  // A sprinkler zone is one thing, all its heads, so focusing it shows them all, centered on its head nearest their
+  // middle, as theirs may be far from any. Each head stands in the lawn or the bed it's in.
+  const sprinklers = details.sprinklers.map((z, i) => {
+    const heads = z.heads.map(([x, y]) => [x, y, groundTop(details, x, y)]);
+    const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
+    const [xs, ys, zs] = [0, 1, 2].map((k) => heads.map((h) => h[k]));
+    const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, grade, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
+    const [mx, my] = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2];
+    const [hx, hy, hz] = heads.reduce((a, b) => (Math.hypot(b[0] - mx, b[1] - my) < Math.hypot(a[0] - mx, a[1] - my) ? b : a));
+    return { ...z, heads, item: outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [hx, hy, hz + 0.1] }) };
   });
   const roofs = details.roofs.map((r, i) => ({ ...r, item: add({ key: `roof:${i}`, name: r.name, kind: "Roof", group: "Roof", where: "Roof", known: r.known, level: null, whole: true, bbox: [r.x, r.y, r.eave - MODEL_ROOF_DEPTH, r.x + r.width, r.y + r.depth, r.peak] }) }));
   const roofVents = details.roof_vents.flatMap((v, i) => {
@@ -285,7 +303,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   const house = [...places.map((q) => q.item), ...roofs.map((r) => r.item)].map((item) => item.bbox);
   const [hx0, hy0, hz0, hx1, hy1, hz1] = [0, 1, 2, 3, 4, 5].map((k) => (k < 3 ? Math.min : Math.max)(...house.map((b) => b[k])));
   return {
-    details, places, pieces, openings, closets, fixtures, grounds, trees, sheds, fences, steps, roofs, roofVents, lot, lawn, cladding, items, levels, bottom, radius,
+    details, places, pieces, openings, closets, fixtures, grounds, trees, sheds, fences, steps, sprinklers, roofs, roofVents, lot, lawn, cladding, items, levels, bottom, radius,
     center: [(x0 + x1) / 2, (y0 + y1) / 2, (bottom + high) / 2],
     houseCenter: [(hx0 + hx1) / 2, (hy0 + hy1) / 2, (hz0 + hz1) / 2],
     fit: Math.max(1, radius / (1.1 * (Math.hypot(hx1 - hx0, hy1 - hy0, hz1 - hz0) / 2))),
@@ -315,8 +333,9 @@ function modelShows(scene, mode) {
   return (item) => (item.whole ? mode === "outside" : item.level == null || item.level <= level + 1e-6);
 }
 
-// The middle of an item, or of what shows of it when its walls are cut away.
+// The middle of an item, or of what shows of it when its walls are cut away, or the point it's centered on.
 function modelCenter(item, mode) {
+  if (item.center) return item.center;
   const [x0, y0, z0, x1, y1, z1] = item.bbox;
   const top = mode === "outside" || item.level == null ? z1 : Math.min(z1, item.level + MODEL_CUT);
   return [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + top) / 2];
@@ -384,8 +403,9 @@ function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
 // edges of its holes and at the heights in zs, each with its outside face in
 // outer(z) at its height, its inside face in inner, and its top dark where
 // the wall stops, or trim as the sill under a hole: the floor's color for a
-// hole down to the floor at floorZ, as a doorway's threshold, which lies in
-// the floor's plane, so the two look alike. A top under a floor above, which
+// hole down to the floor, floorAt(z, [d0, d1]) giving its height and color,
+// as a doorway's threshold, which lies in the floor's plane, so the two look
+// alike. A top under a floor above, which
 // lies in that floor's plane, is that floor's color, topColor, for the same
 // reason, where a doorway above bares it. Its ends are inner too,
 // but for an end at its room's corner, end0(z) or end1(z), which is part of
@@ -424,25 +444,33 @@ function wallRun(mesh, C, w, id) {
       const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
       const underFloor = atTop && w.topColor && ha >= raw(sa) - 1e-6 && hb >= raw(sb) - 1e-6; // not cut away
       const sill = w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
-      const threshold = sill && w.floorZ != null && Math.abs(zc - w.floorZ) < 1e-6;
       const z = (za + Math.min(ha, hb)) / 2;
       const depth = w.depth(z);
       if (!depth || depth[1] - depth[0] < 1e-6) continue;
+      // A sill down to the floor whose plane it's in: its room's, or the place beyond's where it stands wholly there.
+      const floor = sill && w.floorAt ? w.floorAt(zc, depth) : null;
+      const threshold = floor && Math.abs(zc - floor.z) < 1e-6;
       const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner; // not trimmed
       const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
       const above = j + 2 < zs.length ? w.depth((zc + zs[j + 2]) / 2) : null;
       const bared = !above || above[0] > depth[0] + 1e-6 || above[1] < depth[1] - 1e-6; // stepping in over it, as a top
-      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? w.floorColor : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
+      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? floor.color : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
       slab(mesh, w, [sa, sb], depth, za, [ha, hb], colors, id);
     }
   }
 }
 
 // How high a place's wall on a side's line stands at s along it, cut away to `mode`: all the way, or 4 ft over
-// its floor.
+// its floor. Under a room shown, sitting on it, as a lower level under an upper one, it stands all the way, so
+// the walls run on up to that room's without a gap.
 function wallCap(scene, q, p, line, s, mode, view) {
   const [x, y] = linePoint(line, s, -0.01);
-  return mode === "outside" || (!occupiedAt(scene.pieces, x, y, p.elevation + 2, q) && standsWhole(scene, line, s, view)) ? Infinity : p.elevation + MODEL_CUT;
+  if (mode === "outside" || (!occupiedAt(scene.pieces, x, y, p.elevation + 2, q) && standsWhole(scene, line, s, view))) return Infinity;
+  const [ix, iy] = linePoint(line, s, 0.01);
+  const shows = modelShows(scene, mode);
+  const over = scene.pieces.some(([o, b]) => o !== q && shows(o.item) && b.x < ix && ix < b.x + b.width && b.y < iy && iy < b.y + b.depth
+    && Math.abs(b.base - (p.elevation + p.height)) < 1e-6);
+  return over ? Infinity : p.elevation + MODEL_CUT;
 }
 
 // The place's piece beyond a side's line at s along it and height z whose wall is on that line, the other side
@@ -458,9 +486,9 @@ function wallBeyond(scene, q, line, side, s, z) {
 // Where a place's wall on a side stands at s along it and height z, cut away to `mode`: [d0, d1] inward of the
 // side's line, or null where it stands none. Between two places, the one whose wall stands taller there, in a
 // level shown, stands all of the wall between them, so its faces are flat where the other's is cut lower, as a
-// lower level's is under a higher one's; standing as tall, each stands its own side of it. Where a floor shown
-// covers the place beyond, as a room's does a crawlspace under it, none of that side shows, so it stands only its
-// own.
+// lower level's is under a higher one's; standing as tall, each stands its own side of it. A place under a room
+// shown, as a crawlspace under a floor, stands whole (wallCap), so it stands the wall between it and a place beside
+// it cut lower, up to that floor.
 function wallSpan(scene, q, p, side, s, z, mode, view) {
   const line = SIDE_LINES[side](p);
   const all = p.slab[side];
@@ -468,10 +496,7 @@ function wallSpan(scene, q, p, side, s, z, mode, view) {
   const beyond = wallBeyond(scene, q, line, side, s, z);
   if (!beyond) return all;
   const [o, b, , otherLine] = beyond;
-  const shows = modelShows(scene, mode);
-  const [x, y] = linePoint(line, s, -0.01);
-  if (scene.pieces.some(([c, cp]) => c !== o && cp.x < x && x < cp.x + cp.width && cp.y < y && y < cp.y + cp.depth && Math.abs(cp.base - b.top(x, y)) < 1e-6 && shows(c.item))) return own;
-  if (!shows(o.item)) return all;
+  if (!modelShows(scene, mode)(o.item)) return all;
   const [mine, theirs] = [wallCap(scene, q, p, line, s, mode, view), wallCap(scene, o, b, otherLine, s, mode, view)];
   return theirs > mine + 1e-6 ? null : theirs < mine - 1e-6 ? all : own;
 }
@@ -595,7 +620,13 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const over = scene.pieces.find(([o, b2]) => o !== q && b2.x < mx && mx < b2.x + b2.width && b2.y < my && my < b2.y + b2.depth
           && Math.abs(b2.elevation - raw(sa)) < 1e-6 && Math.abs(b2.elevation - raw(sb)) < 1e-6);
         const topColor = over ? C[over[0].finish.floor] : null;
-        wallRun(mesh, C, { ...line, depth, trim0, trim1, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorZ: p.elevation, floorColor: C[q.finish.floor], topColor }, q.item.id);
+        // The floor a sill at height z lies in the plane of: its room's, or, standing wholly past its side, as it can
+        // for the place beyond (wallSpan), that place's.
+        const floorAt = (z, [, d1]) => {
+          const there = d1 <= 1e-6 && wallBeyond(scene, q, line, side, mid, z - 0.01);
+          return there ? { z: there[1].elevation, color: C[there[0].finish.floor] } : { z: p.elevation, color: C[q.finish.floor] };
+        };
+        wallRun(mesh, C, { ...line, depth, trim0, trim1, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorAt, topColor }, q.item.id);
       }
     }
   }
@@ -615,8 +646,7 @@ function openingPanels(mesh, scene, o, mode, view) {
   // In its wall, standing as tall as the taller of its room's and the place beyond's, if any.
   const beyond = wallBeyond(scene, o.place, o, o.wall, mid, (o.z0 + o.z1) / 2);
   const shown = beyond && modelShows(scene, mode)(beyond[0].item);
-  const whole = mode === "outside" || (o.exterior && standsWhole(scene, o, mid, view));
-  const cap = whole ? Infinity : Math.max(o.piece.elevation + MODEL_CUT, shown ? wallCap(scene, beyond[0], beyond[1], beyond[3], mid, mode, view) : -Infinity);
+  const cap = Math.max(wallCap(scene, o.place, o.piece, o, mid, mode, view), shown ? wallCap(scene, beyond[0], beyond[1], beyond[3], mid, mode, view) : -Infinity);
   const [s0, s1, z0, z1] = [o.s0, o.s1, o.z0, Math.min(o.z1, cap)];
   if (z1 <= z0 + 1e-6) return;
   const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
@@ -1286,10 +1316,40 @@ function railing(mesh, color, id, axis, [s0, s1], [d0, d1], base, top, cap = Inf
   for (let s = s0 + w + 0.3; s < s1 - w - 0.2; s += 0.42) bar(s - 0.05, s + 0.05, mid - 0.05, mid + 0.05, (u) => base(u) + 0.12, (u) => top(u) - 0.15);
 }
 
+// A backflow preventer along its longer side, in its finish: a pipe up out of the ground at each end, its feet
+// sunk a little, so they're not in the plane of the ground or a bed's paving, and across between them at the top,
+// with a valve near each end, its handle dark, and the preventer's bell between them.
+function backflow(mesh, C, f) {
+  const [color, dark, id] = [C[f.finish] ?? C.steel, C.black, f.item.id];
+  const along = f.x1 - f.x0 >= f.y1 - f.y0 ? "x" : "y";
+  const [[s0, s1], [d0, d1]] = along === "x" ? [[f.x0, f.x1], [f.y0, f.y1]] : [[f.y0, f.y1], [f.x0, f.x1]];
+  const at = (s, d) => (along === "x" ? [s, d] : [d, s]);
+  const [mid, r] = [(d0 + d1) / 2, Math.min(0.07, (d1 - d0) / 4)];
+  const top = f.z1 - r;
+  for (const s of [s0 + r, s1 - r]) round(mesh, at(s, mid), r, f.z0 - 0.15, top + r, color, id);
+  const bar = (a, b, da, db, z0, z1, c) => box(mesh, [...(along === "x" ? [a, da] : [da, a]), z0], [...(along === "x" ? [b, db] : [db, b]), z1], c, id);
+  bar(s0 + r, s1 - r, mid - r, mid + r, top - r, top + r, color);
+  for (const s of [s0 + (s1 - s0) * 0.25, s0 + (s1 - s0) * 0.75]) {
+    bar(s - 1.6 * r, s + 1.6 * r, mid - 1.4 * r, mid + 1.4 * r, top - 1.4 * r, top + 1.4 * r, color); // the valve
+    bar(s - 0.4 * r, s + 0.4 * r, mid - 1.4 * r, mid + 1.4 * r, top + 1.4 * r, top + 2.6 * r, dark); // its handle
+    bar(s - 0.4 * r, s + 3.5 * r, mid - 0.6 * r, mid + 0.6 * r, top + 2.6 * r, top + 3.2 * r, dark);
+  }
+  round(mesh, at((s0 + s1) / 2, mid), 2 * r, top, top + 5 * r, color, id); // the bell
+}
+
 // A fixture: a box in its finish. A railing runs along its longer side, in its finish. A half wall is in its
 // room's wall color, with a cap in its finish. A fireplace's firebox is dark, a little proud of the side away
-// from the wall it's against, across its middle and from low on it to a little over halfway up.
+// from the wall it's against, across its middle and from low on it to a little over halfway up. A backflow
+// preventer is pipes, and a valve box is sunk in the ground, its lid just over it.
 function fixture(mesh, C, f) {
+  if (f.kind === "backflow") {
+    backflow(mesh, C, f);
+    return;
+  }
+  if (f.kind === "valve box") {
+    box(mesh, [f.x0, f.y0, f.z0 - 0.3], [f.x1, f.y1, f.z1], C[f.finish] ?? C.black, f.item.id);
+    return;
+  }
   if (f.kind === "railing") {
     const along = f.x1 - f.x0 >= f.y1 - f.y0 ? "x" : "y";
     const [s, d] = along === "x" ? [[f.x0, f.x1], [f.y0, f.y1]] : [[f.y0, f.y1], [f.x0, f.x1]];
@@ -1338,6 +1398,10 @@ function buildModel(scene, mode, view) {
   const cut = mode === "outside" ? Infinity : (scene.levels.find(([floor]) => floor === mode)?.[1] ?? Infinity) + MODEL_CUT;
   for (const t of scene.steps) if (shows(t.item)) stepsFlight(mesh, scene, t, cut);
   for (const f of scene.fences) fence(mesh, scene, f);
+  // Sprinkler heads, at rest, their caps just over the ground, sunk into it so they're not in its plane.
+  for (const z of scene.sprinklers) {
+    for (const [x, y, top] of z.heads) round(mesh, [x, y], z.kind === "spray" ? 0.17 : 0.25, top - 0.1, top + 0.1, C.black, z.item.id, false, 10);
+  }
   if (mode === "outside") {
     for (const t of scene.trees) tree(mesh, scene, t);
     for (const r of scene.roofs) roofSection(mesh, scene, r);
@@ -1560,12 +1624,27 @@ function zoomModelAt(factor, x, y) {
   if (Math.abs(after - before) < 1e-9) return false;
   // As it stands now, which steps of a fast wheel come quicker than the frames that draw them: its scale and target.
   const scale = camera.base * before;
-  const target = state.modelTarget ?? (before <= 1 ? scene.center : scene.houseCenter);
+  const target = modelTargetNow(scene);
   // The point under it, in the plane across the view through the target, keeps its place as it zooms.
   const [u, v] = [(x - camera.width / 2) / scale, (camera.height / 2 - y) / scale];
   const k = 1 - before / after;
   zoomModel(after / before, target.map((t, i) => t + (camera.across[i] * u + camera.up[i] * v) * k));
   return true;
+}
+
+// Where the detailed view centers, as it stands: what it was zoomed or panned to, else the house, or at 1 the lot.
+function modelTargetNow(scene) {
+  return state.modelTarget ?? ((state.modelZoom ?? scene.fit) <= 1 ? scene.center : scene.houseCenter);
+}
+
+// Panning the detailed view by dx, dy px on the canvas: the scene moves with them, as under a drag.
+function panModel(dx, dy) {
+  const [camera, scene] = [state.map.camera, state.modelScene];
+  if (!camera || !scene || scene.note) return;
+  const scale = camera.base * (state.modelZoom ?? scene.fit);
+  state.modelTarget = modelTargetNow(scene).map((t, i) => t - (camera.across[i] * dx - camera.up[i] * dy) / scale);
+  state.map.pointer = null;
+  drawMapSoon();
 }
 
 // The buttons that cut the house away to a level.
