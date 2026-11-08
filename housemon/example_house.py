@@ -9,11 +9,14 @@ of the kitchen. Upstairs, two bedrooms, a bathroom and a guest room open off a
 hall; in the basement, an office and a utility room open off an L-shaped
 family room. A thermostat on the main floor keeps it at 64 to 68 °F; upstairs
 runs warm, the basement cold, the office has a space heater for the work day,
-and the garage is unheated. The first eight rooms get the eight series
+and the garage is unheated. Sprinklers water the front and back lawns and the
+flower bed, run from a controller in the garage. The first eight rooms get the eight series
 colors, and the garage, bathroom and outside share the gray.
 """
 
-from housemon.details import Closet, Details, Fence, Finish, Fixture, Ground, Opening, Roof, RoofVent, Shed, Steps, Tree
+from housemon.details import (
+    Closet, Details, Fence, Finish, Fixture, Ground, Opening, Roof, RoofVent, Shed, Sprinklers, Steps, Tree,
+)
 from housemon.readings import Area, Plan, Sensor
 from housemon.simulator import SimulatedRoom
 
@@ -168,6 +171,12 @@ DETAILS = Details(
         Fixture("Sunroom register", "vent", "Sunroom", 6, 0.6, 1, 0.33, 0.05, finish="grille"),
         Fixture("Family room register", "vent", "Family room", 8, 0.6, 1, 0.33, 0.05, finish="grille"),
         Fixture("Office register", "vent", "Office", 5, 0.6, 1, 0.33, 0.05, finish="grille"),
+        # Outside, a spigot on the front wall, and the sprinklers' water coming up beside it through the backflow
+        # preventer, in the flower bed, to the valves in a box in the lawn; the controller is in the garage.
+        Fixture("Spigot", "plumbing", None, 22.5, 28, 0.3, 0.35, 0.3, lift=0.4, finish="steel"),
+        Fixture("Backflow preventer", "backflow", None, 20, 28.3, 1.2, 0.3, 1.5, finish="steel"),
+        Fixture("Valve box", "valve box", None, 19.5, 32, 1.4, 0.95, 0.06, finish="black"),
+        Fixture("Sprinkler controller", "controller", "Garage", 0, 18, 0.3, 1, 0.8, lift=4.5, against=("left",)),
     ),
     grounds=(
         Ground("Front porch", "porch", 26, 28, 8, 6, height=0.9),
@@ -194,5 +203,13 @@ DETAILS = Details(
         Steps("Porch steps", 28.5, 34, 3, 2, bottom=-1, top=-0.1, up="back"),
         Steps("Deck steps", 36, -12, 4, 2, bottom=-1, top=-0.1, up="front", paving="wood"),
         Steps("Garage steps", 36.4, 16, 2, 3, bottom=-1, top=0, up="left", room="Garage"),
+    ),
+    sprinklers=(
+        Sprinklers("Zone 1 (front lawn)", ((-19.5, 20.5), (-19.5, 59.5), (4, 59.5), (27.5, 59.5), (25.5, 31.5), (-0.5, 31.5))),
+        Sprinklers(
+            "Zone 2 (back lawn)",
+            ((-19.5, -12), (17, -12), (47, -12), (74.5, -12), (-19.5, -44.5), (17, -44.5), (47, -44.5), (74.5, -44.5)),
+        ),
+        Sprinklers("Zone 3 (flower bed)", ((3, 29.5), (12, 29.5), (24.5, 29.5)), kind="spray"),
     ),
 )

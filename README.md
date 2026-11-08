@@ -35,7 +35,7 @@ A house file has three parts:
 
 - `HOUSE`: the rooms, each a simulated sensor with how it runs (its offset from the thermostat, how much of the weather reaches it, showers, cooking, a space heater) and its `Plan`. A plan places the room in feet: x to the right, y toward the front, its floor's elevation above the main floor, and its height at the ceiling's highest, 8 ft unless given. A sloped ceiling also has a `drop`: the wall it slopes down to and how much lower it is there. A room that isn't a rectangle, like an L, has a tuple of plans, one per piece.
 - `AREAS`: the parts of the house with no sensor, which the map draws as outlines.
-- `DETAILS`: what the map's detailed view draws (`housemon/details.py`): the doors, windows, vents, appliances, plumbing, fireplaces and closets, the roof, and outside the lot's outline, porches, decks, steps, paving, beds, trees, sheds and fences, each marked as known or a guess, and the house's own colors. A fixture or flight of steps can stand `against` the walls on sides of its room, and an opening can run from or to a wall (an offset or width of `None`), so they stay put against the walls wherever those end up.
+- `DETAILS`: what the map's detailed view draws (`housemon/details.py`): the doors, windows, vents, appliances, plumbing, fireplaces and closets, the roof, and outside the lot's outline, porches, decks, steps, paving, beds, trees, sheds, fences and sprinklers, each marked as known or a guess, and the house's own colors. A fixture or flight of steps can stand `against` the walls on sides of its room, and an opening can run from or to a wall (an offset or width of `None`), so they stay put against the walls wherever those end up.
 
 ## How it works
 
