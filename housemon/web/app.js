@@ -524,14 +524,14 @@ function createMap() {
     return node;
   };
   // A touch drags only sideways, since up and down it scrolls the page, so a phone tilts with the buttons.
-  // The detailed view also zooms: in on a part by double-clicking it, about the pointer with the wheel or by
-  // pinching, or with the buttons.
+  // The detailed view also pans, dragged with shift or the right button, or with two fingers, and zooms: in on a
+  // part by double-clicking it, about the pointer with the wheel or by pinching, or with the buttons.
   const hint = el(
     "span",
     { class: "hint" },
     "Drag to turn",
     el("span", { class: "with-mouse" }, " and tilt"),
-    el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "scroll or "), "double-click to zoom"),
+    el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "shift-drag to pan, scroll or "), "double-click to zoom"),
   );
   const zoom = (label, text, factor) => {
     const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: label }, text);
@@ -569,24 +569,51 @@ function createMap() {
     el("div", { class: "map-foot" }, scaleLegend(), cuts, turns),
     list,
   );
-  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, turns, list, listWrap, layout: null, drag: null };
+  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, turns, list, listWrap, layout: null, drag: null, pointers: new Map() };
   for (const surface of [root, canvas]) {
     surface.addEventListener("focus", () => setMapFocus(state.mapFocus ?? map.layout?.keys?.[0] ?? indoors()[0]?.id ?? null));
     surface.addEventListener("blur", () => setMapFocus(null));
     surface.addEventListener("keydown", mapKey);
+    // A drag turns and tilts the 3D and detailed views. In the detailed view, one with the right or middle button,
+    // or with shift, pans it instead, and two fingers pan it and pinch to zoom it.
     surface.addEventListener("pointerdown", (event) => {
       mapPointerHover(event); // a tap on a phone
       if (state.mapView === "plan") return;
-      const { clientX: x, clientY: y, pointerType } = event;
+      const { clientX: x, clientY: y, pointerType, pointerId } = event;
+      map.pointers.set(pointerId, { x, y });
+      try {
+        surface.setPointerCapture(pointerId);
+      } catch {} // a pointer already gone
+      const model = state.mapView === "model";
+      if (model && map.pointers.size === 2) {
+        map.drag = { fingers: fingers(map.pointers), moved: true };
+        return;
+      }
+      if (map.pointers.size > 1) return;
+      const pan = model && (event.button === 1 || event.button === 2 || event.shiftKey);
       // A touch drags only sideways, as up and down scrolls the page, but for full screen, where there's none to scroll.
-      map.drag = { x, y, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, moved: false };
-      surface.setPointerCapture(event.pointerId);
+      map.drag = { x, y, last: { x, y }, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, pan, moved: false };
     });
     surface.addEventListener("pointermove", (event) => {
       const drag = map.drag;
+      if (map.pointers.has(event.pointerId)) map.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (drag?.fingers) { // panning as far as their middle moves, zooming about it as far as they spread
+        const now = fingers(map.pointers);
+        if (!now) return;
+        panModel(now.x - drag.fingers.x, now.y - drag.fingers.y);
+        const box = canvas.getBoundingClientRect();
+        if (drag.fingers.apart > 0) zoomModelAt(now.apart / drag.fingers.apart, now.x - box.left, now.y - box.top);
+        drag.fingers = now;
+        return;
+      }
       const [dx, dy] = drag ? [event.clientX - drag.x, drag.touch ? 0 : event.clientY - drag.y] : [0, 0];
       if (drag && (drag.moved || Math.hypot(dx, dy) > 4)) {
         drag.moved = true;
+        if (drag.pan) {
+          panModel(event.clientX - drag.last.x, event.clientY - drag.last.y);
+          drag.last = { x: event.clientX, y: event.clientY };
+          return;
+        }
         state.mapAngle = drag.angle - dx * 0.5;
         state.mapTilt = clampTilt(drag.tilt + dy * 0.5); // dragging down shows more of the top
         drawMapSoon();
@@ -594,16 +621,20 @@ function createMap() {
         mapPointerHover(event);
       }
     });
-    surface.addEventListener("pointerup", () => {
+    // Lifting a finger of two ends their gesture; the one left does nothing until it's lifted too.
+    const lift = (event) => {
+      map.pointers.delete(event.pointerId);
       const moved = map.drag?.moved;
-      map.drag = null;
-      if (moved) renderMapTooltip(); // back, beside the room's new place
-    });
-    surface.addEventListener("pointercancel", () => (map.drag = null));
+      if (map.drag?.fingers || !map.pointers.size) map.drag = null;
+      if (moved && !map.pointers.size) renderMapTooltip(); // back, beside the room's new place
+    };
+    surface.addEventListener("pointerup", lift);
+    surface.addEventListener("pointercancel", lift);
     surface.addEventListener("pointerleave", () => {
       if (!map.drag && document.activeElement !== surface) setMapFocus(null);
     });
   }
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault()); // the right button pans
   canvas.addEventListener("dblclick", (event) => {
     const box = canvas.getBoundingClientRect();
     const key = map.layout?.pick?.(event.clientX - box.left, event.clientY - box.top);
@@ -658,6 +689,12 @@ function showMapFull(on) {
   icon.append(svg("path", { d, fill: "none", stroke: "currentColor", "stroke-width": 1.75, "stroke-linecap": "round", "stroke-linejoin": "round" }));
   map.full.replaceChildren(icon);
   drawMapSoon();
+}
+
+// Two pointers' middle and how far apart they are, or null for fewer.
+function fingers(pointers) {
+  const [a, b] = [...pointers.values()];
+  return b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, apart: Math.hypot(a.x - b.x, a.y - b.y) } : null;
 }
 
 function renderMapViews() {

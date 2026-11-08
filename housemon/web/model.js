@@ -1426,12 +1426,27 @@ function zoomModelAt(factor, x, y) {
   if (Math.abs(after - before) < 1e-9) return false;
   // As it stands now, which steps of a fast wheel come quicker than the frames that draw them: its scale and target.
   const scale = camera.base * before;
-  const target = state.modelTarget ?? (before <= 1 ? scene.center : scene.houseCenter);
+  const target = modelTargetNow(scene);
   // The point under it, in the plane across the view through the target, keeps its place as it zooms.
   const [u, v] = [(x - camera.width / 2) / scale, (camera.height / 2 - y) / scale];
   const k = 1 - before / after;
   zoomModel(after / before, target.map((t, i) => t + (camera.across[i] * u + camera.up[i] * v) * k));
   return true;
+}
+
+// Where the detailed view centers, as it stands: what it was zoomed or panned to, else the house, or at 1 the lot.
+function modelTargetNow(scene) {
+  return state.modelTarget ?? ((state.modelZoom ?? scene.fit) <= 1 ? scene.center : scene.houseCenter);
+}
+
+// Panning the detailed view by dx, dy px on the canvas: the scene moves with them, as under a drag.
+function panModel(dx, dy) {
+  const [camera, scene] = [state.map.camera, state.modelScene];
+  if (!camera || !scene || scene.note) return;
+  const scale = camera.base * (state.modelZoom ?? scene.fit);
+  state.modelTarget = modelTargetNow(scene).map((t, i) => t - (camera.across[i] * dx - camera.up[i] * dy) / scale);
+  state.map.pointer = null;
+  drawMapSoon();
 }
 
 // The buttons that cut the house away to a level.
