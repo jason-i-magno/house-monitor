@@ -141,7 +141,7 @@ DETAILS = Details(
         Closet("Coat closet", "Entry", 9, 0, 3, 3, door="left"),
     ),
     fixtures=(
-        Fixture("Refrigerator", "appliance", "Kitchen", 15.15, 6.5, 2.5, 3, 5.75, finish="steel"),
+        Fixture("Refrigerator", "appliance", "Kitchen", 15.1, 6.5, 2.5, 3, 5.75, finish="steel"),
         Fixture("Range", "appliance", "Kitchen", 1, 10.65, 2.5, 2, 3, finish="steel"),
         Fixture("Range hood", "vent", "Kitchen", 1.1, 10.65, 2.3, 2, 1, lift=5.5, finish="steel"),
         Fixture("Dishwasher", "appliance", "Kitchen", 6, 10.65, 2, 2, 2.8, finish="steel"),
