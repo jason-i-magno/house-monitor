@@ -33,10 +33,10 @@ const MODEL_TOKENS = [
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
-  vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
+  vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
   deciduous: "Tree", evergreen: "Evergreen tree",
 };
-const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Closets", "Steps", "Roof", "Yard"];
+const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard"];
 // Each side of a plan as a line: the axis it runs along, where it is across
 // that axis, which way is inward (k), and where it starts and ends.
 const SIDE_LINES = {
@@ -190,7 +190,7 @@ function modelScene() {
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls" }[f.kind] ?? "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings" }[f.kind] ?? "Appliances"));
   const grade = details.grade;
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
@@ -728,7 +728,7 @@ const MODEL_BALL = (() => {
 
 function tree(mesh, scene, t) {
   const [C, grade, id] = [scene.colors, scene.details.grade, t.item.id];
-  round(mesh, [t.x, t.y], Math.max(0.35, t.spread * 0.03), grade, grade + t.height * 0.6, C.trunk, id);
+  round(mesh, [t.x, t.y], Math.max(0.35, t.spread * 0.03), grade - 0.1, grade + t.height * 0.6, C.trunk, id); // its foot sunk, not in the lawn's plane
   if (t.ring > 0) { // a raised ring of stone or brick, filled with mulch
     round(mesh, [t.x, t.y], t.ring, grade, grade + 0.9, C[t.edging] ?? C.stone, id, false, 16);
     round(mesh, [t.x, t.y], t.ring - 0.4, grade + 0.9, grade + 0.95, C.mulch, id, false, 16);
@@ -820,8 +820,12 @@ function roofOutline(mesh, scene, r) {
 }
 
 // A flight of steps: each a block from the bottom up to its tread, over its
-// part of the flight and everything above it.
-function stepsFlight(mesh, scene, t) {
+// part of the flight and everything above it. Its banisters are railings
+// just outside it, 3 ft over its treads; under a floor, in the stairwell it
+// opens, level 3 ft over that floor, over a wall down the stairwell's side in
+// the wall color of the room it opens into; no higher than cap, where the
+// view is cut away.
+function stepsFlight(mesh, scene, t, cap = Infinity) {
   const C = scene.colors;
   const n = t.count ?? Math.max(1, Math.round((t.top - t.bottom) / 0.6));
   for (let k = 0; k < n; k++) {
@@ -832,6 +836,25 @@ function stepsFlight(mesh, scene, t) {
     if (t.up === "left") x1 -= f * t.width;
     if (t.up === "right") x0 += f * t.width;
     box(mesh, [x0, y0, t.bottom], [x1, y1, t.bottom + ((k + 1) * (t.top - t.bottom)) / n], paving(C, t), t.item.id);
+  }
+  if (!t.banisters?.length) return;
+  const [x0, y0, x1, y1] = [t.x, t.y, t.x + t.width, t.y + t.depth];
+  const [cx, cy] = [(x0 + x1) / 2, (y0 + y1) / 2];
+  const well = t.room == null ? null : scene.pieces.find(([q, p]) => q.name !== t.room && Math.abs(p.elevation - t.top) < 1e-6 && p.x < cx && cx < p.x + p.width && p.y < cy && cy < p.y + p.depth);
+  const color = t.room == null ? paving(C, t) : C.white;
+  const [low, high] = { left: [x1, x0], right: [x0, x1], back: [y1, y0], front: [y0, y1] }[t.up];
+  const axis = t.up === "left" || t.up === "right" ? "x" : "y"; // the axis it climbs along
+  const tread = (v) => t.bottom + ((v - low) / (high - low)) * (t.top - t.bottom);
+  const [base, top] = well ? [() => t.top, () => t.top + 3] : [tread, (v) => tread(v) + 3];
+  const b = t.banister;
+  for (const side of t.banisters) {
+    const across = { back: [y0 - b, y0], front: [y1, y1 + b], left: [x0 - b, x0], right: [x1, x1 + b] }[side];
+    const along = axis === "x" ? [x0, x1] : [y0, y1];
+    railing(mesh, color, t.item.id, axis, along, across, base, top, cap);
+    if (well) { // the stairwell's side, under the floor, its top just within the floor's
+      const [lo, hi] = [[along[0], across[0]], [along[1], across[1]]].map(([s, d]) => (axis === "x" ? [s, d] : [d, s]));
+      box(mesh, [lo[0], lo[1], t.bottom], [hi[0], hi[1], Math.min(cap, t.top - 0.02)], C[well[0].finish.walls], t.item.id);
+    }
   }
 }
 
@@ -969,11 +992,45 @@ function fence(mesh, scene, f) {
   });
 }
 
-// A fixture: a box in its finish. A fireplace's firebox is dark, a little proud of the side facing away from
-// the wall it's nearest, across its middle and from low on it to a little over halfway up.
-// A fixture: a box in its finish. A half wall is in its room's wall color, with a cap in its finish; a
-// fireplace has a firebox on the side away from the wall it's against.
+// A railing along an axis, x or y, from s0 to s1 and across d0 to d1: a handrail as wide along top(s), a rail
+// along base(s), posts at its ends and about every 6 ft from base to a little over the handrail, and poles about
+// every 5 in between, each part no higher than cap. base and top are straight lines along it.
+function railing(mesh, color, id, axis, [s0, s1], [d0, d1], base, top, cap = Infinity) {
+  const at = (s, d, z) => (axis === "x" ? [s, d, z] : [d, s, z]);
+  // A bar from sa to sb across da to db, between lo(s) and hi(s), cut where either crosses cap.
+  const bar = (sa, sb, da, db, lo, hi) => {
+    const cross = (f) => { const [fa, fb] = [f(sa), f(sb)]; return (fa - cap) * (fb - cap) < 0 ? [sa + ((cap - fa) / (fb - fa)) * (sb - sa)] : []; };
+    const cuts = [sa, ...cross(lo), ...cross(hi), sb].sort((u, v) => u - v);
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const [u0, u1] = [cuts[i], cuts[i + 1]];
+      if (u1 - u0 < 1e-6 || lo((u0 + u1) / 2) >= cap) continue;
+      const z = (u, f) => Math.min(cap, f(u));
+      const ends = [[u0, da], [u1, da], [u1, db], [u0, db]];
+      hexa(mesh, ends.map(([u, d]) => at(u, d, z(u, lo))), ends.map(([u, d]) => at(u, d, Math.max(z(u, lo), z(u, hi)))), color, id);
+    }
+  };
+  const [mid, w] = [(d0 + d1) / 2, d1 - d0];
+  bar(s0, s1, d0, d1, (s) => top(s) - 0.15, top); // the handrail
+  bar(s0, s1, mid - w / 4, mid + w / 4, base, (s) => base(s) + 0.12); // the rail under the poles
+  const posts = Math.max(1, Math.round((s1 - s0) / 6));
+  for (let k = 0; k <= posts; k++) {
+    const s = s0 + ((s1 - s0) * k) / posts;
+    const [a, b] = [Math.max(s0, s - w / 2), Math.min(s1, s + w / 2)];
+    bar(a, b, d0, d1, base, (u) => top(u) + 0.2);
+  }
+  for (let s = s0 + w + 0.3; s < s1 - w - 0.2; s += 0.42) bar(s - 0.05, s + 0.05, mid - 0.05, mid + 0.05, (u) => base(u) + 0.12, (u) => top(u) - 0.15);
+}
+
+// A fixture: a box in its finish. A railing runs along its longer side, in its finish. A half wall is in its
+// room's wall color, with a cap in its finish. A fireplace's firebox is dark, a little proud of the side away
+// from the wall it's against, across its middle and from low on it to a little over halfway up.
 function fixture(mesh, C, f) {
+  if (f.kind === "railing") {
+    const along = f.x1 - f.x0 >= f.y1 - f.y0 ? "x" : "y";
+    const [s, d] = along === "x" ? [[f.x0, f.x1], [f.y0, f.y1]] : [[f.y0, f.y1], [f.x0, f.x1]];
+    railing(mesh, C[f.finish] ?? C.white, f.item.id, along, s, d, () => f.z0, () => f.z1);
+    return;
+  }
   if (f.kind === "half wall") {
     const cap = Math.max(f.z0, f.z1 - 0.15);
     box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, cap], C[f.place?.finish.walls] ?? C.paint, f.item.id);
@@ -1013,7 +1070,8 @@ function buildModel(scene, mode, view) {
     railings(mesh, scene, g);
   }
   for (const b of scene.sheds) shed(mesh, scene, b);
-  for (const t of scene.steps) if (shows(t.item)) stepsFlight(mesh, scene, t);
+  const cut = mode === "outside" ? Infinity : (scene.levels.find(([floor]) => floor === mode)?.[1] ?? Infinity) + MODEL_CUT;
+  for (const t of scene.steps) if (shows(t.item)) stepsFlight(mesh, scene, t, cut);
   for (const f of scene.fences) fence(mesh, scene, f);
   if (mode === "outside") {
     for (const t of scene.trees) tree(mesh, scene, t);

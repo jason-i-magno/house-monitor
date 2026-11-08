@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall")
+FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing")
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
@@ -79,12 +79,14 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance, vent, plumbing (a tub, toilet or sink), fireplace or half wall, drawn as a box: in a room,
-    or outside (room None) at x and y on the plan.
+    """An appliance, vent, plumbing (a tub, toilet or sink), fireplace, half wall or railing, drawn as a box: in a
+    room, or outside (room None) at x and y on the plan.
 
     lift is how high its bottom is above the floor, or outside above the ground. A fireplace is in a room,
     against a wall, its firebox opening on the side away from that wall. A half wall is in a room too, out
-    from one of its walls, in the room's wall color with a cap in its finish.
+    from one of its walls, in the room's wall color with a cap in its finish. A railing runs along its longer
+    side, in its finish: posts at its ends, a handrail as wide as it on top, and poles between, as along the
+    open edge of a floor.
     """
 
     name: str
@@ -209,8 +211,13 @@ class Fence:
 class Steps:
     """A flight of steps over x, y, width and depth on the plan, climbing from bottom to top, heights above the
     main floor, toward the side `up`. They're in a room, in any piece of it, for what shows when the house is cut
-    away, or outside. A flight in a room that climbs to the floor of a room above opens a stairwell in it. count is how many steps, if not one
-    for every 7 in or so of rise."""
+    away, or outside. A flight in a room that climbs to the floor of a room above opens a stairwell in it. count is
+    how many steps, if not one for every 7 in or so of rise.
+
+    banisters are the sides along its climb it has a banister on, just outside it: posts at its ends, a handrail
+    `banister` ft wide 3 ft over its treads, and poles between. A flight under a floor, in the stairwell it opens,
+    has its banisters level, 3 ft over that floor, over the stairwell's side.
+    """
 
     name: str
     x: float
@@ -223,6 +230,8 @@ class Steps:
     room: str | None = None
     paving: str = "concrete"
     count: int | None = None
+    banisters: tuple[str, ...] = ()
+    banister: float = 0.46
     known: bool = False
 
     def __post_init__(self):
@@ -230,6 +239,9 @@ class Steps:
         _check(self.paving, PAVINGS, "a paving")
         if self.count is not None and self.count < 1:
             raise ValueError(f"{self.name} needs a step or more, not {self.count}")
+        along = ("back", "front") if self.up in ("left", "right") else ("left", "right")
+        for side in self.banisters:
+            _check(side, along, "a banister's side, along the climb")
 
 
 @dataclass(frozen=True)
