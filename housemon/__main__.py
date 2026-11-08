@@ -1,13 +1,14 @@
 """Run the house monitor: python3 -m housemon"""
 
 import argparse
+import json
 import threading
 import time
 from pathlib import Path
 
 from . import house as houses
 from .hub import Hub
-from .server import HouseServer
+from .server import HouseServer, house_json
 from .simulator import SimulatedSource
 from .store import Store
 
@@ -29,20 +30,38 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--backfill-hours", type=float, default=24.0, help="hours of simulated history to create in a new database"
     )
+    parser.add_argument(
+        "--dump", action="store_true", help="print the house as /api/sensors sends it, without readings, and exit"
+    )
     args = parser.parse_args(argv)
+
+    house_file = houses.HouseFile(args.house)
+    house = house_file.module
+    source = SimulatedSource(house.HOUSE, args.interval, getattr(house, "AREAS", ()), getattr(house, "DETAILS", None))
+    if args.dump:
+        print(json.dumps(house_json(source.sensors, source.areas, source.details)))
+        return
 
     db = args.db or Path("data") / f"{args.source}.sqlite3"
     db.parent.mkdir(parents=True, exist_ok=True)
     store = Store(db, min_interval=args.store_every)
-    house = houses.load(args.house)
-    source = SimulatedSource(house.HOUSE, args.interval, getattr(house, "AREAS", ()), getattr(house, "DETAILS", None))
     if store.is_empty() and args.backfill_hours > 0:
         now = time.time()
         store.add_many(source.backfill(now - args.backfill_hours * 3600, now, args.store_every))
 
     hub = Hub(store)
+
+    def refresh() -> None:
+        """Take up the house file's changes, if it has any, before the page loads the house."""
+        changed = house_file.changed()
+        if changed:
+            source.rooms = changed.HOUSE
+            source.areas = list(getattr(changed, "AREAS", ()))
+            source.details = getattr(changed, "DETAILS", None)
+            server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
+
     server = HouseServer(
-        (args.host, args.port), hub, store, source.sensors, getattr(source, "areas", []), getattr(source, "details", None)
+        (args.host, args.port), hub, store, source.sensors, getattr(source, "areas", []), getattr(source, "details", None), refresh
     )
     stop = threading.Event()
     collector = threading.Thread(target=source.run, args=(hub.publish, stop), name="collector", daemon=True)

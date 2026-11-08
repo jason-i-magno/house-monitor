@@ -99,6 +99,18 @@ class SimulatedSourceTest(unittest.TestCase):
         self.assertGreaterEqual(len(ids), 2 * len(HOUSE))
         self.assertEqual(ids[: len(HOUSE)], [room.sensor.id for room in HOUSE])
 
+    def test_run_takes_up_rooms_swapped_in(self):
+        source = SimulatedSource(HOUSE, interval=0.06)
+        readings, stop = [], threading.Event()
+        worker = threading.Thread(target=source.run, args=(readings.append, stop))
+        worker.start()
+        time.sleep(0.03)
+        source.rooms = HOUSE[:1]  # as from a changed house file
+        time.sleep(0.25)
+        stop.set()
+        worker.join(timeout=1)
+        self.assertEqual({r.sensor_id for r in readings[-3:]}, {HOUSE[0].sensor.id})
+
 
 if __name__ == "__main__":
     unittest.main()

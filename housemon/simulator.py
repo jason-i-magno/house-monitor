@@ -9,7 +9,6 @@ file's HOUSE: example_house.py, or your own.
 """
 
 import functools
-import itertools
 import math
 import random
 import threading
@@ -141,12 +140,17 @@ class SimulatedSource:
             t += step
 
     def run(self, publish: Callable[[Reading], None], stop: threading.Event) -> None:
-        """Call publish(reading) for every new reading until stop is set."""
-        step = self.interval / len(self.rooms)
+        """Call publish(reading) for every new reading until stop is set. Each round goes through the rooms as they
+        are then, so rooms swapped in while it runs, from a changed house file, get their turns."""
         due = time.time()
-        for room in itertools.cycle(self.rooms):
-            if stop.wait(max(0.0, due - time.time())):
+        while True:
+            rooms = self.rooms
+            step = self.interval / max(1, len(rooms))
+            for room in rooms:
+                if stop.wait(max(0.0, due - time.time())):
+                    return
+                publish(reading_at(room, time.time()))
+                # After a suspend, carry on from now rather than catching up in a burst.
+                due = max(due + step, time.time())
+            if not rooms and stop.wait(self.interval):
                 return
-            publish(reading_at(room, time.time()))
-            # After a suspend, carry on from now rather than catching up in a burst.
-            due = max(due + step, time.time())

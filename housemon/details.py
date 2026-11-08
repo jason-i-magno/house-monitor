@@ -31,6 +31,17 @@ def _check(value, allowed, what):
         raise ValueError(f"{what} is one of {', '.join(allowed)}, not {value!r}")
 
 
+def _check_against(name, against, room):
+    if isinstance(against, str):
+        raise ValueError(f"{name}'s against is a tuple of sides, like ({against!r},)")
+    for side in against:
+        _check(side, SIDES, "a side it's against")
+    if against and room is None:
+        raise ValueError(f"{name} stands against a room's walls, so it's in a room")
+    if len({"left", "right"} & set(against)) > 1 or len({"back", "front"} & set(against)) > 1:
+        raise ValueError(f"{name} can't stand against both of its room's opposite walls")
+
+
 @dataclass(frozen=True)
 class Opening:
     """A door, window or vent in one of a room's walls, or a shed's, named as its room.
@@ -38,18 +49,20 @@ class Opening:
     wall is the room's side it's in, and offset how far along that wall it
     starts: from the left end of a back or front wall, from the back end of a
     left or right wall. A room in pieces uses its piece furthest out on that
-    side. sill is how high its bottom is above the room's floor, or the ground
-    for a shed's. A door, window or opening goes through the wall to whatever
-    is on the other side; an opening has no door in it. A vent is a grille on
-    the wall.
+    side. An offset of None starts it at the face of the wall across that end,
+    and a width of None runs it to the face of the wall across the other, so
+    an opening from wall to wall has both. sill is how high its bottom is
+    above the room's floor, or the ground for a shed's. A door, window or
+    opening goes through the wall to whatever is on the other side; an
+    opening has no door in it. A vent is a grille on the wall.
     """
 
     name: str
     kind: str
     room: str
     wall: str
-    offset: float
-    width: float
+    offset: float | None
+    width: float | None
     height: float
     sill: float = 0.0
     known: bool = False
@@ -82,11 +95,12 @@ class Fixture:
     """An appliance, vent, plumbing (a tub, toilet or sink), fireplace, half wall or railing, drawn as a box: in a
     room, or outside (room None) at x and y on the plan.
 
-    lift is how high its bottom is above the floor, or outside above the ground. A fireplace is in a room,
-    against a wall, its firebox opening on the side away from that wall. A half wall is in a room too, out
-    from one of its walls, in the room's wall color with a cap in its finish. A railing runs along its longer
-    side, in its finish: posts at its ends, a handrail as wide as it on top, and poles between, as along the
-    open edge of a floor.
+    lift is how high its bottom is above the floor, or outside above the ground. against lists the sides of its
+    room it stands flush against the walls of, wherever their faces are, in place of x or y on that side's axis.
+    A fireplace is in a room, against a wall, its firebox opening on the side away from that wall. A half wall
+    is in a room too, out from one of its walls, in the room's wall color with a cap in its finish. A railing
+    runs along its longer side, in its finish: posts at its ends, a handrail as wide as it on top, and poles
+    between, as along the open edge of a floor.
     """
 
     name: str
@@ -100,12 +114,14 @@ class Fixture:
     lift: float = 0.0
     finish: str = "white"
     known: bool = False
+    against: tuple[str, ...] = ()
 
     def __post_init__(self):
         _check(self.kind, FIXTURES, "a fixture's kind")
         _check(self.finish, FINISHES, "a fixture's finish")
         if self.kind in ("fireplace", "half wall") and self.room is None:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
+        _check_against(self.name, self.against, self.room)
 
 
 @dataclass(frozen=True)
@@ -216,7 +232,8 @@ class Steps:
 
     banisters are the sides along its climb it has a banister on, just outside it: posts at its ends, a handrail
     `banister` ft wide 3 ft over its treads, and poles between. A flight under a floor, in the stairwell it opens,
-    has its banisters level, 3 ft over that floor, over the stairwell's side.
+    has its banisters level, 3 ft over that floor, over the stairwell's side. against, for a flight in a room,
+    lists the sides of the room it stands flush against the walls of, in place of x or y on that side's axis.
     """
 
     name: str
@@ -233,8 +250,10 @@ class Steps:
     banisters: tuple[str, ...] = ()
     banister: float = 0.46
     known: bool = False
+    against: tuple[str, ...] = ()
 
     def __post_init__(self):
+        _check_against(self.name, self.against, self.room)
         _check(self.up, SIDES, "the way steps go up")
         _check(self.paving, PAVINGS, "a paving")
         if self.count is not None and self.count < 1:
