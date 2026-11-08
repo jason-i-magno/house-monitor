@@ -180,8 +180,9 @@ DETAILS = Details(
         Ground("Gravel path", "walk", -12, -10, 12, 30, paving="gravel", outline=((-12, 20), (-8, 20), (0, -6), (0, -10))),
     ),
     trees=(
-        Tree("Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4),
-        Tree("Backyard tree", "deciduous", 8, -30, height=32, spread=26),
+        Tree("Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4, crown="vase", fork=7, bark="gray"),
+        Tree("Backyard tree", "deciduous", 8, -30, height=28, spread=30, crown="spreading", leaves="dark", stems=3),
+        Tree("Birch", "deciduous", 66, 8, height=26, spread=12, leaves="light", stems=3, bark="white"),
         Tree("Spruce", "evergreen", 62, -22, height=24, spread=12),
     ),
     sheds=(Shed("Shed", 52, -42, 10, 8),),
