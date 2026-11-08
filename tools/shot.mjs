@@ -12,7 +12,8 @@
 //     --room NAME       zoom the detailed view in on a room or area, or anything else in it by name, as Fireplace
 //     --zoom N          how far, 1 the whole lot (default 3 with --room)
 //     --coverage        in the detailed view, the sprinklers' coverage shown
-//     --focus NAME      and a part of it focused, by name, with its readout, as Zone 1 (front lawn)
+//     --focus NAME      and a part of it focused, by name, with its readout, as Zone 1 (front lawn), or by name
+//                       and where, as Head 2, Zone 1 (front lawn)
 //     --full            the map full screen, the browser's own (with --fallback, fixed over the page instead)
 //     --width PX        the window's width (default 1100), under 500 as a phone
 //     --height PX       the window's height (default 800 full screen, else 3000, for the whole page)
@@ -121,7 +122,7 @@ try {
     steps.push(`zoomModel(${Number(opt.zoom)}); await new Promise((r) => setTimeout(r, 700));`);
   }
   if (opt.focus) {
-    steps.push(`{ const item = state.modelScene?.items.find((i) => i.name === ${JSON.stringify(opt.focus)}); if (!item) throw new Error("Nothing named " + ${JSON.stringify(opt.focus)} + " in the detailed view"); setMapFocus(item.key); await new Promise((r) => setTimeout(r, 400)); }`);
+    steps.push(`{ const item = state.modelScene?.items.find((i) => [i.name, i.name + ", " + i.where].includes(${JSON.stringify(opt.focus)})); if (!item) throw new Error("Nothing named " + ${JSON.stringify(opt.focus)} + " in the detailed view"); setMapFocus(item.key); await new Promise((r) => setTimeout(r, 400)); }`);
   }
   for (const step of steps) await run(step);
   if (opt.full) {
