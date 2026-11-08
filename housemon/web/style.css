@@ -424,6 +424,38 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .map figcaption { flex-wrap: wrap; }
 .map figcaption .unit { margin-right: auto; }
 .segmented { display: flex; gap: 4px; }
+.map-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; } /* the views and full screen, wrapping as one */
+.map figcaption .full {
+  display: flex;
+  align-items: center;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.map figcaption .full:hover { background: var(--hover); color: var(--text-primary); }
+
+/* Full screen: the map fills the screen, its plot taking whatever its caption and controls leave, which its views
+   grow to fill. In the browser's own full screen, or without one, as on a phone, fixed over the page, which stops
+   scrolling under it (html.map-full). The list of everything in the detailed view waits until it's back. */
+.map.is-full {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  border: 0;
+  border-radius: 0;
+  overflow: auto;
+}
+.map.is-full .plot { flex: 1 1 0; min-height: 0; }
+.map.is-full .table-view { display: none; }
+.map.is-full .plot > svg, .map.is-full .plot > canvas { touch-action: none; } /* a drag tilts, with no page to scroll */
+html.map-full { overflow: hidden; }
 .map .plot { margin-top: 12px; }
 .map .plot > svg { border-radius: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .map .plot > canvas { display: block; width: 100%; border-radius: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
@@ -500,9 +532,9 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .turns .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
 .turns button { padding: 4px 10px; font-size: 1rem; line-height: 1.2; }
 
-/* A touch can't tilt by dragging, as dragging up and down scrolls the page. */
+/* A touch can't tilt by dragging, as dragging up and down scrolls the page, but for full screen. */
 @media (pointer: coarse) {
-  .turns .with-mouse { display: none; }
+  .map:not(.is-full) .turns .with-mouse { display: none; }
 }
 
 .tooltip .head { margin-bottom: 4px; }

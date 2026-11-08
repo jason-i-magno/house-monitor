@@ -59,6 +59,7 @@ const state = {
   map: null, // the house map's elements, and the layout it last drew
   mapView: "plan",
   mapAngle: MAP_HOME.angle, // degrees the 3D view is turned, from looking at the front
+  mapFull: false, // the map filling the screen
   mapTilt: MAP_HOME.tilt, // degrees the 3D view looks down from level, -90 (from below) to 90 (from above)
   mapFocus: null, // the sensor id the map's readout shows, or in the detailed view any part's key
   modelCut: "outside", // the detailed view's whole house, or the level it's cut away to
@@ -556,16 +557,18 @@ function createMap() {
   plot.append(root, canvas, note, outside, tooltip);
   const cuts = el("div", { class: "cuts" }, el("span", { class: "hint" }, "Show"), el("div", { class: "segmented", role: "group", "aria-label": "Show the house whole, or cut away to a level" }));
   const listWrap = el("div", { class: "table-wrap" });
+  const full = el("button", { type: "button", class: "full" });
+  full.addEventListener("click", () => setMapFull(!state.mapFull));
   const list = el("details", { class: "table-view" }, el("summary", {}, "Everything in the detailed view, known or guessed"), listWrap);
   const figure = el(
     "figure",
     { class: "chart map" },
-    el("figcaption", {}, el("h2", {}, "House map"), el("span", { class: "unit" }, "°F"), views),
+    el("figcaption", {}, el("h2", {}, "House map"), el("span", { class: "unit" }, "°F"), el("div", { class: "map-actions" }, views, full)),
     plot,
     el("div", { class: "map-foot" }, scaleLegend(), cuts, turns),
     list,
   );
-  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, cuts, turns, list, listWrap, layout: null, drag: null };
+  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, turns, list, listWrap, layout: null, drag: null };
   for (const surface of [root, canvas]) {
     surface.addEventListener("focus", () => setMapFocus(state.mapFocus ?? map.layout?.keys?.[0] ?? indoors()[0]?.id ?? null));
     surface.addEventListener("blur", () => setMapFocus(null));
@@ -574,7 +577,8 @@ function createMap() {
       mapPointerHover(event); // a tap on a phone
       if (state.mapView === "plan") return;
       const { clientX: x, clientY: y, pointerType } = event;
-      map.drag = { x, y, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch", moved: false };
+      // A touch drags only sideways, as up and down scrolls the page, but for full screen, where there's none to scroll.
+      map.drag = { x, y, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, moved: false };
       surface.setPointerCapture(event.pointerId);
     });
     surface.addEventListener("pointermove", (event) => {
@@ -619,6 +623,36 @@ function createMap() {
     drawMapSoon();
   });
   return map;
+}
+
+// The map filling the screen: the browser's own full screen where it has one for the page, else fixed over the
+// page, which stops scrolling under it, as on a phone. Its views grow to fill what its caption and controls leave.
+async function setMapFull(on) {
+  const figure = state.map.figure;
+  if (on && document.fullscreenEnabled && figure.requestFullscreen) {
+    try {
+      return await figure.requestFullscreen(); // fullscreenchange takes it from there
+    } catch {} // refused, so over the page instead
+  }
+  if (!on && document.fullscreenElement) return document.exitFullscreen();
+  showMapFull(on);
+}
+
+function showMapFull(on) {
+  const map = state.map;
+  state.mapFull = on;
+  map.figure.classList.toggle("is-full", on);
+  document.documentElement.classList.toggle("map-full", on && !document.fullscreenElement);
+  const label = on ? "Exit full screen" : "Full screen";
+  map.full.setAttribute("aria-label", label);
+  map.full.setAttribute("title", label);
+  map.full.setAttribute("aria-pressed", String(on));
+  // Corners pointing out, or back in.
+  const d = on ? "M7 3v4H3M13 3v4h4M17 13h-4v4M3 13h4v4" : "M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4";
+  const icon = svg("svg", { width: 20, height: 20, viewBox: "0 0 20 20", "aria-hidden": "true" });
+  icon.append(svg("path", { d, fill: "none", stroke: "currentColor", "stroke-width": 1.75, "stroke-linecap": "round", "stroke-linejoin": "round" }));
+  map.full.replaceChildren(icon);
+  drawMapSoon();
 }
 
 function renderMapViews() {
@@ -794,6 +828,8 @@ function drawMap() {
   const map = state.map;
   const width = map.plot.clientWidth;
   if (!width || !state.sensors.length) return;
+  // Full screen, each view fills the height its plot has; else it takes the height it needs at this width.
+  const fill = state.mapFull && map.plot.clientHeight > 120 ? map.plot.clientHeight : null;
   const view = state.mapView;
   const model = view === "model";
   map.figure.classList.toggle("is-model", model);
@@ -801,7 +837,7 @@ function drawMap() {
   map.cuts.hidden = map.list.hidden = !model;
   map.svg.style.display = model ? "none" : "";
   if (model) {
-    map.layout = drawModel(width);
+    map.layout = drawModel(width, fill);
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
       + "Arrow keys step through its parts; the list below the map names each one.");
   } else {
@@ -810,7 +846,7 @@ function drawMap() {
     map.svg.replaceChildren();
     map.svg.setAttribute("aria-label", `House map${view === "3d" ? " in 3D" : ""}, each room colored by its temperature. `
       + "Arrow keys step through the rooms; the room cards above list every reading.");
-    map.layout = view === "3d" ? draw3d(map.svg, width) : drawPlan(map.svg, width);
+    map.layout = view === "3d" ? draw3d(map.svg, width, fill) : drawPlan(map.svg, width, fill);
     map.svg.setAttribute("viewBox", `0 0 ${width} ${map.layout.height}`);
     map.svg.setAttribute("height", map.layout.height);
   }
@@ -863,21 +899,30 @@ function drawMapFocus() {
 
 // One plan per floor, side by side when they fit, all at the same scale,
 // inset from the edges of the map's background.
-function drawPlan(root, width) {
+function drawPlan(root, width, fill = null) {
   const boxes = houseBoxes();
   const house = extent(boxes);
   const floors = [...new Set(boxes.map((r) => r.floor))];
   const [gap, head, pad] = [24, 24, 12];
-  const columns = Math.max(1, Math.min(floors.length, Math.floor((width - 2 * pad + gap) / (240 + gap))));
-  const cell = (width - 2 * pad - gap * (columns - 1)) / columns;
-  const scale = Math.min(cell / house.width, 300 / house.depth);
-  const rows = Math.ceil(floors.length / columns);
-  const height = 2 * pad + rows * (head + house.depth * scale) + (rows - 1) * gap;
+  // The floors in columns, as many as fit at 240 px or more each, each no taller than 300 px; or filling a height,
+  // in however many columns show them largest, each centered in its place.
+  const layout = (columns) => {
+    const rows = Math.ceil(floors.length / columns);
+    const cell = (width - 2 * pad - gap * (columns - 1)) / columns;
+    const tall = fill ? (fill - 2 * pad - rows * head - (rows - 1) * gap) / rows : 300;
+    return { columns, rows, cell, scale: Math.max(0, Math.min(cell / house.width, tall / house.depth)) };
+  };
+  const { columns, rows, cell, scale } = fill
+    ? floors.map((_, i) => layout(i + 1)).reduce((best, next) => (next.scale > best.scale ? next : best))
+    : layout(Math.max(1, Math.min(floors.length, Math.floor((width - 2 * pad + gap) / (240 + gap)))));
+  const needed = 2 * pad + rows * (head + house.depth * scale) + (rows - 1) * gap;
+  const height = fill ?? needed;
+  const [inset, drop] = fill ? [(cell - house.width * scale) / 2, (fill - needed) / 2] : [0, 0];
   const [anchors, outlines] = [{}, {}];
 
   floors.forEach((floor, f) => {
-    const left = pad + (f % columns) * (cell + gap);
-    const top = pad + Math.floor(f / columns) * (head + house.depth * scale + gap) + head;
+    const left = pad + (f % columns) * (cell + gap) + inset;
+    const top = pad + Math.floor(f / columns) * (head + house.depth * scale + gap) + head + drop;
     const place = (r) => ({
       x: left + (r.x - house.x) * scale,
       y: top + (r.y - house.y) * scale,
@@ -989,7 +1034,7 @@ function nameLines(group, name, room) {
 
 // The house seen from any direction, each room a box: turned by
 // state.mapAngle, and tilted by state.mapTilt from straight below to straight above.
-function draw3d(root, width) {
+function draw3d(root, width, fill = null) {
   const boxes = houseBoxes();
   const house = extent(boxes);
   const [cx, cy, cz] = [house.x + house.width / 2, house.y + house.depth / 2, (house.low + house.high) / 2];
@@ -998,11 +1043,12 @@ function draw3d(root, width) {
   const [cosTilt, sinTilt] = [Math.cos(tilt), Math.sin(tilt)];
   const view = [toward[0] * cosTilt, toward[1] * cosTilt, sinTilt]; // from the house toward the viewer
   // Sized to the house's bounding sphere, so turning or tilting it neither
-  // zooms it nor changes the map's height and moves the page.
+  // zooms it nor changes the map's height and moves the page; full screen, as
+  // large as fits the height to fill.
   const radius = Math.hypot(house.width, house.depth, house.high - house.low) / 2;
   const pad = 22;
-  const scale = Math.min(width - 2 * pad, 480) / (2 * radius);
-  const height = Math.ceil(2 * radius * scale + 2 * pad);
+  const scale = Math.min(width - 2 * pad, fill ? fill - 2 * pad : 480) / (2 * radius);
+  const height = fill ?? Math.ceil(2 * radius * scale + 2 * pad);
   const [ox, oy] = [width / 2, height / 2];
   const project = (x, y, z) => {
     const [dx, dy, dz] = [x - cx, y - cy, z - cz];
@@ -1430,6 +1476,12 @@ async function main() {
   setInterval(drawAll, 60 * 1000); // slide the time axis even when no reading arrives
   new ResizeObserver(drawAll).observe(document.getElementById("charts"));
   new ResizeObserver(drawMapSoon).observe(document.getElementById("map"));
+  showMapFull(false);
+  document.addEventListener("fullscreenchange", () => showMapFull(document.fullscreenElement === state.map.figure));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.mapFull && !document.fullscreenElement) setMapFull(false);
+  });
+  window.addEventListener("resize", () => state.mapFull && drawMapSoon()); // as a phone turns, full screen
 }
 
 main();
