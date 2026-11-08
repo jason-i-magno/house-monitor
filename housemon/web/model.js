@@ -29,7 +29,7 @@ const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "leaves", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
+  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
@@ -873,40 +873,174 @@ function round(mesh, [x, y], r, z0, z1, color, id, point = false, n = 8) {
   mesh.solid(faces, id);
 }
 
-// An icosahedron split once into 80 triangles, on the unit sphere.
+// A round from a to b in any direction, n sides, radius r0 at a and r1 at b: a tree's stem or limb.
+function limb(mesh, a, b, r0, r1, color, id, n = 6) {
+  const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  const unit = (p) => p.map((c) => c / Math.hypot(...p));
+  const w = unit(b.map((c, k) => c - a[k]));
+  const u = unit(cross(w, Math.abs(w[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]));
+  const v = cross(w, u);
+  const ring = (p, r) => Array.from({ length: n }, (_, i) => {
+    const angle = (2 * Math.PI * i) / n;
+    return p.map((c, k) => c + r * (Math.cos(angle) * u[k] + Math.sin(angle) * v[k]));
+  });
+  const [ends, tips] = [ring(a, r0), ring(b, r1)];
+  const faces = [[ends, color], [tips, color]];
+  for (let i = 0; i < n; i++) faces.push([[ends[i], ends[(i + 1) % n], tips[(i + 1) % n], tips[i]], color]);
+  mesh.solid(faces, id);
+}
+
+// The unit sphere in triangles: an icosahedron, each face split in four, and those again.
 const MODEL_BALL = (() => {
   const g = (1 + Math.sqrt(5)) / 2;
   const unit = (v) => v.map((c) => c / Math.hypot(...v));
+  const mid = (u, v) => unit(u.map((x, k) => (x + v[k]) / 2));
   const corners = [[-1, g, 0], [1, g, 0], [-1, -g, 0], [1, -g, 0], [0, -1, g], [0, 1, g], [0, -1, -g], [0, 1, -g], [g, 0, -1], [g, 0, 1], [-g, 0, -1], [-g, 0, 1]].map(unit);
   const faces = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
-  return faces.flatMap(([a, b, c]) => {
-    const [p, q, r] = [corners[a], corners[b], corners[c]];
-    const mid = (u, v) => unit(u.map((x, k) => (x + v[k]) / 2));
+  const split = (triangles) => triangles.flatMap(([p, q, r]) => {
     const [pq, qr, rp] = [mid(p, q), mid(q, r), mid(r, p)];
     return [[p, pq, rp], [pq, q, qr], [rp, qr, r], [pq, qr, rp]];
   });
+  return split(split(faces.map((face) => face.map((i) => corners[i]))));
 })();
+
+// A deciduous tree's crown by its shape (details.CROWNS): where it starts, as a share of the tree's height; how
+// far up it it's widest; how pointed (over 1) or flat (under 1) it is below and above that; and how much
+// narrower it is at the bottom than the top, as a vase is, or, under 0, at the top than the bottom.
+const MODEL_CROWNS = {
+  round: { base: 0.32, widest: 0.48, below: 1, above: 1, taper: 0 },
+  vase: { base: 0.3, widest: 0.62, below: 0.85, above: 0.55, taper: 0.35 },
+  spreading: { base: 0.22, widest: 0.36, below: 0.55, above: 1.1, taper: 0 },
+  pyramid: { base: 0.25, widest: 0.18, below: 0.5, above: 1.25, taper: -0.3 },
+};
+const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dark" };
+const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
+const MODEL_LUMP = 0.22; // how far a crown's hollows sink between its lumps, as a share of its size
+const MODEL_CROWN_GAP = 1; // feet a crown keeps clear of the house and sheds
+
+// Numbers from 0 to 1, the same ones for the same seed, so a tree is drawn alike every time.
+function seeded(seed) {
+  let s = (Math.abs(Math.round(seed)) % 2147483646) + 1;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+// For a crown around x, y, reaching `reach` across from there: a function pulling a point of it in level toward
+// x, y as far as it must to keep `gap` clear of the house and sheds, off the plans of their rooms (and their walls)
+// or over their roofs, so a crown can stand off a wall under the eaves and reach over the roof above them. A
+// point with a clear way to it stays put, as does one at a height where x, y itself isn't clear.
+function clearOfBuildings(scene, [cx, cy], reach, gap) {
+  const grade = scene.details.grade;
+  const solids = [
+    ...scene.pieces.map(([, p]) => ({ x0: p.x - scene.wall, y0: p.y - scene.wall, x1: p.x + p.width + scene.wall, y1: p.y + p.depth + scene.wall, top: p.top })),
+    ...scene.roofs.map((r) => ({ x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.depth, top: (x, y) => (onRoof(r, x, y) ? roofTop(r, x, y) : -Infinity) })),
+    ...scene.sheds.map((b) => ({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.depth, top: () => grade + b.peak })),
+  ].filter((s) => s.x0 - gap < cx + reach && cx - reach < s.x1 + gap && s.y0 - gap < cy + reach && cy - reach < s.y1 + gap);
+  const within = (v, a, b) => Math.min(Math.max(v, a + 1e-6), b - 1e-6);
+  // Within gap of one: over it or beside it, and under its top at its nearest point, plus gap.
+  const blocked = ([x, y, z]) => solids.some((s) =>
+    s.x0 - gap < x && x < s.x1 + gap && s.y0 - gap < y && y < s.y1 + gap && z < s.top(within(x, s.x0, s.x1), within(y, s.y0, s.y1)) + gap);
+  if (!solids.length) return (p) => p;
+  return (p) => {
+    const at = (f) => [cx + f * (p[0] - cx), cy + f * (p[1] - cy), p[2]];
+    const n = Math.ceil(Math.hypot(p[0] - cx, p[1] - cy) / 0.5); // out half a foot at a time
+    if (blocked(at(0))) return p;
+    let k = 1;
+    while (k <= n && !blocked(at(k / n))) k++;
+    if (k > n) return p;
+    let [lo, hi] = [(k - 1) / n, k / n];
+    for (let i = 0; i < 6; i++) [lo, hi] = blocked(at((lo + hi) / 2)) ? [lo, (lo + hi) / 2] : [(lo + hi) / 2, hi];
+    return at(lo);
+  };
+}
 
 function tree(mesh, scene, t) {
   const [C, grade, id] = [scene.colors, scene.details.grade, t.item.id];
-  round(mesh, [t.x, t.y], Math.max(0.35, t.spread * 0.03), grade - 0.1, grade + t.height * 0.6, C.trunk, id); // its foot sunk, not in the lawn's plane
-  if (t.ring > 0) { // a raised ring of stone or brick, filled with mulch
+  const bark = C[MODEL_BARKS[t.bark]] ?? C.trunk;
+  const [R, H, stems, fork] = [t.spread / 2, t.height, t.stems ?? 1, t.fork ?? 0];
+  const stem = (t.trunk ?? Math.max(stems > 1 ? 0.4 : 0.7, (t.spread * 0.06) / Math.sqrt(stems))) / 2; // each one's radius
+  if (t.ring > 0 && t.edging) { // a raised ring of stone or brick, filled with mulch
     round(mesh, [t.x, t.y], t.ring, grade, grade + 0.9, C[t.edging] ?? C.stone, id, false, 16);
     round(mesh, [t.x, t.y], t.ring - 0.4, grade + 0.9, grade + 0.95, C.mulch, id, false, 16);
+  } else if (t.ring > 0) { // a flat one, through the lawn's plane rather than in it
+    round(mesh, [t.x, t.y], t.ring, grade - 0.05, grade + 0.05, C.mulch, id, false, 16);
   }
   if (t.kind === "evergreen") {
+    round(mesh, [t.x, t.y], stem, grade - 0.1, grade + H * 0.6, bark, id); // its foot sunk, not in the lawn's plane
     for (const [from, to, width] of [[0.18, 0.62, 1], [0.4, 0.82, 0.74], [0.6, 1, 0.48]]) {
-      round(mesh, [t.x, t.y], (t.spread / 2) * width, grade + t.height * from, grade + t.height * to, C.needles, id, true, 10);
+      round(mesh, [t.x, t.y], R * width, grade + H * from, grade + H * to, C.needles, id, true, 10);
     }
     return;
   }
-  // A leafy canopy, its facets a little lighter or darker in turn.
-  const [rx, rz] = [t.spread / 2, t.spread * 0.35];
-  const center = [t.x, t.y, grade + t.height - rz];
+
+  // The crown: a ball stretched to its shape, from z0 up to the tree's top, lumpy where it's nearest some of a
+  // few directions, one of them straight up, so it reaches the top.
+  const shape = MODEL_CROWNS[t.crown] ?? MODEL_CROWNS.round;
+  const z0 = grade + (t.clearance ?? Math.max(H * shape.base, fork + 0.12 * H));
+  const z1 = grade + H;
+  const middle = z0 + shape.widest * (z1 - z0);
+  const random = seeded(t.x * 7919 + t.y * 104729);
+  const bumps = Array.from({ length: 9 }, () => {
+    const [z, angle] = [random() * 2 - 1, random() * 2 * Math.PI];
+    return [Math.sqrt(1 - z * z) * Math.cos(angle), Math.sqrt(1 - z * z) * Math.sin(angle), z];
+  }).concat([[0, 0, 1]]);
+  const near = (v, d) => Math.exp(-((v[0] - d[0]) ** 2 + (v[1] - d[1]) ** 2 + (v[2] - d[2]) ** 2) / 0.2);
+  const lump = (v) => 1 - MODEL_LUMP + MODEL_LUMP * Math.min(1, bumps.reduce((sum, d) => sum + near(v, d), 0));
+  // A point of the unit ball on the crown, before its lumps: its height, and its share of R across, the ball
+  // made as much wider as its taper narrows it where it's widest, so it reaches its spread.
+  const narrow = (vz) => 1 - (Math.abs(shape.taper) * (1 - Math.sign(shape.taper) * vz)) / 2;
+  const widest = Math.max(...Array.from({ length: 41 }, (_, i) => Math.sqrt(1 - (i / 20 - 1) ** 2) * narrow(i / 20 - 1)));
+  const stretch = ([, , vz]) => {
+    const below = vz < 0;
+    const g = Math.abs(vz) ** (below ? shape.below : shape.above);
+    return [below ? middle - g * (middle - z0) : middle + g * (z1 - middle), narrow(vz) / widest];
+  };
+  const [cx, cy] = [t.x + (t.lean?.[0] ?? 0), t.y + (t.lean?.[1] ?? 0)]; // its middle, off the trunk if it leans
+  const center = [cx, cy, middle];
+  const clear = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP);
+  const place = (v) => {
+    const [z, across] = stretch(v);
+    const m = lump(v);
+    return clear([cx + v[0] * R * across * m, cy + v[1] * R * across * m, middle + (z - middle) * m]);
+  };
+  // How far out the crown reaches, at least, at height z, for the stems and limbs to stay inside it.
+  const profile = Array.from({ length: 41 }, (_, i) => {
+    const vz = i / 20 - 1;
+    const [z, across] = stretch([0, 0, vz]);
+    return [z, Math.sqrt(1 - vz * vz) * across * R * (1 - MODEL_LUMP)];
+  });
+  const inside = (z) => {
+    const i = profile.findIndex(([pz]) => pz >= z);
+    if (i <= 0) return i === 0 ? profile[0][1] : 0;
+    const [[za, ra], [zb, rb]] = [profile[i - 1], profile[i]];
+    return ra + ((rb - ra) * (z - za)) / Math.max(zb - za, 1e-9);
+  };
+
+  // The stems, splayed out from the foot if there are several, up to where each forks, or on into the crown
+  // under its middle, and each one's limbs up from its fork into the crown, ending further from the buildings
+  // than its leaves.
+  const clearer = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP + 1.5);
+  const turn = random() * 2 * Math.PI;
+  const top = fork > 0 ? grade + fork : z0 + 0.4 * (z1 - z0);
+  for (let k = 0; k < stems; k++) {
+    const angle = turn + (2 * Math.PI * k) / stems + (random() - 0.5) * 0.6;
+    const out = (r, a = angle) => [t.x + r * Math.cos(a), t.y + r * Math.sin(a)];
+    const under = (r, a = angle) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    const splay = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
+    const head = [...(fork > 0 ? out : under)(splay), top];
+    limb(mesh, [...out(stems > 1 ? stem * 0.8 : 0), grade - 0.1 - 0.01 * k], head, stem, stem * (fork > 0 ? 0.8 : 0.45), bark, id, 8);
+    if (!(fork > 0)) continue;
+    for (let j = 0; j < 3; j++) {
+      const z = z0 + (0.3 + 0.15 * random()) * (z1 - z0);
+      const a = angle + (2 * Math.PI * j) / 3 + (random() - 0.5) * 0.8;
+      limb(mesh, head, clearer([...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z]), stem * 0.6, stem * 0.25, bark, id, 6);
+    }
+  }
+
+  // Its facets a little lighter or darker in turn.
+  const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
-    const points = triangle.map(([x, y, z]) => [center[0] + x * rx, center[1] + y * rx, center[2] + z * rz]);
-    mesh.face(points, C.leaves.map((c) => Math.min(1, c * shade)), id, center);
+    mesh.face(triangle.map(place), leaves.map((c) => Math.min(1, c * shade)), id, center);
   });
 }
 
