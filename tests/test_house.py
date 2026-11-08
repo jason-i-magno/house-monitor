@@ -79,6 +79,13 @@ def closet_door(h, closet, opening):
     return abs(edge - line) < 1e-6 and lo <= a and b <= hi
 
 
+def banisters(steps):
+    """The rectangles of a flight's banisters, just outside it along the sides it lists."""
+    x, y, width, depth, b = steps.x, steps.y, steps.width, steps.depth, steps.banister
+    sides = {"back": (x, y - b, width, b), "front": (x, y + depth, width, b), "left": (x - b, y, b, depth), "right": (x + width, y, b, depth)}
+    return [sides[side] for side in steps.banisters]
+
+
 def corners(area):
     x, y, width, depth = area
     return [(x, y), (x + width, y), (x, y + depth), (x + width, y + depth)]
@@ -168,9 +175,18 @@ class Layout:
         return in_polygon(x, y, lot)
 
     def clearance(self, place, p, side, span, heights):
-        """How far a thing in a place's piece p stays from a side, along span and over heights: WALL, or half that
-        where another place is just beyond the side all along it, so the wall there is shared, half on each side."""
+        """How far a thing in a place's piece p stays from a side, along span and over heights: WALL, half that where
+        another place is just beyond the side all along it, so the wall there is shared, half on each side, or none
+        where an open wall leaves no wall there."""
         (lo, hi), (z0, z1) = span, heights
+        # An opening with no door, an open wall, leaves no wall there at all.
+        axis = "y" if side in ("left", "right") else "x"
+        line = {"left": p.x, "right": p.x + p.width, "back": p.y, "front": p.y + p.depth}[side]
+        for o in (o for o in self.openings if o.kind == "opening"):
+            op, o_axis, o_line, a, b, _ = self.wall(o)
+            bottom = op.elevation + o.sill
+            if o_axis == axis and abs(o_line - line) < 1e-6 and a <= lo + 1e-6 and hi <= b + 1e-6 and bottom <= z0 + 1e-6 and z1 <= bottom + o.height + 1e-6:
+                return 0.0
         for s in (lo + 0.05, (lo + hi) / 2, hi - 0.05):
             x, y = {"left": (p.x - 0.01, s), "right": (p.x + p.width + 0.01, s), "back": (s, p.y - 0.01), "front": (s, p.y + p.depth + 0.01)}[side]
             for z in (z0 + 0.01, (z0 + z1) / 2, z1 - 0.01):
@@ -387,8 +403,9 @@ class FixtureTest(HouseTestCase):
                     self.assertFalse(overlap(h.absolute(one), h.absolute(other)) and not stacked, (one.name, other.name))
 
     def test_nothing_blocks_a_door(self):
-        """The floor 2 ft either side of each door is clear of fixtures and closets, a closet's own doors included.
-        An opening, a doorway with no door or an open wall, needs only a way through it: 2.5 ft of it clear."""
+        """The floor 2 ft either side of each door is clear of fixtures and closets, a closet's own doors included,
+        which stand half a foot in from its ends, inside its walls or its room's. An opening, a doorway with no door
+        or an open wall, needs only a way through it: 2.5 ft of it clear."""
         for h in self.each():
             clear = []
             for opening in (o for o in h.openings if o.kind in DOORS):
@@ -399,11 +416,12 @@ class FixtureTest(HouseTestCase):
                 clear.append((opening.name, owner, p.elevation, opening.sill + opening.height, strip, axis, way))
             for closet in h.details.closets:
                 x, y, width, depth = h.absolute(closet)
+                e = WALL / 2 + 0.3  # its doors' ends from its own: a wall, half a shared one at least, then a frame
                 strip = {
-                    "left": (x - 2, y, 2, depth),
-                    "right": (x + width, y, 2, depth),
-                    "back": (x, y - 2, width, 2),
-                    "front": (x, y + depth, width, 2),
+                    "left": (x - 2, y + e, 2, depth - 2 * e),
+                    "right": (x + width, y + e, 2, depth - 2 * e),
+                    "back": (x + e, y - 2, width - 2 * e, 2),
+                    "front": (x + e, y + depth, width - 2 * e, 2),
                 }[closet.door]
                 clear.append((closet.name, closet, h.first(closet.room).elevation, 6.67, strip, None, None))
             for name, owner, floor, top, strip, axis, way in clear:
@@ -539,6 +557,27 @@ class StepsTest(HouseTestCase):
             for steps in h.details.steps:
                 self.assertGreater(steps.top, steps.bottom, steps.name)
 
+    def test_banisters_stand_in_their_flights_room(self):
+        for h in self.each():
+            for steps in (s for s in h.details.steps if s.room):
+                for x, y, width, depth in banisters(steps):
+                    fits = [p for p in pieces(h.place(steps.room).plan) if within_rect(x, y, rect(p)) and within_rect(x + width, y + depth, rect(p))]
+                    self.assertTrue(fits, steps.name)
+
+    def test_nothing_stands_on_a_flight_or_its_banisters(self):
+        """No fixture or closet stands on a flight of steps, or its banisters, from its bottom to 3 ft over its top."""
+        for h in self.each():
+            for steps in (s for s in h.details.steps if s.room):
+                spots = [rect(steps), *banisters(steps)]
+                things = [t for t in h.details.fixtures if t.room] + list(h.details.closets)
+                for thing in things:
+                    p = h.piece(thing)
+                    z0 = p.elevation + getattr(thing, "lift", 0)
+                    z1 = z0 + getattr(thing, "height", 8)
+                    if z1 <= steps.bottom or steps.top + 3 <= z0:
+                        continue
+                    self.assertFalse(any(overlap(spot, h.absolute(thing)) for spot in spots), (steps.name, thing.name))
+
 
 class RoofTest(HouseTestCase):
     def test_roofs_cover_the_house_down_to_its_walls(self):
@@ -589,6 +628,8 @@ class KindsTest(unittest.TestCase):
             Ground("Deck", "deck", 0, 0, 10, 10, height=1, railings=("up",))
         with self.assertRaises(ValueError):
             Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", count=0)
+        with self.assertRaises(ValueError):
+            Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", banisters=("front",))  # across the climb
 
     def test_a_roof_needs_a_ridge_or_a_drop(self):
         with self.assertRaises(ValueError):
