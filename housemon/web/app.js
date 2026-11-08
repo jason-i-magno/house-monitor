@@ -44,6 +44,7 @@ const MAP_VIEWS = [
 ];
 const ROOM_HEIGHT = 8; // feet, floor to ceiling, for rooms without a plan, as in Plan
 const MAP_HOME = { angle: 35, tilt: 30 }; // the 3D view's first angle, and where Reset goes back to
+const MAP_KEY_TURN = 15; // degrees the 3D view turns or tilts for a press of shift and an arrow key
 // Where to try a room's label on a face of its box, as fractions across it: the middle first.
 const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
 
@@ -518,8 +519,9 @@ function createMap() {
   const views = el("div", { class: "segmented", role: "group", "aria-label": "Map view" });
   const plot = el("div", { class: "plot" });
   const tooltip = el("div", { class: "tooltip", hidden: "" });
-  const button = (label, text, turn, tilt) => {
-    const node = el("button", { type: "button", "aria-label": label, title: label }, text);
+  // Each with the keys that do the same on the map, a step at a time, in its tooltip (mapKey).
+  const button = (label, text, turn, tilt, keys) => {
+    const node = el("button", { type: "button", "aria-label": label, title: keys ? `${label} (${keys})` : label }, text);
     node.addEventListener("click", () => moveMap(turn, tilt));
     return node;
   };
@@ -542,10 +544,10 @@ function createMap() {
     "div",
     { class: "turns" },
     hint,
-    button("Turn left", "⟲", -45, 0),
-    button("Turn right", "⟳", 45, 0),
-    button("Look from higher", "↑", 0, 30),
-    button("Look from lower", "↓", 0, -30),
+    button("Turn left", "⟲", -45, 0, "Shift+←"),
+    button("Turn right", "⟳", 45, 0, "Shift+→"),
+    button("Look from higher", "↑", 0, 30, "Shift+↑"),
+    button("Look from lower", "↓", 0, -30, "Shift+↓"),
     zoom("Zoom out", "−", 1 / 1.5),
     zoom("Zoom in", "+", 1.5),
     button("Reset the view", "Reset", null, null),
@@ -881,13 +883,13 @@ function drawMap() {
   if (model) {
     map.layout = drawModel(width, fill);
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
-      + "Arrow keys step through its parts; the list below the map names each one.");
+      + "Arrow keys step through its parts, and with shift turn and tilt it; the list below the map names each one.");
   } else {
     map.canvas.style.display = "none";
     map.note.hidden = true;
     map.svg.replaceChildren();
     map.svg.setAttribute("aria-label", `House map${view === "3d" ? " in 3D" : ""}, each room colored by its temperature. `
-      + "Arrow keys step through the rooms; the room cards above list every reading.");
+      + `Arrow keys step through the rooms${view === "3d" ? ", and with shift turn and tilt it" : ""}; the room cards above list every reading.`);
     map.layout = view === "3d" ? draw3d(map.svg, width, fill) : drawPlan(map.svg, width, fill);
     map.svg.setAttribute("viewBox", `0 0 ${width} ${map.layout.height}`);
     map.svg.setAttribute("height", map.layout.height);
@@ -1337,9 +1339,16 @@ function mapPointerHover(event) {
   setMapFocus(room ? room.dataset.sensor : null);
 }
 
+// The arrow keys step through the rooms, or the detailed view's parts. With shift they turn the 3D and detailed
+// views, as the buttons below them do, a step a press: left and right turn it, up and down tilt it.
 function mapKey(event) {
   const moves = { ArrowLeft: -1, ArrowRight: 1 };
+  const turns = { ArrowLeft: [-MAP_KEY_TURN, 0], ArrowRight: [MAP_KEY_TURN, 0], ArrowUp: [0, MAP_KEY_TURN], ArrowDown: [0, -MAP_KEY_TURN] };
   if (event.key === "Escape") return setMapFocus(null);
+  if (event.shiftKey && event.key in turns && state.mapView !== "plan") {
+    event.preventDefault();
+    return moveMap(...turns[event.key]);
+  }
   const ids = state.map.layout?.keys ?? indoors().map((s) => s.id); // outside has no place to focus
   if (!(event.key in moves) || !ids.length) return;
   event.preventDefault();
