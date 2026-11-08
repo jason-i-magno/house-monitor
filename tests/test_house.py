@@ -13,8 +13,9 @@ from housemon import example_house
 from housemon import house as houses
 from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Steps, Tree
 
-WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from an
-# edge shared with another place, where each of the two stands half the wall between them
+WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
+# side where half the wall stands, and none where it stands past the side, in the place beyond
+SIDES = ("back", "front", "left", "right")
 DOORS = ("door", "sliding door", "garage door", "opening")
 
 
@@ -86,6 +87,22 @@ def banisters(steps):
     return [sides[side] for side in steps.banisters]
 
 
+def side_line(p, side):
+    """A side of a piece as a line: the axis it runs along, where it is across that axis, which way is inward, and
+    where it starts and ends."""
+    return {
+        "back": ("x", p.y, 1, p.x, p.x + p.width),
+        "front": ("x", p.y + p.depth, -1, p.x, p.x + p.width),
+        "left": ("y", p.x, 1, p.y, p.y + p.depth),
+        "right": ("y", p.x + p.width, -1, p.y, p.y + p.depth),
+    }[side]
+
+
+def point(axis, line, s, d):
+    """The point d feet across a line from it, toward greater x or y, at s along it, as x, y."""
+    return (s, line + d) if axis == "x" else (line + d, s)
+
+
 def corners(area):
     x, y, width, depth = area
     return [(x, y), (x + width, y), (x, y + depth), (x + width, y + depth)]
@@ -119,7 +136,39 @@ class Layout:
         # Each piece's base, where its walls start: the top of whatever's under it, or its floor.
         tops = lambda place, p: [b.elevation + b.height for q, b in self.pieces if q is not place and overlap(rect(b), rect(p)) and b.elevation + b.height <= p.elevation + 1e-6]
         self.bases = {id(p): max(tops(q, p), default=p.elevation) for q, p in self.pieces}
+        # How much of the wall on each side of a piece stands in its plan, as the detailed view stands them: every wall
+        # one thickness, and a run of them in line, of the places either side of a line end to end at the same heights,
+        # one straight wall wholly on one side: the side facing the outside beside its rooms, above the ground; facing
+        # it both, the higher floor's; facing it neither, the side facing it at all; else half on each.
+        runs = [(place, p, side) for place, p in self.pieces for side in SIDES if self.walls(place, p, side)]
+        root = list(range(len(runs)))
 
+        def find(i):
+            while root[i] != i:
+                i = root[i]
+            return i
+
+        for i, j in itertools.combinations(range(len(runs)), 2):
+            (_, p, side), (_, o, other) = runs[i], runs[j]
+            (axis, line, _, _, _), (axis2, line2, _, _, _) = side_line(p, side), side_line(o, other)
+            touch = any(a <= d + 1e-6 and c <= b + 1e-6 for a, b in self.walls(runs[i][0], p, side) for c, d in self.walls(runs[j][0], o, other))
+            heights = max(p.elevation, o.elevation) < min(p.elevation + p.height, o.elevation + o.height) - 1e-6
+            if axis == axis2 and abs(line - line2) < 1e-6 and touch and heights:
+                root[find(i)] = find(j)
+        facts = [(self.beside_outside(*run), self.faces_outside(*run)) for run in runs]
+        self.share = {}
+        for group in {find(i) for i in range(len(runs))}:
+            members = [i for i in range(len(runs)) if find(i) == group]
+            sides = []
+            for k in (1, -1):
+                of = [i for i in members if side_line(runs[i][1], runs[i][2])[2] == k]
+                beside = sum(facts[i][0] for i in of)
+                sides.append({"k": k, "beside": beside, "outside": beside > 0 or any(facts[i][1] for i in of), "floor": max((runs[i][1].elevation for i in of), default=-math.inf)})
+            facing = [side for side in sides if side["beside"]] or [side for side in sides if side["outside"]]
+            owner = max(facing, key=lambda side: (side["floor"], side["beside"], side["k"]))["k"] if facing else None
+            for i in members:
+                k = side_line(runs[i][1], runs[i][2])[2]
+                self.share[(id(runs[i][1]), runs[i][2])] = 0.5 if owner is None else 1.0 if owner == k else 0.0
     def place(self, name):
         (match,) = [p for p in self.places if p.name == name]  # one place, so it's clear which is meant
         return match
@@ -175,24 +224,71 @@ class Layout:
         return in_polygon(x, y, lot)
 
     def clearance(self, place, p, side, span, heights):
-        """How far a thing in a place's piece p stays from a side, along span and over heights: WALL, half that where
-        another place is just beyond the side all along it, so the wall there is shared, half on each side, or none
-        where an open wall leaves no wall there."""
+        """How far a thing in a place's piece p stays from a side, along span and over heights: WALL where the wall on
+        that side stands in its plan, half that where half of it does, and none where it stands past the side, or an
+        open wall leaves no wall there."""
+        if self.open(p, side, span, heights):
+            return 0.0
+        return WALL * self.share.get((id(p), side), 1)
+
+    def open(self, p, side, span, heights):
+        """Whether an opening with no door, an open wall, leaves no wall on a piece's side along span and over heights."""
         (lo, hi), (z0, z1) = span, heights
-        # An opening with no door, an open wall, leaves no wall there at all.
         axis = "y" if side in ("left", "right") else "x"
         line = {"left": p.x, "right": p.x + p.width, "back": p.y, "front": p.y + p.depth}[side]
         for o in (o for o in self.openings if o.kind == "opening"):
             op, o_axis, o_line, a, b, _ = self.wall(o)
             bottom = op.elevation + o.sill
             if o_axis == axis and abs(o_line - line) < 1e-6 and a <= lo + 1e-6 and hi <= b + 1e-6 and bottom <= z0 + 1e-6 and z1 <= bottom + o.height + 1e-6:
-                return 0.0
-        for s in (lo + 0.05, (lo + hi) / 2, hi - 0.05):
-            x, y = {"left": (p.x - 0.01, s), "right": (p.x + p.width + 0.01, s), "back": (s, p.y - 0.01), "front": (s, p.y + p.depth + 0.01)}[side]
-            for z in (z0 + 0.01, (z0 + z1) / 2, z1 - 0.01):
-                if not self.occupied(x, y, z, place):
-                    return WALL
-        return WALL / 2
+                return True
+        return False
+
+    def walls(self, place, p, side):
+        """The stretches of a piece's side with walls: all of it but where another piece of its place adjoins it."""
+        axis, line, k, a, b = side_line(p, side)
+        spans = [(a, b)]
+        for o in pieces(place.plan):
+            if o is p:
+                continue
+            lo, hi = (o.x, o.x + o.width) if axis == "x" else (o.y, o.y + o.depth)
+            across_lo, across_hi = (o.y, o.y + o.depth) if axis == "x" else (o.x, o.x + o.width)
+            if across_lo < line - k * 0.005 < across_hi:  # just past the side
+                spans = [part for u, v in spans for part in ((u, min(v, lo)), (max(u, hi), v)) if part[1] - part[0] > 1e-6]
+        return spans
+
+    def beside_outside(self, place, p, side):
+        """How far along a piece's walls on a side the outside is beyond them beside it, 2 ft over its floor, above the
+        ground."""
+        axis, line, k, _, _ = side_line(p, side)
+        z = p.elevation + 2
+        if z <= self.details.grade or z < self.bases[id(p)]:
+            return 0.0
+        edges = [e for q, o in self.pieces if q.name != place.name for e in ((o.x, o.x + o.width) if axis == "x" else (o.y, o.y + o.depth))]
+        length = 0.0
+        for a, b in self.walls(place, p, side):
+            cuts = sorted({a, b, *(e for e in edges if a < e < b)})
+            for s0, s1 in zip(cuts, cuts[1:]):
+                if not self.occupied(*point(axis, line, (s0 + s1) / 2, -k * 0.01), z, place):
+                    length += s1 - s0
+        return length
+
+    def faces_outside(self, place, p, side):
+        """Whether the outside is beyond any of a piece's walls on a side, along them or up them."""
+        axis, line, k, _, _ = side_line(p, side)
+        edges = [e for q, o in self.pieces if q.name != place.name for e in ((o.x, o.x + o.width) if axis == "x" else (o.y, o.y + o.depth))]
+        for a, b in self.walls(place, p, side):
+            cuts = sorted({a, b, *(e for e in edges if a < e < b)})
+            for s0, s1 in zip(cuts, cuts[1:]):
+                x, y = point(axis, line, (s0 + s1) / 2, -k * 0.01)
+                top = p.elevation + ceiling(p, *point(axis, line, (s0 + s1) / 2, 0))
+                heights = {self.bases[id(p)], top}
+                for q, o in self.pieces:
+                    if q.name != place.name and o.x < x < o.x + o.width and o.y < y < o.y + o.depth:
+                        heights |= {self.bases[id(o)], o.elevation + ceiling(o, x, y)}
+                zs = sorted(z for z in heights if self.bases[id(p)] - 1e-9 <= z <= top + 1e-9)
+                if any(z1 - z0 > 1e-6 and not self.occupied(x, y, (z0 + z1) / 2, place) for z0, z1 in zip(zs, zs[1:])):
+                    return True
+        return False
 
     def occupied(self, x, y, z, place):
         """Whether another place's piece is at x, y, z, from its base up to its ceiling, as its walls stand."""
@@ -275,17 +371,26 @@ class OpeningTest(HouseTestCase):
                     back = h.clearance(place, p, "back", across, heights) if opening.offset < WALL else WALL
                     front = h.clearance(place, p, "front", across, heights) if opening.offset + opening.width > length - WALL else WALL
                     self.assertTrue(back <= opening.offset and opening.offset + opening.width <= length - front, opening.name)
-                # Where a piece of a place beyond the wall starts or ends along it, the walls there meet it.
+                # Where a piece of a place beyond the wall starts or ends along it, the walls there meet it: as much of
+                # them as stands in it and past it, none where they're open.
                 out = -0.01 if opening.wall in ("left", "back") else 0.01
+                near = (line - WALL, line) if out < 0 else (line, line + WALL)  # the stretch of them meeting it
                 for q, o in h.pieces:
                     if q.name == place.name:
                         continue
                     lo, hi = (o.y, o.y + o.depth) if axis == "y" else (o.x, o.x + o.width)
                     across = (o.x < line + out < o.x + o.width) if axis == "y" else (o.y < line + out < o.y + o.depth)
                     over = o.elevation < heights[1] and heights[0] < o.elevation + o.height
-                    for edge in (lo, hi):
-                        if across and over and a - WALL / 2 < edge < b + WALL / 2:
-                            self.assertTrue(b <= edge - WALL / 2 + 1e-9 or a >= edge + WALL / 2 - 1e-9, (opening.name, q.name))
+                    sides = ("left", "right") if axis == "x" else ("back", "front")  # the walls across this one
+                    for edge, side, inward in ((lo, sides[0], 1), (hi, sides[1], -1)):
+                        if h.open(o, side, near, heights):
+                            continue
+                        share = h.share.get((id(o), side), 1)
+                        start, end = sorted((edge - inward * WALL * (1 - share), edge + inward * WALL * share))
+                        if end - start < 1e-9:
+                            continue
+                        if across and over and start < b and a < end:
+                            self.assertTrue(b <= start + 1e-9 or a >= end - 1e-9, (opening.name, q.name))
 
     def test_windows_open_to_the_outside(self):
         for h in self.each():

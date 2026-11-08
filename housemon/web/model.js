@@ -45,6 +45,7 @@ const SIDE_LINES = {
   left: (p) => ({ axis: "y", line: p.x, k: 1, a: p.y, b: p.y + p.depth }),
   right: (p) => ({ axis: "y", line: p.x + p.width, k: -1, a: p.y, b: p.y + p.depth }),
 };
+const OPPOSITE = { back: "front", front: "back", left: "right", right: "left" };
 
 // The point d feet inward of a side's line at s along it.
 function linePoint({ axis, line, k }, s, d) {
@@ -69,6 +70,36 @@ function occupiedAt(pieces, x, y, z, except) {
   return pieces.find(([q, p]) => {
     const inPlan = q !== except && p.x < x && x < p.x + p.width && p.y < y && y < p.y + p.depth;
     return inPlan && p.base - 1e-6 <= z && z <= p.top(x, y) + 1e-6;
+  });
+}
+
+// How far along a place's piece's walls on a side the outside is beyond them beside it, 2 ft over its floor, above
+// the ground.
+function besideOutside(pieces, q, p, side, grade) {
+  const line = SIDE_LINES[side](p);
+  const z = p.elevation + 2;
+  if (z <= grade || z < p.base) return 0;
+  const edges = pieces.filter(([o]) => o !== q).flatMap(([, o]) => (line.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth]));
+  return p.walls[side].reduce((sum, [a, b]) => {
+    const ss = [...new Set([a, b, ...edges.filter((s) => s > a && s < b)])].sort((u, v) => u - v);
+    return sum + ss.slice(1).reduce((more, sb, i) => more + (occupiedAt(pieces, ...linePoint(line, (ss[i] + sb) / 2, -0.01), z, q) ? 0 : sb - ss[i]), 0);
+  }, 0);
+}
+
+// Whether a place's piece has the outside beyond its walls on a side anywhere, along them or up them.
+function facesOutside(pieces, q, p, side) {
+  const line = SIDE_LINES[side](p);
+  const edges = pieces.filter(([o]) => o !== q).flatMap(([, o]) => (line.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth]));
+  return p.walls[side].some(([a, b]) => {
+    const ss = [...new Set([a, b, ...edges.filter((s) => s > a && s < b)])].sort((u, v) => u - v);
+    return ss.slice(1).some((sb, i) => {
+      const s = (ss[i] + sb) / 2;
+      const [x, y] = linePoint(line, s, -0.01);
+      const top = p.top(...linePoint(line, s, 0));
+      const beyond = pieces.filter(([o, b2]) => o !== q && b2.x < x && x < b2.x + b2.width && b2.y < y && y < b2.y + b2.depth);
+      const zs = [p.base, top, ...beyond.flatMap(([, b2]) => [b2.base, b2.top(x, y)])].filter((z) => z >= p.base - 1e-9 && z <= top + 1e-9).sort((u, v) => u - v);
+      return zs.slice(1).some((zb, j) => zb - zs[j] > 1e-6 && !occupiedAt(pieces, x, y, (zs[j] + zb) / 2, q));
+    });
   });
 }
 
@@ -144,6 +175,41 @@ function modelScene() {
       const beside = q.pieces.filter((o) => o !== p && planOverlap(o, { ...strip, width: strip.width || 0.001, depth: strip.depth || 0.001 }));
       return [side, subtract([s.a, s.b], beside.map((o) => (s.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth])))];
     }));
+  }
+  // Every wall is one thickness, and a run of them in line, of the places either side of a line end to end at the
+  // same heights, is one straight wall standing wholly on one side of it, so the faces of each side are flat. It
+  // stands on the side facing the outside beside its rooms, above the ground, as a house's outer walls stand inside
+  // its plan; facing it both sides, on the higher floor's, as a taller part of a house stands its own outer walls
+  // and lower parts are built against them, those of a lower part in line with it so standing just outside its
+  // plan; facing it neither side, on the side facing it at all, as over a lower room's ceiling; else half on each.
+  const runs = pieces.flatMap(([q, p]) => Object.keys(SIDE_LINES).filter((side) => p.walls[side].length).map((side) => ({ q, p, side, line: SIDE_LINES[side](p) })));
+  const root = runs.map((_, i) => i);
+  const find = (i) => (root[i] === i ? i : (root[i] = find(root[i])));
+  runs.forEach((r, i) => {
+    for (let j = i + 1; j < runs.length; j++) {
+      const o = runs[j];
+      const inLine = r.line.axis === o.line.axis && Math.abs(r.line.line - o.line.line) < 1e-6;
+      const touch = inLine && r.p.walls[r.side].some(([a, b]) => o.p.walls[o.side].some(([c, d]) => a <= d + 1e-6 && c <= b + 1e-6));
+      if (touch && Math.max(r.p.elevation, o.p.elevation) < Math.min(r.p.elevation + r.p.height, o.p.elevation + o.p.height) - 1e-6) root[find(i)] = find(j);
+    }
+  });
+  for (const r of runs) {
+    r.beside = besideOutside(pieces, r.q, r.p, r.side, details.grade);
+    r.outside = r.beside > 0 || facesOutside(pieces, r.q, r.p, r.side);
+  }
+  for (const [, p] of pieces) p.slab = Object.fromEntries(Object.keys(SIDE_LINES).map((side) => [side, [0, MODEL_WALL]]));
+  const groups = runs.reduce((m, r, i) => m.set(find(i), [...(m.get(find(i)) ?? []), r]), new Map());
+  for (const group of groups.values()) {
+    const sides = [1, -1].map((k) => {
+      const of = group.filter((r) => r.line.k === k);
+      return { k, beside: of.reduce((sum, r) => sum + r.beside, 0), outside: of.some((r) => r.outside), floor: Math.max(...of.map((r) => r.p.elevation)) };
+    });
+    const by = (key) => sides.filter((side) => side[key]);
+    const facing = by("beside").length ? by("beside") : by("outside");
+    const owner = facing.length === 1 ? facing[0].k
+      : facing.length ? [...facing].sort((a, b) => b.floor - a.floor || b.beside - a.beside || b.k - a.k)[0].k
+      : null;
+    for (const r of group) r.p.slab[r.side] = owner == null ? [-MODEL_WALL / 2, MODEL_WALL / 2] : owner === r.line.k ? [0, MODEL_WALL] : [-MODEL_WALL, 0];
   }
   for (const q of places) {
     const box = extent(q.pieces);
@@ -343,17 +409,20 @@ function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
 // lies in that floor's plane, is that floor's color, topColor, for the same
 // reason, where a doorway above bares it. Its ends are inner too,
 // but for an end at its room's corner, end0(z) or end1(z), which is part of
-// the wall around the corner's outside face. It's thick(z) thick at height z,
-// or thick, and its ends stop trim0(z) and trim1(z) short of s0 and s1, as a
-// side wall does of the back and front walls across its ends.
+// the wall around the corner's outside face. At height z it stands from d0 to
+// d1 inward of its line, [d0, d1] = depth(z), or none where that's null, and
+// its ends stop trim0(z) and trim1(z) short of s0 and s1, as a side wall does
+// of the back and front walls across its ends, or run on past them where
+// those are less than 0, as a back or front wall does to meet a side wall
+// standing outside its room's plan.
 function wallRun(mesh, C, w, id) {
-  const thick = typeof w.thick === "function" ? w.thick : () => w.thick;
   const raw = (s) => w.raw0 + ((w.raw1 - w.raw0) * (s - w.s0)) / (w.s1 - w.s0);
   const top = (s) => Math.min(raw(s), w.cap);
   const highest = Math.max(top(w.s0), top(w.s1));
   const zs = [...new Set([w.base, highest, w.cap, ...w.zs, ...w.holes.flatMap((h) => [h.z0, h.z1])])]
     .filter((z) => z >= w.base - 1e-9 && z <= highest + 1e-9)
-    .sort((a, b) => a - b);
+    .sort((a, b) => a - b)
+    .filter((z, i, all) => i === 0 || i === all.length - 1 || all[i + 1] - z > 0.005); // no slivers between heights a hair apart
   const ss = new Set([w.s0, w.s1, ...w.holes.flatMap((h) => [h.s0, h.s1])]);
   if (Math.abs(w.raw1 - w.raw0) > 1e-9) {
     for (const z of zs) ss.add(w.s0 + ((z - w.raw0) * (w.s1 - w.s0)) / (w.raw1 - w.raw0)); // where the top crosses each height
@@ -363,32 +432,68 @@ function wallRun(mesh, C, w, id) {
     for (let j = 0; j < zs.length - 1; j++) {
       const [za, zc] = [zs[j], zs[j + 1]];
       const zm = (za + zc) / 2;
-      const sa = Math.max(sList[i], w.trim0 ? w.s0 + w.trim0(zm) : -Infinity);
-      const sb = Math.min(sList[i + 1], w.trim1 ? w.s1 - w.trim1(zm) : Infinity);
+      const [t0, t1] = [w.trim0?.(zm) ?? 0, w.trim1?.(zm) ?? 0];
+      const sa = i === 0 ? w.s0 + t0 : Math.max(sList[i], w.s0 + t0);
+      const sb = i === sList.length - 2 ? w.s1 - t1 : Math.min(sList[i + 1], w.s1 - t1);
       if (sb - sa < 1e-6) continue;
       const [ta, tb] = [top(sa), top(sb)];
       const [ha, hb] = [Math.min(zc, ta), Math.min(zc, tb)];
       if (ha <= za + 1e-6 && hb <= za + 1e-6) continue; // above the wall's top
-      const within = (h) => h.s0 <= sa + 1e-6 && sb <= h.s1 + 1e-6;
+      const within = (h) => h.s0 <= Math.max(sa, w.s0) + 1e-6 && Math.min(sb, w.s1) <= h.s1 + 1e-6;
       if (w.holes.some((h) => within(h) && h.z0 <= za + 1e-6 && zc <= h.z1 + 1e-6)) continue;
       const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
       const underFloor = atTop && w.topColor && ha >= raw(sa) - 1e-6 && hb >= raw(sb) - 1e-6; // not cut away
       const sill = w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
       const threshold = sill && w.floorZ != null && Math.abs(zc - w.floorZ) < 1e-6;
       const z = (za + Math.min(ha, hb)) / 2;
+      const depth = w.depth(z);
+      if (!depth || depth[1] - depth[0] < 1e-6) continue;
       const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner; // not trimmed
       const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
-      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? w.floorColor : sill ? C.sash : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
-      slab(mesh, w, [sa, sb], [0, thick(z)], za, [ha, hb], colors, id);
+      const above = j + 2 < zs.length ? w.depth((zc + zs[j + 2]) / 2) : null;
+      const bared = !above || above[0] > depth[0] + 1e-6 || above[1] < depth[1] - 1e-6; // stepping in over it, as a top
+      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? w.floorColor : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
+      slab(mesh, w, [sa, sb], depth, za, [ha, hb], colors, id);
     }
   }
 }
 
-// How thick a place's wall on a side is at s along it and height z: whole, inside its plan, or half where
-// another place is beyond it then, which stands the other half, so the two make one wall on the line between.
-function wallThick(scene, q, p, side, s, z) {
-  const [x, y] = linePoint(SIDE_LINES[side](p), s, -0.01);
-  return occupiedAt(scene.pieces, x, y, z, q) ? MODEL_WALL / 2 : MODEL_WALL;
+// How high a place's wall on a side's line stands at s along it, cut away to `mode`: all the way, or 4 ft over
+// its floor.
+function wallCap(scene, q, p, line, s, mode, view) {
+  const [x, y] = linePoint(line, s, -0.01);
+  return mode === "outside" || (!occupiedAt(scene.pieces, x, y, p.elevation + 2, q) && standsWhole(scene, line, s, view)) ? Infinity : p.elevation + MODEL_CUT;
+}
+
+// The place's piece beyond a side's line at s along it and height z whose wall is on that line, the other side
+// of the wall between the two, and that side's line: [place, piece, side, line], or null.
+function wallBeyond(scene, q, line, side, s, z) {
+  const [x, y] = linePoint(line, s, -0.01);
+  const beyond = occupiedAt(scene.pieces, x, y, z, q);
+  if (!beyond) return null;
+  const other = SIDE_LINES[OPPOSITE[side]](beyond[1]);
+  return Math.abs(other.line - line.line) < 1e-6 ? [...beyond, OPPOSITE[side], other] : null;
+}
+
+// Where a place's wall on a side stands at s along it and height z, cut away to `mode`: [d0, d1] inward of the
+// side's line, or null where it stands none. Between two places, the one whose wall stands taller there, in a
+// level shown, stands all of the wall between them, so its faces are flat where the other's is cut lower, as a
+// lower level's is under a higher one's; standing as tall, each stands its own side of it. Where a floor shown
+// covers the place beyond, as a room's does a crawlspace under it, none of that side shows, so it stands only its
+// own.
+function wallSpan(scene, q, p, side, s, z, mode, view) {
+  const line = SIDE_LINES[side](p);
+  const all = p.slab[side];
+  const own = all[1] > 1e-6 ? [Math.max(0, all[0]), all[1]] : null; // its side's part, if any
+  const beyond = wallBeyond(scene, q, line, side, s, z);
+  if (!beyond) return all;
+  const [o, b, , otherLine] = beyond;
+  const shows = modelShows(scene, mode);
+  const [x, y] = linePoint(line, s, -0.01);
+  if (scene.pieces.some(([c, cp]) => c !== o && cp.x < x && x < cp.x + cp.width && cp.y < y && y < cp.y + cp.depth && Math.abs(cp.base - b.top(x, y)) < 1e-6 && shows(c.item))) return own;
+  if (!shows(o.item)) return all;
+  const [mine, theirs] = [wallCap(scene, q, p, line, s, mode, view), wallCap(scene, o, b, otherLine, s, mode, view)];
+  return theirs > mine + 1e-6 ? null : theirs < mine - 1e-6 ? all : own;
 }
 
 // Whether a wall stands whole when cut away: an outside wall at the back as
@@ -418,33 +523,59 @@ function placeWalls(mesh, scene, q, p, mode, view) {
       const ss = [...new Set([a, b, ...edges.filter((s) => s > a && s < b)])].sort((u, v) => u - v);
       for (let i = 0; i < ss.length - 1; i++) {
         const [sa, sb] = [ss[i], ss[i + 1]];
-        const [fx, fy] = linePoint(line, (sa + sb) / 2, -0.01); // just past the wall
-        const occupant = (z) => occupiedAt(scene.pieces, fx, fy, z, q);
-        const whole = mode === "outside" || (!occupant(p.elevation + 2) && standsWhole(scene, line, (sa + sb) / 2, view));
+        const mid = (sa + sb) / 2;
+        const [fx, fy] = linePoint(line, mid, -0.01); // just past the wall
+        const whole = wallCap(scene, q, p, line, mid, mode, view) === Infinity;
         const raw = (s) => p.top(...linePoint(line, s, 0));
         const zs = [p.elevation];
         const beyond = (x, y) => {
           for (const [o, b2] of scene.pieces) {
-            if (o !== q && b2.x < x && x < b2.x + b2.width && b2.y < y && y < b2.y + b2.depth) zs.push(b2.base, b2.top(x, y));
+            if (o !== q && b2.x < x && x < b2.x + b2.width && b2.y < y && y < b2.y + b2.depth) zs.push(b2.base, b2.top(x, y), b2.elevation + MODEL_CUT);
           }
         };
         beyond(fx, fy);
-        const thick = (z) => (occupant(z) ? MODEL_WALL / 2 : MODEL_WALL);
-        // Stopping short of a wall across an end by its thickness at each height, the least across this wall, but
-        // running on through the corner over where that wall is cut away, as an inside wall is under an outside
-        // wall standing whole, so the corner isn't left open.
+        const depth = (z) => wallSpan(scene, q, p, side, mid, z, mode, view);
+        // A left or right wall stops short of a wall across an end by as much of it as stands in the plan, where any
+        // of it stands, so it runs on through the corner over where that wall is cut away, as an inside wall does under
+        // an outside wall standing whole, and the corner isn't left open.
         const trim = (end) => {
           if (!end) return null;
           const across = SIDE_LINES[end](p);
-          const at = [0.01, MODEL_WALL - 0.01].map((d) => linePoint(across, line.line + line.k * d, -0.01));
-          at.forEach(([x, y]) => beyond(x, y));
           const s = line.line + line.k * 0.01;
           const [cx, cy] = linePoint(across, s, -0.01);
-          const cut = mode === "outside" || (!occupiedAt(scene.pieces, cx, cy, p.elevation + 2, q) && standsWhole(scene, across, s, view)) ? Infinity : p.elevation + MODEL_CUT;
-          if (cut < Infinity) zs.push(cut);
-          return (z) => (z > cut ? 0 : Math.min(...at.map(([x, y]) => (occupiedAt(scene.pieces, x, y, z, q) ? MODEL_WALL / 2 : MODEL_WALL))));
+          beyond(cx, cy);
+          const mine = wallCap(scene, q, p, across, s, mode, view);
+          if (mine < Infinity) zs.push(mine);
+          return (z) => {
+            const there = wallBeyond(scene, q, across, end, s, z);
+            const theirs = there && modelShows(scene, mode)(there[0].item) ? wallCap(scene, there[0], there[1], there[3], s, mode, view) : -Infinity;
+            return z > Math.max(mine, theirs) ? 0 : Math.max(0, p.slab[end][1]);
+          };
         };
-        const [trim0, trim1] = [i === 0 ? trim(across[0]) : null, i === ss.length - 2 ? trim(across[1]) : null]; // at the run's own ends
+        // A back or front wall runs on past an end as far as the wall across it there stands outside the room's
+        // plan, all of a wall between two places, so the corner is closed, as high as that one stands, but where
+        // the place beyond has its own wall in line with this one standing there.
+        const extend = (end) => {
+          if (!covers(p.walls[end], line.line)) return null;
+          const s = line.line + line.k * 0.01;
+          beyond(...linePoint(SIDE_LINES[end](p), s, -0.01));
+          const past = linePoint(line, end === "left" ? p.x - 0.01 : p.x + p.width + 0.01, 0.01); // the corner beyond
+          beyond(...past);
+          const stands = wallCap(scene, q, p, SIDE_LINES[end](p), s, mode, view); // how high the wall across stands
+          if (stands < Infinity) zs.push(stands);
+          return (z) => {
+            if (z > stands) return 0;
+            const there = occupiedAt(scene.pieces, ...past, z, q);
+            if (there && modelShows(scene, mode)(there[0].item)) {
+              const its = SIDE_LINES[side](there[1]);
+              if (Math.abs(its.line - line.line) < 1e-6 && z <= wallCap(scene, there[0], there[1], its, past[line.axis === "x" ? 0 : 1], mode, view)) return 0;
+            }
+            return -Math.max(0, -(wallSpan(scene, q, p, end, s, z, mode, view)?.[0] ?? 0));
+          };
+        };
+        const [trim0, trim1] = line.axis === "y"
+          ? [i === 0 ? trim(across[0]) : null, i === ss.length - 2 ? trim(across[1]) : null] // at the run's own ends
+          : [Math.abs(sa - p.x) < 1e-6 ? extend("left") : null, Math.abs(sb - p.x - p.width) < 1e-6 ? extend("right") : null];
         const highest = Math.max(raw(sa), raw(sb));
         const holes = scene.openings
           .filter((o) => o.through && o.axis === line.axis && Math.abs(o.line - line.line) < 1e-6)
@@ -452,7 +583,8 @@ function placeWalls(mesh, scene, q, p, mode, view) {
           .map((o) => ({ s0: Math.max(o.s0, sa), s1: Math.min(o.s1, sb), z0: o.z0, z1: o.z1 }));
         // The outside face of the wall on a side, at height z, with x, y just past it.
         const outside = (wallSide, x, y) => (z) => {
-          if (occupiedAt(scene.pieces, x, y, z, q)) return inner;
+          const there = occupiedAt(scene.pieces, x, y, z, q);
+          if (there) return C[there[0].finish.walls]; // the wall's face in the place beyond, where it stands that side
           if (z < p.elevation) return p.ground ? C.foundation : C.siding;
           return q.finish.walls === "concrete" ? C.foundation : C[scene.cladding[`${q.name}|${wallSide}`]] ?? C.siding;
         };
@@ -461,20 +593,29 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const corner = (s, [endSide, at]) => {
           if (Math.abs(s - at) > 1e-6) return null;
           const out = endSide === "left" || endSide === "back" ? -0.01 : 0.01;
-          const middle = line.line + (line.k * MODEL_WALL) / 4; // within a whole wall or a half
+          const middle = line.line + (line.k * (p.slab[side][0] + p.slab[side][1])) / 2; // within the wall
           const [x, y] = line.axis === "x" ? [at + out, middle] : [middle, at + out];
           beyond(x, y);
           return outside(endSide, x, y);
         };
         const ends = line.axis === "x" ? [["left", p.x], ["right", p.x + p.width]] : [["back", p.y], ["front", p.y + p.depth]];
-        const [end0, end1] = [corner(sa, ends[0]), corner(sb, ends[1])]; // where it isn't trimmed short of the corner
+        // An end partway along, where what's beyond the wall changes and so may how far out it stands, is part of
+        // the face of whatever it stands out into there: the outside face, or a place's beyond, or else its own.
+        const along = (s, dir) => {
+          beyond(...linePoint(line, s + dir * 0.01, -MODEL_WALL / 4));
+          return (z) => {
+            const d = depth(z);
+            return d && d[0] < -1e-6 ? outside(side, ...linePoint(line, s + dir * 0.01, d[0] / 2))(z) : inner;
+          };
+        };
+        const [end0, end1] = [corner(sa, ends[0]) ?? along(sa, -1), corner(sb, ends[1]) ?? along(sb, 1)]; // where it isn't trimmed
         const outer = outside(side, fx, fy);
         // A floor over the wall's top, as a room's over the crawlspace under it.
-        const [mx, my] = linePoint(line, (sa + sb) / 2, MODEL_WALL / 4);
+        const [mx, my] = linePoint(line, (sa + sb) / 2, (p.slab[side][0] + p.slab[side][1]) / 2);
         const over = scene.pieces.find(([o, b2]) => o !== q && b2.x < mx && mx < b2.x + b2.width && b2.y < my && my < b2.y + b2.depth
           && Math.abs(b2.elevation - raw(sa)) < 1e-6 && Math.abs(b2.elevation - raw(sb)) < 1e-6);
         const topColor = over ? C[over[0].finish.floor] : null;
-        wallRun(mesh, C, { ...line, thick, trim0, trim1, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorZ: p.elevation, floorColor: C[q.finish.floor], topColor }, q.item.id);
+        wallRun(mesh, C, { ...line, depth, trim0, trim1, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorZ: p.elevation, floorColor: C[q.finish.floor], topColor }, q.item.id);
       }
     }
   }
@@ -490,14 +631,16 @@ function placeWalls(mesh, scene, q, p, mode, view) {
 // What fills a door or window from outside, or a vent's grilles, cut away with its wall.
 function openingPanels(mesh, scene, o, mode, view) {
   const C = scene.colors;
-  const t = MODEL_WALL;
-  const whole = mode === "outside" || (o.exterior && standsWhole(scene, o, (o.s0 + o.s1) / 2, view));
-  const cap = whole ? Infinity : o.piece.elevation + MODEL_CUT;
+  const mid = (o.s0 + o.s1) / 2;
+  // In its wall, standing as tall as the taller of its room's and the place beyond's, if any.
+  const beyond = wallBeyond(scene, o.place, o, o.wall, mid, (o.z0 + o.z1) / 2);
+  const shown = beyond && modelShows(scene, mode)(beyond[0].item);
+  const whole = mode === "outside" || (o.exterior && standsWhole(scene, o, mid, view));
+  const cap = whole ? Infinity : Math.max(o.piece.elevation + MODEL_CUT, shown ? wallCap(scene, beyond[0], beyond[1], beyond[3], mid, mode, view) : -Infinity);
   const [s0, s1, z0, z1] = [o.s0, o.s1, o.z0, Math.min(o.z1, cap)];
   if (z1 <= z0 + 1e-6) return;
   const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
-  // Its wall: a whole one inside its room, or one between two places, half on each side of the line.
-  const [d0, d1] = o.exterior ? [0, t] : [-t / 2, t / 2];
+  const [d0, d1] = o.piece.slab[o.wall];
   const depth = (f) => d0 + f * (d1 - d0);
   const across = (f0, f1) => [depth(f0), depth(f1)];
   if (o.kind === "vent") {
@@ -577,14 +720,14 @@ function closetWalls(mesh, scene, c, mode) {
   for (const [side, w] of Object.entries(sides)) {
     if (w.against) continue;
     // Inside the room's walls, and the left and right ones between the closet's back and front.
-    const room = (end) => wallThick(scene, c.place, p, end, w.line, p.elevation + 2);
+    const room = (end) => Math.max(0, p.slab[end][1]);
     let [a, b] = w.axis === "x" ? [Math.max(w.a, p.x + room("left")), Math.min(w.b, p.x + p.width - room("right"))] : [Math.max(w.a, p.y + room("back")), Math.min(w.b, p.y + p.depth - room("front"))];
     if (w.axis === "y" && !sides.back.against) a = Math.max(a, w.a + t);
     if (w.axis === "y" && !sides.front.against) b = Math.min(b, w.b - t);
     const raw = (s) => p.top(...linePoint(w, s, 0));
     const doors = { s0: a + 0.3, s1: b - 0.3, z0: p.elevation, z1: p.elevation + MODEL_CLOSET_DOOR };
     const holes = side === c.door ? [doors] : [];
-    wallRun(mesh, C, { ...w, thick: t, s0: a, s1: b, base: p.elevation, raw0: raw(a), raw1: raw(b), cap, zs: [], holes, inner: paint, outer: () => paint }, c.item.id);
+    wallRun(mesh, C, { ...w, depth: () => [0, t], s0: a, s1: b, base: p.elevation, raw0: raw(a), raw1: raw(b), cap, zs: [], holes, inner: paint, outer: () => paint }, c.item.id);
     if (side === c.door) {
       const z1 = Math.min(doors.z1, cap);
       slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C.white, c.item.id);
@@ -680,8 +823,9 @@ function earth(mesh, scene, shows) {
     const [x0, x1, y0, y1, z] = [xs[i], xs[i + 1], ys[j], ys[j + 1], cell.top];
     const center = [(x0 + x1) / 2, (y0 + y1) / 2, z - 1];
     for (const triangle of triangulate(cell.shape)) mesh.face(triangle.map(([x, y]) => [x, y, z]), cell.color, cell.id, center);
-    // Steps down to lower neighbors, under the house.
-    const neighbors = [[i - 1, j, [[x0, y0], [x0, y1]]], [i + 1, j, [[x1, y0], [x1, y1]]], [i, j - 1, [[x0, y0], [x1, y0]]], [i, j + 1, [[x0, y1], [x1, y1]]]];
+    // Steps down to lower neighbors, under the house, a hair inside this cell, so a wall on the edge covers them.
+    const [a0, a1, b0, b1] = [x0 + 0.005, x1 - 0.005, y0 + 0.005, y1 - 0.005];
+    const neighbors = [[i - 1, j, [[a0, y0], [a0, y1]]], [i + 1, j, [[a1, y0], [a1, y1]]], [i, j - 1, [[x0, b0], [x1, b0]]], [i, j + 1, [[x0, b1], [x1, b1]]]];
     for (const [ni, nj, [[ax, ay], [bx, by]]] of neighbors) {
       const low = cells[ni]?.[nj]?.top;
       if (low != null && low < z - 1e-6) mesh.face([[ax, ay, low], [bx, by, low], [bx, by, z], [ax, ay, z]], C.soil, scene.lawn.id, center);
