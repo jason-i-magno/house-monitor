@@ -532,9 +532,9 @@ html.map-full { overflow: hidden; }
 .turns .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
 .turns button { padding: 4px 10px; font-size: 1rem; line-height: 1.2; }
 
-/* A touch can't tilt by dragging, as dragging up and down scrolls the page, but for full screen. */
+/* A touch can't tilt by dragging, as dragging up and down scrolls the page, but for full screen, nor scroll to zoom. */
 @media (pointer: coarse) {
-  .map:not(.is-full) .turns .with-mouse { display: none; }
+  .map:not(.is-full) .turns .with-mouse, .turns .with-wheel { display: none; }
 }
 
 .tooltip .head { margin-bottom: 4px; }
