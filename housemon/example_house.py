@@ -182,7 +182,7 @@ DETAILS = Details(
     trees=(
         Tree("Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4, crown="vase", fork=7, bark="gray"),
         Tree("Backyard tree", "deciduous", 8, -30, height=28, spread=30, crown="spreading", leaves="dark", stems=3),
-        Tree("Birch", "deciduous", 66, 8, height=26, spread=12, leaves="light", stems=3, bark="white"),
+        Tree("Birch", "deciduous", 66, 8, height=26, spread=12, crown="pyramid", leaves="light", stems=3, bark="white"),
         Tree("Spruce", "evergreen", 62, -22, height=24, spread=12),
     ),
     sheds=(Shed("Shed", 52, -42, 10, 8),),

@@ -876,11 +876,12 @@ const MODEL_BALL = (() => {
 
 // A deciduous tree's crown by its shape (details.CROWNS): where it starts, as a share of the tree's height; how
 // far up it it's widest; how pointed (over 1) or flat (under 1) it is below and above that; and how much
-// narrower it is at the bottom than the top, as a vase is.
+// narrower it is at the bottom than the top, as a vase is, or, under 0, at the top than the bottom.
 const MODEL_CROWNS = {
   round: { base: 0.32, widest: 0.48, below: 1, above: 1, taper: 0 },
   vase: { base: 0.3, widest: 0.62, below: 0.85, above: 0.55, taper: 0.35 },
   spreading: { base: 0.22, widest: 0.36, below: 0.55, above: 1.1, taper: 0 },
+  pyramid: { base: 0.25, widest: 0.18, below: 0.5, above: 1.25, taper: -0.3 },
 };
 const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dark" };
 const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
@@ -914,7 +915,7 @@ function tree(mesh, scene, t) {
   // The crown: a ball stretched to its shape, from z0 up to the tree's top, lumpy where it's nearest some of a
   // few directions, one of them straight up, so it reaches the top.
   const shape = MODEL_CROWNS[t.crown] ?? MODEL_CROWNS.round;
-  const z0 = grade + Math.max(H * shape.base, fork + 0.12 * H);
+  const z0 = grade + (t.clearance ?? Math.max(H * shape.base, fork + 0.12 * H));
   const z1 = grade + H;
   const middle = z0 + shape.widest * (z1 - z0);
   const random = seeded(t.x * 7919 + t.y * 104729);
@@ -924,16 +925,20 @@ function tree(mesh, scene, t) {
   }).concat([[0, 0, 1]]);
   const near = (v, d) => Math.exp(-((v[0] - d[0]) ** 2 + (v[1] - d[1]) ** 2 + (v[2] - d[2]) ** 2) / 0.2);
   const lump = (v) => 1 - MODEL_LUMP + MODEL_LUMP * Math.min(1, bumps.reduce((sum, d) => sum + near(v, d), 0));
-  // A point of the unit ball on the crown, before its lumps: its height, and its share of R across.
+  // A point of the unit ball on the crown, before its lumps: its height, and its share of R across, the ball
+  // made as much wider as its taper narrows it where it's widest, so it reaches its spread.
+  const narrow = (vz) => 1 - (Math.abs(shape.taper) * (1 - Math.sign(shape.taper) * vz)) / 2;
+  const widest = Math.max(...Array.from({ length: 41 }, (_, i) => Math.sqrt(1 - (i / 20 - 1) ** 2) * narrow(i / 20 - 1)));
   const stretch = ([, , vz]) => {
     const below = vz < 0;
     const g = Math.abs(vz) ** (below ? shape.below : shape.above);
-    return [below ? middle - g * (middle - z0) : middle + g * (z1 - middle), 1 - shape.taper * (1 - vz) / 2];
+    return [below ? middle - g * (middle - z0) : middle + g * (z1 - middle), narrow(vz) / widest];
   };
+  const [cx, cy] = [t.x + (t.lean?.[0] ?? 0), t.y + (t.lean?.[1] ?? 0)]; // its middle, off the trunk if it leans
   const place = (v) => {
     const [z, across] = stretch(v);
     const m = lump(v);
-    return [t.x + v[0] * R * across * m, t.y + v[1] * R * across * m, middle + (z - middle) * m];
+    return [cx + v[0] * R * across * m, cy + v[1] * R * across * m, middle + (z - middle) * m];
   };
   // How far out the crown reaches, at least, at height z, for the stems and limbs to stay inside it.
   const profile = Array.from({ length: 41 }, (_, i) => {
@@ -948,27 +953,28 @@ function tree(mesh, scene, t) {
     return ra + ((rb - ra) * (z - za)) / Math.max(zb - za, 1e-9);
   };
 
-  // The stems, leaning out from the foot if there are several, up to where each forks, or on into the crown,
-  // and each one's limbs up from its fork into the crown.
+  // The stems, splayed out from the foot if there are several, up to where each forks, or on into the crown
+  // under its middle, and each one's limbs up from its fork into the crown.
   const turn = random() * 2 * Math.PI;
   const top = fork > 0 ? grade + fork : z0 + 0.4 * (z1 - z0);
   for (let k = 0; k < stems; k++) {
     const angle = turn + (2 * Math.PI * k) / stems + (random() - 0.5) * 0.6;
     const out = (r, a = angle) => [t.x + r * Math.cos(a), t.y + r * Math.sin(a)];
-    const lean = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
-    const head = [...out(lean), top];
+    const under = (r, a = angle) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    const splay = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
+    const head = [...(fork > 0 ? out : under)(splay), top];
     limb(mesh, [...out(stems > 1 ? stem * 0.8 : 0), grade - 0.1 - 0.01 * k], head, stem, stem * (fork > 0 ? 0.8 : 0.45), bark, id, 8);
     if (!(fork > 0)) continue;
     for (let j = 0; j < 3; j++) {
       const z = z0 + (0.3 + 0.15 * random()) * (z1 - z0);
       const a = angle + (2 * Math.PI * j) / 3 + (random() - 0.5) * 0.8;
-      limb(mesh, head, [...out(Math.max(lean, (0.45 + 0.2 * random()) * inside(z)), a), z], stem * 0.6, stem * 0.25, bark, id, 6);
+      limb(mesh, head, [...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z], stem * 0.6, stem * 0.25, bark, id, 6);
     }
   }
 
   // Its facets a little lighter or darker in turn.
   const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
-  const center = [t.x, t.y, middle];
+  const center = [cx, cy, middle];
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
     mesh.face(triangle.map(place), leaves.map((c) => Math.min(1, c * shade)), id, center);
