@@ -176,13 +176,14 @@ class Tree:
     A deciduous tree's crown is round, widest in the middle (an oval or a column, as its height and spread make
     it), a vase, narrow below and widest high up with a broad top, spreading, widest low under a dome, or a
     pyramid, widest at its bottom and narrowing to a rounded top. clearance is how high its lowest leaves are,
-    if not where its crown's shape puts them, as for a crown held up over a roof, and lean how far its crown's
-    middle stands off its trunk, along x and y, as a tree grows out away from a house. Its leaves are green, light
-    (a yellower green) or dark. stems is how many trunks rise from the ground, as a clump's do, and fork how
-    high each splits into limbs, or 0 for a trunk running on up into the crown. trunk is each stem's width at
-    the ground, by default from the tree's spread, and bark its color: brown, gray or white. ring is the radius
-    of a bed of mulch around the trunk, if it has one: raised and edged in stone or brick (edging), or flat on
-    the lawn with no edging (None).
+    if not where its crown's shape puts them, as for a crown down low or held up high, and lean how far its
+    crown's middle stands off its trunk, along x and y, as a tree grows out away from a house. The detailed view
+    keeps a crown clear of the house and sheds, standing off their walls under the eaves, so one can reach over
+    a roof without touching it. Its leaves are green, light (a yellower green) or dark. stems is how many trunks
+    rise from the ground, as a clump's do, and fork how high each splits into limbs, or 0 for a trunk running on
+    up into the crown. trunk is each stem's width at the ground, by default from the tree's spread, and bark its
+    color: brown, gray or white. ring is the radius of a bed of mulch around the trunk, if it has one: raised and
+    edged in stone or brick (edging), or flat on the lawn with no edging (None).
     """
 
     name: str

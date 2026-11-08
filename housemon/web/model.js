@@ -886,11 +886,41 @@ const MODEL_CROWNS = {
 const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dark" };
 const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
 const MODEL_LUMP = 0.22; // how far a crown's hollows sink between its lumps, as a share of its size
+const MODEL_CROWN_GAP = 1; // feet a crown keeps clear of the house and sheds
 
 // Numbers from 0 to 1, the same ones for the same seed, so a tree is drawn alike every time.
 function seeded(seed) {
   let s = (Math.abs(Math.round(seed)) % 2147483646) + 1;
   return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+// For a crown around x, y, reaching `reach` across from there: a function pulling a point of it in level toward
+// x, y as far as it must to keep `gap` clear of the house and sheds, off the plans of their rooms (and their walls)
+// or over their roofs, so a crown can stand off a wall under the eaves and reach over the roof above them. A
+// point with a clear way to it stays put, as does one at a height where x, y itself isn't clear.
+function clearOfBuildings(scene, [cx, cy], reach, gap) {
+  const grade = scene.details.grade;
+  const solids = [
+    ...scene.pieces.map(([, p]) => ({ x0: p.x - scene.wall, y0: p.y - scene.wall, x1: p.x + p.width + scene.wall, y1: p.y + p.depth + scene.wall, top: p.top })),
+    ...scene.roofs.map((r) => ({ x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.depth, top: (x, y) => (onRoof(r, x, y) ? roofTop(r, x, y) : -Infinity) })),
+    ...scene.sheds.map((b) => ({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.depth, top: () => grade + b.peak })),
+  ].filter((s) => s.x0 - gap < cx + reach && cx - reach < s.x1 + gap && s.y0 - gap < cy + reach && cy - reach < s.y1 + gap);
+  const within = (v, a, b) => Math.min(Math.max(v, a + 1e-6), b - 1e-6);
+  // Within gap of one: over it or beside it, and under its top at its nearest point, plus gap.
+  const blocked = ([x, y, z]) => solids.some((s) =>
+    s.x0 - gap < x && x < s.x1 + gap && s.y0 - gap < y && y < s.y1 + gap && z < s.top(within(x, s.x0, s.x1), within(y, s.y0, s.y1)) + gap);
+  if (!solids.length) return (p) => p;
+  return (p) => {
+    const at = (f) => [cx + f * (p[0] - cx), cy + f * (p[1] - cy), p[2]];
+    const n = Math.ceil(Math.hypot(p[0] - cx, p[1] - cy) / 0.5); // out half a foot at a time
+    if (blocked(at(0))) return p;
+    let k = 1;
+    while (k <= n && !blocked(at(k / n))) k++;
+    if (k > n) return p;
+    let [lo, hi] = [(k - 1) / n, k / n];
+    for (let i = 0; i < 6; i++) [lo, hi] = blocked(at((lo + hi) / 2)) ? [lo, (lo + hi) / 2] : [(lo + hi) / 2, hi];
+    return at(lo);
+  };
 }
 
 function tree(mesh, scene, t) {
@@ -935,10 +965,12 @@ function tree(mesh, scene, t) {
     return [below ? middle - g * (middle - z0) : middle + g * (z1 - middle), narrow(vz) / widest];
   };
   const [cx, cy] = [t.x + (t.lean?.[0] ?? 0), t.y + (t.lean?.[1] ?? 0)]; // its middle, off the trunk if it leans
+  const center = [cx, cy, middle];
+  const clear = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP);
   const place = (v) => {
     const [z, across] = stretch(v);
     const m = lump(v);
-    return [cx + v[0] * R * across * m, cy + v[1] * R * across * m, middle + (z - middle) * m];
+    return clear([cx + v[0] * R * across * m, cy + v[1] * R * across * m, middle + (z - middle) * m]);
   };
   // How far out the crown reaches, at least, at height z, for the stems and limbs to stay inside it.
   const profile = Array.from({ length: 41 }, (_, i) => {
@@ -954,7 +986,9 @@ function tree(mesh, scene, t) {
   };
 
   // The stems, splayed out from the foot if there are several, up to where each forks, or on into the crown
-  // under its middle, and each one's limbs up from its fork into the crown.
+  // under its middle, and each one's limbs up from its fork into the crown, ending further from the buildings
+  // than its leaves.
+  const clearer = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP + 1.5);
   const turn = random() * 2 * Math.PI;
   const top = fork > 0 ? grade + fork : z0 + 0.4 * (z1 - z0);
   for (let k = 0; k < stems; k++) {
@@ -968,13 +1002,12 @@ function tree(mesh, scene, t) {
     for (let j = 0; j < 3; j++) {
       const z = z0 + (0.3 + 0.15 * random()) * (z1 - z0);
       const a = angle + (2 * Math.PI * j) / 3 + (random() - 0.5) * 0.8;
-      limb(mesh, head, [...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z], stem * 0.6, stem * 0.25, bark, id, 6);
+      limb(mesh, head, clearer([...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z]), stem * 0.6, stem * 0.25, bark, id, 6);
     }
   }
 
   // Its facets a little lighter or darker in turn.
   const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
-  const center = [cx, cy, middle];
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
     mesh.face(triangle.map(place), leaves.map((c) => Math.min(1, c * shade)), id, center);
