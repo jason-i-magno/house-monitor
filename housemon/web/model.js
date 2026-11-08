@@ -384,8 +384,9 @@ function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
 // edges of its holes and at the heights in zs, each with its outside face in
 // outer(z) at its height, its inside face in inner, and its top dark where
 // the wall stops, or trim as the sill under a hole: the floor's color for a
-// hole down to the floor at floorZ, as a doorway's threshold, which lies in
-// the floor's plane, so the two look alike. A top under a floor above, which
+// hole down to the floor, floorAt(z, [d0, d1]) giving its height and color,
+// as a doorway's threshold, which lies in the floor's plane, so the two look
+// alike. A top under a floor above, which
 // lies in that floor's plane, is that floor's color, topColor, for the same
 // reason, where a doorway above bares it. Its ends are inner too,
 // but for an end at its room's corner, end0(z) or end1(z), which is part of
@@ -424,25 +425,33 @@ function wallRun(mesh, C, w, id) {
       const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
       const underFloor = atTop && w.topColor && ha >= raw(sa) - 1e-6 && hb >= raw(sb) - 1e-6; // not cut away
       const sill = w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
-      const threshold = sill && w.floorZ != null && Math.abs(zc - w.floorZ) < 1e-6;
       const z = (za + Math.min(ha, hb)) / 2;
       const depth = w.depth(z);
       if (!depth || depth[1] - depth[0] < 1e-6) continue;
+      // A sill down to the floor whose plane it's in: its room's, or the place beyond's where it stands wholly there.
+      const floor = sill && w.floorAt ? w.floorAt(zc, depth) : null;
+      const threshold = floor && Math.abs(zc - floor.z) < 1e-6;
       const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner; // not trimmed
       const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
       const above = j + 2 < zs.length ? w.depth((zc + zs[j + 2]) / 2) : null;
       const bared = !above || above[0] > depth[0] + 1e-6 || above[1] < depth[1] - 1e-6; // stepping in over it, as a top
-      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? w.floorColor : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
+      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? floor.color : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
       slab(mesh, w, [sa, sb], depth, za, [ha, hb], colors, id);
     }
   }
 }
 
 // How high a place's wall on a side's line stands at s along it, cut away to `mode`: all the way, or 4 ft over
-// its floor.
+// its floor. Under a room shown, sitting on it, as a lower level under an upper one, it stands all the way, so
+// the walls run on up to that room's without a gap.
 function wallCap(scene, q, p, line, s, mode, view) {
   const [x, y] = linePoint(line, s, -0.01);
-  return mode === "outside" || (!occupiedAt(scene.pieces, x, y, p.elevation + 2, q) && standsWhole(scene, line, s, view)) ? Infinity : p.elevation + MODEL_CUT;
+  if (mode === "outside" || (!occupiedAt(scene.pieces, x, y, p.elevation + 2, q) && standsWhole(scene, line, s, view))) return Infinity;
+  const [ix, iy] = linePoint(line, s, 0.01);
+  const shows = modelShows(scene, mode);
+  const over = scene.pieces.some(([o, b]) => o !== q && shows(o.item) && b.x < ix && ix < b.x + b.width && b.y < iy && iy < b.y + b.depth
+    && Math.abs(b.base - (p.elevation + p.height)) < 1e-6);
+  return over ? Infinity : p.elevation + MODEL_CUT;
 }
 
 // The place's piece beyond a side's line at s along it and height z whose wall is on that line, the other side
@@ -458,9 +467,9 @@ function wallBeyond(scene, q, line, side, s, z) {
 // Where a place's wall on a side stands at s along it and height z, cut away to `mode`: [d0, d1] inward of the
 // side's line, or null where it stands none. Between two places, the one whose wall stands taller there, in a
 // level shown, stands all of the wall between them, so its faces are flat where the other's is cut lower, as a
-// lower level's is under a higher one's; standing as tall, each stands its own side of it. Where a floor shown
-// covers the place beyond, as a room's does a crawlspace under it, none of that side shows, so it stands only its
-// own.
+// lower level's is under a higher one's; standing as tall, each stands its own side of it. A place under a room
+// shown, as a crawlspace under a floor, stands whole (wallCap), so it stands the wall between it and a place beside
+// it cut lower, up to that floor.
 function wallSpan(scene, q, p, side, s, z, mode, view) {
   const line = SIDE_LINES[side](p);
   const all = p.slab[side];
@@ -468,10 +477,7 @@ function wallSpan(scene, q, p, side, s, z, mode, view) {
   const beyond = wallBeyond(scene, q, line, side, s, z);
   if (!beyond) return all;
   const [o, b, , otherLine] = beyond;
-  const shows = modelShows(scene, mode);
-  const [x, y] = linePoint(line, s, -0.01);
-  if (scene.pieces.some(([c, cp]) => c !== o && cp.x < x && x < cp.x + cp.width && cp.y < y && y < cp.y + cp.depth && Math.abs(cp.base - b.top(x, y)) < 1e-6 && shows(c.item))) return own;
-  if (!shows(o.item)) return all;
+  if (!modelShows(scene, mode)(o.item)) return all;
   const [mine, theirs] = [wallCap(scene, q, p, line, s, mode, view), wallCap(scene, o, b, otherLine, s, mode, view)];
   return theirs > mine + 1e-6 ? null : theirs < mine - 1e-6 ? all : own;
 }
@@ -595,7 +601,13 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const over = scene.pieces.find(([o, b2]) => o !== q && b2.x < mx && mx < b2.x + b2.width && b2.y < my && my < b2.y + b2.depth
           && Math.abs(b2.elevation - raw(sa)) < 1e-6 && Math.abs(b2.elevation - raw(sb)) < 1e-6);
         const topColor = over ? C[over[0].finish.floor] : null;
-        wallRun(mesh, C, { ...line, depth, trim0, trim1, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorZ: p.elevation, floorColor: C[q.finish.floor], topColor }, q.item.id);
+        // The floor a sill at height z lies in the plane of: its room's, or, standing wholly past its side, as it can
+        // for the place beyond (wallSpan), that place's.
+        const floorAt = (z, [, d1]) => {
+          const there = d1 <= 1e-6 && wallBeyond(scene, q, line, side, mid, z - 0.01);
+          return there ? { z: there[1].elevation, color: C[there[0].finish.floor] } : { z: p.elevation, color: C[q.finish.floor] };
+        };
+        wallRun(mesh, C, { ...line, depth, trim0, trim1, s0: sa, s1: sb, base: p.base, raw0: raw(sa), raw1: raw(sb), cap: whole ? Infinity : p.elevation + MODEL_CUT, zs, holes, inner, outer, end0, end1, floorAt, topColor }, q.item.id);
       }
     }
   }
@@ -615,8 +627,7 @@ function openingPanels(mesh, scene, o, mode, view) {
   // In its wall, standing as tall as the taller of its room's and the place beyond's, if any.
   const beyond = wallBeyond(scene, o.place, o, o.wall, mid, (o.z0 + o.z1) / 2);
   const shown = beyond && modelShows(scene, mode)(beyond[0].item);
-  const whole = mode === "outside" || (o.exterior && standsWhole(scene, o, mid, view));
-  const cap = whole ? Infinity : Math.max(o.piece.elevation + MODEL_CUT, shown ? wallCap(scene, beyond[0], beyond[1], beyond[3], mid, mode, view) : -Infinity);
+  const cap = Math.max(wallCap(scene, o.place, o.piece, o, mid, mode, view), shown ? wallCap(scene, beyond[0], beyond[1], beyond[3], mid, mode, view) : -Infinity);
   const [s0, s1, z0, z1] = [o.s0, o.s1, o.z0, Math.min(o.z1, cap)];
   if (z1 <= z0 + 1e-6) return;
   const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
