@@ -524,13 +524,14 @@ function createMap() {
     return node;
   };
   // A touch drags only sideways, since up and down it scrolls the page, so a phone tilts with the buttons.
-  // The detailed view also zooms: in on a part by double-clicking it, by pinching, or with the buttons.
+  // The detailed view also zooms: in on a part by double-clicking it, about the pointer with the wheel or by
+  // pinching, or with the buttons.
   const hint = el(
     "span",
     { class: "hint" },
     "Drag to turn",
     el("span", { class: "with-mouse" }, " and tilt"),
-    el("span", { class: "model-only" }, ", double-click to zoom"),
+    el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "scroll or "), "double-click to zoom"),
   );
   const zoom = (label, text, factor) => {
     const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: label }, text);
@@ -608,10 +609,14 @@ function createMap() {
     const key = map.layout?.pick?.(event.clientX - box.left, event.clientY - box.top);
     zoomModel(key ? 1.75 : 0, key && map.layout.centerOf(key)); // on nothing, back out to the whole scene
   });
+  // The wheel zooms about the pointer, as does a pinch on a trackpad (a wheel with ctrl), until the end of the
+  // zoom, past which the wheel scrolls the page again, so the map doesn't trap it.
   canvas.addEventListener("wheel", (event) => {
-    if (!event.ctrlKey) return; // a pinch on a trackpad; a plain wheel scrolls the page
-    event.preventDefault();
-    zoomModel(Math.exp(-event.deltaY / 100));
+    const unit = event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? canvas.clientHeight : 1; // lines or pages, in px
+    const step = event.ctrlKey ? 100 : 700; // a pinch's steps are fine; a wheel's notches, 100 px or so, each 1.15x
+    const box = canvas.getBoundingClientRect();
+    const zoomed = zoomModelAt(Math.exp((-event.deltaY * unit) / step), event.clientX - box.left, event.clientY - box.top);
+    if (zoomed || event.ctrlKey) event.preventDefault(); // a pinch never zooms the page
   }, { passive: false });
   // A lost WebGL context is made again when the browser gives it back.
   canvas.addEventListener("webglcontextlost", (event) => {

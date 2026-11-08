@@ -1292,7 +1292,7 @@ function modelCamera(scene, width, height, scale, target) {
   const light = [0, 1, 2].map((k) => 0.5 * view[k] + 0.55 * up[k] - 0.45 * across[k]);
   const norm = Math.hypot(...light);
   return {
-    view, matrix,
+    view, matrix, across, up, target: c, scale, width, height,
     light: light.map((v) => v / norm),
     project: ([x, y, z]) => {
       const d = [x - c[0], y - c[1], z - c[2]];
@@ -1370,6 +1370,7 @@ function drawModel(width, fill = null) {
   // Framing the house until zoomed, then centered on what was zoomed to, or the whole lot at 1.
   const zoom = state.modelZoom ?? scene.fit;
   const camera = modelCamera(scene, width, height, scale * zoom, state.modelTarget ?? (zoom <= 1 ? scene.center : scene.houseCenter));
+  map.camera = { ...camera, base: scale }; // for zooming about the pointer: its turn, size, and scale unzoomed
   // Walls are cut by which way they face, so the geometry changes only when the view turns past an axis.
   const built = mode === "outside" ? mode : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
   if (m.scene !== scene) renderModelList(scene);
@@ -1413,6 +1414,24 @@ function zoomModel(factor, target = null) {
   if (state.modelZoom === 1) state.modelTarget = null;
   state.map.pointer = null;
   drawMapSoon();
+}
+
+// Zooming about a point on the canvas, x and y from its top left, so what's under it stays there, as the wheel
+// does: false at the end of the zoom, where it can't go further that way.
+function zoomModelAt(factor, x, y) {
+  const [camera, scene] = [state.map.camera, state.modelScene];
+  if (!camera || !scene || scene.note) return false;
+  const before = state.modelZoom ?? scene.fit;
+  const after = Math.min(scene.fit * MODEL_ZOOM_MAX, Math.max(1, before * factor));
+  if (Math.abs(after - before) < 1e-9) return false;
+  // As it stands now, which steps of a fast wheel come quicker than the frames that draw them: its scale and target.
+  const scale = camera.base * before;
+  const target = state.modelTarget ?? (before <= 1 ? scene.center : scene.houseCenter);
+  // The point under it, in the plane across the view through the target, keeps its place as it zooms.
+  const [u, v] = [(x - camera.width / 2) / scale, (camera.height / 2 - y) / scale];
+  const k = 1 - before / after;
+  zoomModel(after / before, target.map((t, i) => t + (camera.across[i] * u + camera.up[i] * v) * k));
+  return true;
 }
 
 // The buttons that cut the house away to a level.
