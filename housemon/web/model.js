@@ -1345,7 +1345,7 @@ function pickModel(m, camera, x, y) {
 // Draw the detailed view at this width, returning the map's layout: its
 // height, the keys arrow keys step through, and how to find, describe and
 // highlight each thing in it.
-function drawModel(width) {
+function drawModel(width, fill = null) {
   const map = state.map;
   const scene = (state.modelScene ??= pageModelScene());
   if (map.gl === undefined) map.gl = scene.note ? null : modelGL(map.canvas);
@@ -1357,8 +1357,9 @@ function drawModel(width) {
   if (note) return { height: 0, keys: [], anchorOf: () => null, highlight() {}, pick: () => null };
 
   const m = map.gl;
-  const scale = Math.min(width - 2 * MODEL_PAD, MODEL_SIZE) / (2 * scene.radius);
-  const height = Math.ceil(2 * scene.radius * scale + 2 * MODEL_PAD);
+  // As large as fits, up to MODEL_SIZE; full screen, filling the height given.
+  const scale = Math.min(width - 2 * MODEL_PAD, fill ? fill - 2 * MODEL_PAD : MODEL_SIZE) / (2 * scene.radius);
+  const height = fill ?? Math.ceil(2 * scene.radius * scale + 2 * MODEL_PAD);
   const ratio = window.devicePixelRatio || 1;
   map.canvas.style.height = `${height}px`;
   if (map.canvas.width !== Math.round(width * ratio) || map.canvas.height !== Math.round(height * ratio)) {

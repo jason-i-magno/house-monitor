@@ -11,7 +11,9 @@
 //     --top             straight down, the front at the bottom (--angle 0 --tilt 90)
 //     --room NAME       zoom the detailed view in on a room or area, or anything else in it by name, as Fireplace
 //     --zoom N          how far, 1 the whole lot (default 3 with --room)
+//     --full            the map full screen, the browser's own (with --fallback, fixed over the page instead)
 //     --width PX        the window's width (default 1100), under 500 as a phone
+//     --height PX       the window's height (default 800 full screen, else 3000, for the whole page)
 //     --dark            in dark mode
 //
 // It needs Chromium: $CHROME, else chromium, google-chrome or Playwright's from the PATH or its cache.
@@ -32,7 +34,10 @@ const { values: opt, positionals } = parseArgs({
     top: { type: "boolean" },
     room: { type: "string" },
     zoom: { type: "string" },
+    full: { type: "boolean" },
+    fallback: { type: "boolean" },
     width: { type: "string", default: "1100" },
+    height: { type: "string" },
     dark: { type: "boolean" },
     help: { type: "boolean" },
   },
@@ -81,15 +86,16 @@ try {
   const { result: { sessionId } } = await send("Target.attachToTarget", { targetId, flatten: true });
   const page = (method, params) => send(method, params, sessionId);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const run = async (js) => {
-    const r = await page("Runtime.evaluate", { expression: `(async () => { ${js} })()`, awaitPromise: true, returnByValue: true });
+  const run = async (js, userGesture = false) => {
+    const r = await page("Runtime.evaluate", { expression: `(async () => { ${js} })()`, awaitPromise: true, returnByValue: true, userGesture });
     if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description ?? r.result.exceptionDetails.text);
     return r.result?.result?.value;
   };
   await page("Runtime.enable");
   await page("Page.enable");
   const width = Number(opt.width);
-  await page("Emulation.setDeviceMetricsOverride", { width, height: 3000, deviceScaleFactor: 2, mobile: width < 500 });
+  const height = Number(opt.height ?? (opt.full ? 800 : 3000));
+  await page("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 2, mobile: width < 500 });
   await page("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opt.dark ? "dark" : "light" }] });
   await page("Page.navigate", { url: opt.url });
   await wait(2500);
@@ -110,10 +116,16 @@ try {
     steps.push(`zoomModel(${Number(opt.zoom)}); await new Promise((r) => setTimeout(r, 700));`);
   }
   for (const step of steps) await run(step);
+  if (opt.full) {
+    // As a click would: the browser's full screen, which needs one, or without it the fallback, over the page.
+    await run(`${opt.fallback ? "Object.defineProperty(document, \"fullscreenEnabled\", { value: false }); " : ""}state.map.full.click(); await new Promise((r) => setTimeout(r, 900));`, !opt.fallback);
+  }
   await wait(300);
 
-  const rect = await run(`const r = document.querySelector(${JSON.stringify(view ? "#map" : "body")}).getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height };`);
-  const pad = view ? 8 : 0;
+  const rect = opt.full
+    ? { x: 0, y: 0, width, height }
+    : await run(`const r = document.querySelector(${JSON.stringify(view ? "#map" : "body")}).getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height };`);
+  const pad = view && !opt.full ? 8 : 0;
   const shot = await page("Page.captureScreenshot", { format: "png", clip: { x: Math.max(0, rect.x - pad), y: Math.max(0, rect.y - pad), width: rect.width + 2 * pad, height: rect.height + 2 * pad, scale: 1 } });
   writeFileSync(out, Buffer.from(shot.result.data, "base64"));
   const errors = events.flatMap((msg) => {
