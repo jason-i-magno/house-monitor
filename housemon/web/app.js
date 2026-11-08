@@ -51,6 +51,7 @@ const state = {
   sensors: [], // [{id, name, floor, plan, reading, card}], in house order; a plan is a list of pieces for an L
   areas: [], // [{name, floor, plan}]: parts of the house with no sensor
   details: null, // the doors, windows, roof, yard and more for the detailed view (housemon/details.py), if any
+  wall: null, // how thick every wall is, in feet (housemon/layout.py)
   hours: 24,
   history: null, // {since, until, bucket, series: {sensor_id: [[ts, temperature_c, humidity], ...]}}
   charts: [],
@@ -743,19 +744,6 @@ function houseBoxes() {
   });
 }
 
-function extent(boxes) {
-  const x = Math.min(...boxes.map((r) => r.x));
-  const y = Math.min(...boxes.map((r) => r.y));
-  return {
-    x,
-    y,
-    width: Math.max(...boxes.map((r) => r.x + r.width)) - x,
-    depth: Math.max(...boxes.map((r) => r.y + r.depth)) - y,
-    low: Math.min(...boxes.map((r) => r.elevation)),
-    high: Math.max(...boxes.map((r) => r.elevation + r.height)),
-  };
-}
-
 // The outline of boxes from above, grown by d, as loops of [x, y] corners:
 // the edges between covered and uncovered cells of the grid their sides
 // make, each loop going clockwise on screen.
@@ -1202,19 +1190,6 @@ function boxFaces(r, project, view) {
   return faces;
 }
 
-// A plan's ceiling, as its height above the main floor at x, y: its full
-// height, sloping down to its drop's wall.
-function ceilingOf(r) {
-  const [side, feet] = r.drop ?? ["front", 0];
-  const toSide = { // how far across the room toward the low wall, from 0 to 1
-    left: (x) => (r.x + r.width - x) / r.width,
-    right: (x) => (x - r.x) / r.width,
-    back: (x, y) => (r.y + r.depth - y) / r.depth,
-    front: (x, y) => (y - r.y) / r.depth,
-  }[side];
-  return (x, y) => r.elevation + r.height - feet * toSide(x, y);
-}
-
 // A point on a projected four-cornered face, u along its first edge and v up its second.
 function along([a, b, c, d], u, v) {
   return [0, 1].map((i) => (1 - v) * ((1 - u) * a[i] + u * b[i]) + v * ((1 - u) * d[i] + u * c[i]));
@@ -1348,7 +1323,7 @@ function drawAll() {
 
 async function loadSensors() {
   const response = await fetch("/api/sensors");
-  ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null } = await response.json());
+  ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null } = await response.json());
   state.modelScene = null; // rebuilt from these when next drawn
   renderRooms();
   state.charts.forEach(renderLegend);

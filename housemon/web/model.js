@@ -73,34 +73,31 @@ function occupiedAt(pieces, x, y, z, except) {
   });
 }
 
-// How far along a place's piece's walls on a side the outside is beyond them beside it, 2 ft over its floor, above
-// the ground.
-function besideOutside(pieces, q, p, side, grade) {
-  const line = SIDE_LINES[side](p);
-  const z = p.elevation + 2;
-  if (z <= grade || z < p.base) return 0;
-  const edges = pieces.filter(([o]) => o !== q).flatMap(([, o]) => (line.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth]));
-  return p.walls[side].reduce((sum, [a, b]) => {
-    const ss = [...new Set([a, b, ...edges.filter((s) => s > a && s < b)])].sort((u, v) => u - v);
-    return sum + ss.slice(1).reduce((more, sb, i) => more + (occupiedAt(pieces, ...linePoint(line, (ss[i] + sb) / 2, -0.01), z, q) ? 0 : sb - ss[i]), 0);
-  }, 0);
+// The box around boxes in feet: x, y, width, depth, and its low and high elevations.
+function extent(boxes) {
+  const x = Math.min(...boxes.map((r) => r.x));
+  const y = Math.min(...boxes.map((r) => r.y));
+  return {
+    x,
+    y,
+    width: Math.max(...boxes.map((r) => r.x + r.width)) - x,
+    depth: Math.max(...boxes.map((r) => r.y + r.depth)) - y,
+    low: Math.min(...boxes.map((r) => r.elevation)),
+    high: Math.max(...boxes.map((r) => r.elevation + r.height)),
+  };
 }
 
-// Whether a place's piece has the outside beyond its walls on a side anywhere, along them or up them.
-function facesOutside(pieces, q, p, side) {
-  const line = SIDE_LINES[side](p);
-  const edges = pieces.filter(([o]) => o !== q).flatMap(([, o]) => (line.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth]));
-  return p.walls[side].some(([a, b]) => {
-    const ss = [...new Set([a, b, ...edges.filter((s) => s > a && s < b)])].sort((u, v) => u - v);
-    return ss.slice(1).some((sb, i) => {
-      const s = (ss[i] + sb) / 2;
-      const [x, y] = linePoint(line, s, -0.01);
-      const top = p.top(...linePoint(line, s, 0));
-      const beyond = pieces.filter(([o, b2]) => o !== q && b2.x < x && x < b2.x + b2.width && b2.y < y && y < b2.y + b2.depth);
-      const zs = [p.base, top, ...beyond.flatMap(([, b2]) => [b2.base, b2.top(x, y)])].filter((z) => z >= p.base - 1e-9 && z <= top + 1e-9).sort((u, v) => u - v);
-      return zs.slice(1).some((zb, j) => zb - zs[j] > 1e-6 && !occupiedAt(pieces, x, y, (zs[j] + zb) / 2, q));
-    });
-  });
+// A plan's ceiling, as its height above the main floor at x, y: its full
+// height, sloping down to its drop's wall.
+function ceilingOf(r) {
+  const [side, feet] = r.drop ?? ["front", 0];
+  const toSide = { // how far across the room toward the low wall, from 0 to 1
+    left: (x) => (r.x + r.width - x) / r.width,
+    right: (x) => (x - r.x) / r.width,
+    back: (x, y) => (r.y + r.depth - y) / r.depth,
+    front: (x, y) => (y - r.y) / r.depth,
+  }[side];
+  return (x, y) => r.elevation + r.height - feet * toSide(x, y);
 }
 
 // For a source with no details: the rooms on a lawn, nothing below the ground.
@@ -137,13 +134,15 @@ function roofTop(r, x, y) {
 
 // --- The scene: what's in the house and where, built once per set of details
 
-function modelScene() {
-  const rooms = indoors();
+// The scene from the house as /api/sensors sends it: its rooms inside, its areas, its details (or null), the
+// thickness of its walls, and colors(details), the color of each of MODEL_TOKENS. It needs nothing of the page, so
+// tools can build it outside a browser (tools/scan.mjs).
+function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors }) {
   if (!rooms.length || !rooms.every((s) => s.plan)) return { note: "The detailed view needs every room's plan." };
-  const raw = [...rooms, ...state.areas].flatMap((q) => [q.plan].flat());
+  const raw = [...rooms, ...areas].flatMap((q) => [q.plan].flat());
   const details = {
     finishes: {}, colors: {}, claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], sheds: [], fences: [], steps: [],
-    ...(state.details ?? modelFallback(raw)),
+    ...(given ?? modelFallback(raw)),
   };
   const items = [];
   const add = (item) => {
@@ -155,7 +154,7 @@ function modelScene() {
 
   const places = [
     ...rooms.map((s) => ({ key: s.id, name: s.name, floor: s.floor, plan: s.plan, sensor: s })),
-    ...state.areas.map((a, k) => ({ key: `area:${k}`, name: a.name, floor: a.floor, plan: a.plan })),
+    ...areas.map((a, k) => ({ key: `area:${k}`, name: a.name, floor: a.floor, plan: a.plan })),
   ].map((q) => ({
     ...q,
     pieces: [q.plan].flat().map((p) => ({ ...p, top: ceilingOf(p) })),
@@ -175,41 +174,12 @@ function modelScene() {
       const beside = q.pieces.filter((o) => o !== p && planOverlap(o, { ...strip, width: strip.width || 0.001, depth: strip.depth || 0.001 }));
       return [side, subtract([s.a, s.b], beside.map((o) => (s.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth])))];
     }));
-  }
-  // Every wall is one thickness, and a run of them in line, of the places either side of a line end to end at the
-  // same heights, is one straight wall standing wholly on one side of it, so the faces of each side are flat. It
-  // stands on the side facing the outside beside its rooms, above the ground, as a house's outer walls stand inside
-  // its plan; facing it both sides, on the higher floor's, as a taller part of a house stands its own outer walls
-  // and lower parts are built against them, those of a lower part in line with it so standing just outside its
-  // plan; facing it neither side, on the side facing it at all, as over a lower room's ceiling; else half on each.
-  const runs = pieces.flatMap(([q, p]) => Object.keys(SIDE_LINES).filter((side) => p.walls[side].length).map((side) => ({ q, p, side, line: SIDE_LINES[side](p) })));
-  const root = runs.map((_, i) => i);
-  const find = (i) => (root[i] === i ? i : (root[i] = find(root[i])));
-  runs.forEach((r, i) => {
-    for (let j = i + 1; j < runs.length; j++) {
-      const o = runs[j];
-      const inLine = r.line.axis === o.line.axis && Math.abs(r.line.line - o.line.line) < 1e-6;
-      const touch = inLine && r.p.walls[r.side].some(([a, b]) => o.p.walls[o.side].some(([c, d]) => a <= d + 1e-6 && c <= b + 1e-6));
-      if (touch && Math.max(r.p.elevation, o.p.elevation) < Math.min(r.p.elevation + r.p.height, o.p.elevation + o.p.height) - 1e-6) root[find(i)] = find(j);
-    }
-  });
-  for (const r of runs) {
-    r.beside = besideOutside(pieces, r.q, r.p, r.side, details.grade);
-    r.outside = r.beside > 0 || facesOutside(pieces, r.q, r.p, r.side);
-  }
-  for (const [, p] of pieces) p.slab = Object.fromEntries(Object.keys(SIDE_LINES).map((side) => [side, [0, MODEL_WALL]]));
-  const groups = runs.reduce((m, r, i) => m.set(find(i), [...(m.get(find(i)) ?? []), r]), new Map());
-  for (const group of groups.values()) {
-    const sides = [1, -1].map((k) => {
-      const of = group.filter((r) => r.line.k === k);
-      return { k, beside: of.reduce((sum, r) => sum + r.beside, 0), outside: of.some((r) => r.outside), floor: Math.max(...of.map((r) => r.p.elevation)) };
-    });
-    const by = (key) => sides.filter((side) => side[key]);
-    const facing = by("beside").length ? by("beside") : by("outside");
-    const owner = facing.length === 1 ? facing[0].k
-      : facing.length ? [...facing].sort((a, b) => b.floor - a.floor || b.beside - a.beside || b.k - a.k)[0].k
-      : null;
-    for (const r of group) r.p.slab[r.side] = owner == null ? [-MODEL_WALL / 2, MODEL_WALL / 2] : owner === r.line.k ? [0, MODEL_WALL] : [-MODEL_WALL, 0];
+    // How much of its wall on each side stands in its plan, as the server sends it (layout.py): every wall one
+    // thickness, a run of them in line standing wholly on one side of its line, or half on each.
+    p.slab = Object.fromEntries(Object.keys(SIDE_LINES).map((side) => {
+      const share = p.sides?.[side] ?? 1;
+      return [side, [(share - 1) * wall, share * wall]];
+    }));
   }
   for (const q of places) {
     const box = extent(q.pieces);
@@ -319,13 +289,23 @@ function modelScene() {
     center: [(x0 + x1) / 2, (y0 + y1) / 2, (bottom + high) / 2],
     houseCenter: [(hx0 + hx1) / 2, (hy0 + hy1) / 2, (hz0 + hz1) / 2],
     fit: Math.max(1, radius / (1.1 * (Math.hypot(hx1 - hx0, hy1 - hy0, hz1 - hz0) / 2))),
-    // The theme's colors, but where the house has its own, like its siding.
-    colors: Object.fromEntries(MODEL_TOKENS.map((token) => {
-      const own = details.colors[token]?.[matchMedia("(prefers-color-scheme: dark)").matches ? 1 : 0];
-      const hex = own ?? getComputedStyle(document.documentElement).getPropertyValue(`--model-${token}`).trim();
-      return [token, [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)];
-    })),
+    colors: colors(details),
+    wall,
   };
+}
+
+// The scene for the page, from its state.
+function pageModelScene() {
+  return modelScene({ rooms: indoors(), areas: state.areas, details: state.details, wall: state.wall ?? MODEL_WALL, colors: modelColors });
+}
+
+// The theme's colors, but where the house has its own, like its siding, as [r, g, b] from 0 to 1.
+function modelColors(details) {
+  return Object.fromEntries(MODEL_TOKENS.map((token) => {
+    const own = details.colors[token]?.[matchMedia("(prefers-color-scheme: dark)").matches ? 1 : 0];
+    const hex = own ?? getComputedStyle(document.documentElement).getPropertyValue(`--model-${token}`).trim();
+    return [token, [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)];
+  }));
 }
 
 // Whether an item shows when cut away to `mode`: a level, or "outside" for
@@ -602,7 +582,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         // An end partway along, where what's beyond the wall changes and so may how far out it stands, is part of
         // the face of whatever it stands out into there: the outside face, or a place's beyond, or else its own.
         const along = (s, dir) => {
-          beyond(...linePoint(line, s + dir * 0.01, -MODEL_WALL / 4));
+          beyond(...linePoint(line, s + dir * 0.01, -scene.wall / 4));
           return (z) => {
             const d = depth(z);
             return d && d[0] < -1e-6 ? outside(side, ...linePoint(line, s + dir * 0.01, d[0] / 2))(z) : inner;
@@ -1367,7 +1347,7 @@ function pickModel(m, camera, x, y) {
 // highlight each thing in it.
 function drawModel(width) {
   const map = state.map;
-  const scene = (state.modelScene ??= modelScene());
+  const scene = (state.modelScene ??= pageModelScene());
   if (map.gl === undefined) map.gl = scene.note ? null : modelGL(map.canvas);
   const note = scene.note ?? (map.gl ? null : "The detailed view needs WebGL, which this browser has turned off.");
   map.note.textContent = note ?? "";

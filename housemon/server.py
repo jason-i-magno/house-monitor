@@ -12,7 +12,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from .details import Details
 from .hub import Hub
-from .readings import Area, Sensor
+from .layout import WALL, house_layout
+from .readings import Area, Reading, Sensor
 from .store import Store
 
 STATIC = {
@@ -26,7 +27,38 @@ MAX_HISTORY_HOURS = 24 * 366
 HISTORY_POINTS = 500  # per sensor, so a chart stays light whatever the range
 
 
+def house_json(sensors: list[Sensor], areas: list[Area], details: Details | None, latest: dict[str, Reading] = {}) -> dict:
+    """The house as /api/sensors sends it: its sensors, with their latest readings, areas and details, each plan with
+    its share of the wall on each side (layout.py), and the details with what's placed against a wall resolved."""
+    layout = house_layout(sensors, areas, details)
+
+    def plan(plan):  # a dict, a list of them for a place in pieces, or None
+        with_sides = lambda p: {**asdict(p), "sides": layout.sides(p)}
+        return [with_sides(p) for p in plan] if isinstance(plan, tuple) else with_sides(plan) if plan else None
+
+    return {
+        "sensors": [
+            {
+                "id": sensor.id,
+                "name": sensor.name,
+                "floor": sensor.floor,
+                "plan": plan(sensor.plan),
+                "heated": sensor.heated,
+                "outside": sensor.outside,
+                "reading": latest[sensor.id].to_json() if sensor.id in latest else None,
+            }
+            for sensor in sensors
+        ],
+        "areas": [{**asdict(area), "plan": plan(area.plan)} for area in areas],
+        "details": asdict(layout.resolve(details)) if details else None,
+        "wall": WALL,
+    }
+
+
 class HouseServer(ThreadingHTTPServer):
+    """Serves the page and API for a house's sensors, areas and details. refresh, if given, is called before each
+    /api/sensors to bring them up to date, as when the house file changes."""
+
     daemon_threads = True
 
     def __init__(
@@ -37,6 +69,7 @@ class HouseServer(ThreadingHTTPServer):
         sensors: list[Sensor],
         areas: list[Area] = (),
         details: Details | None = None,
+        refresh=None,
     ):
         super().__init__(address, Handler)
         self.hub = hub
@@ -44,6 +77,7 @@ class HouseServer(ThreadingHTTPServer):
         self.sensors = sensors
         self.areas = list(areas)
         self.details = details
+        self.refresh = refresh
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -67,23 +101,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(resources.files(__package__).joinpath("web", name).read_bytes(), content_type)
 
     def _sensors(self) -> dict:
-        latest = self.server.hub.latest()
-        return {
-            "sensors": [
-                {
-                    "id": sensor.id,
-                    "name": sensor.name,
-                    "floor": sensor.floor,
-                    "plan": asdict(sensor)["plan"],  # a dict, a list of them for a room in pieces, or None
-                    "heated": sensor.heated,
-                    "outside": sensor.outside,
-                    "reading": latest[sensor.id].to_json() if sensor.id in latest else None,
-                }
-                for sensor in self.server.sensors
-            ],
-            "areas": [asdict(area) for area in self.server.areas],
-            "details": asdict(self.server.details) if self.server.details else None,
-        }
+        if self.server.refresh:
+            self.server.refresh()
+        return house_json(self.server.sensors, self.server.areas, self.server.details, self.server.hub.latest())
 
     def _history(self, query: dict[str, list[str]]) -> None:
         try:

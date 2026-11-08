@@ -3,19 +3,22 @@
 Each test runs once per house, as a subtest named for it.
 """
 
+import contextlib
+import io
 import itertools
 import math
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from housemon import example_house
 from housemon import house as houses
+from housemon import layout
 from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Steps, Tree
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
-# side where half the wall stands, and none where it stands past the side, in the place beyond
-SIDES = ("back", "front", "left", "right")
+# side where half the wall stands, and none where it stands past the side, in the place beyond (layout.py)
 DOORS = ("door", "sliding door", "garage door", "opening")
 
 
@@ -87,22 +90,6 @@ def banisters(steps):
     return [sides[side] for side in steps.banisters]
 
 
-def side_line(p, side):
-    """A side of a piece as a line: the axis it runs along, where it is across that axis, which way is inward, and
-    where it starts and ends."""
-    return {
-        "back": ("x", p.y, 1, p.x, p.x + p.width),
-        "front": ("x", p.y + p.depth, -1, p.x, p.x + p.width),
-        "left": ("y", p.x, 1, p.y, p.y + p.depth),
-        "right": ("y", p.x + p.width, -1, p.y, p.y + p.depth),
-    }[side]
-
-
-def point(axis, line, s, d):
-    """The point d feet across a line from it, toward greater x or y, at s along it, as x, y."""
-    return (s, line + d) if axis == "x" else (line + d, s)
-
-
 def corners(area):
     x, y, width, depth = area
     return [(x, y), (x + width, y), (x, y + depth), (x + width, y + depth)]
@@ -127,48 +114,17 @@ class Layout:
     def __init__(self, name, module):
         self.name = name
         self.rooms = module.HOUSE
-        self.details = module.DETAILS
         self.places = [room.sensor for room in module.HOUSE if room.sensor.plan] + list(module.AREAS)
         self.pieces = [(place, plan) for place in self.places for plan in pieces(place.plan)]
+        # Its walls as the detailed view stands them, and its details with what's placed against them resolved, as the
+        # server sends them.
+        self.walls = layout.house_layout([room.sensor for room in module.HOUSE], module.AREAS, module.DETAILS)
+        self.share = self.walls.share
+        self.details = self.walls.resolve(module.DETAILS)
         # The openings in the house's walls; the rest are in a shed's, naming it.
         self.openings = [o for o in self.details.openings if o.room not in {s.name for s in self.details.sheds}]
         self.footprint = set().union(*(squares(rect(p)) for _, p in self.pieces))
-        # Each piece's base, where its walls start: the top of whatever's under it, or its floor.
-        tops = lambda place, p: [b.elevation + b.height for q, b in self.pieces if q is not place and overlap(rect(b), rect(p)) and b.elevation + b.height <= p.elevation + 1e-6]
-        self.bases = {id(p): max(tops(q, p), default=p.elevation) for q, p in self.pieces}
-        # How much of the wall on each side of a piece stands in its plan, as the detailed view stands them: every wall
-        # one thickness, and a run of them in line, of the places either side of a line end to end at the same heights,
-        # one straight wall wholly on one side: the side facing the outside beside its rooms, above the ground; facing
-        # it both, the higher floor's; facing it neither, the side facing it at all; else half on each.
-        runs = [(place, p, side) for place, p in self.pieces for side in SIDES if self.walls(place, p, side)]
-        root = list(range(len(runs)))
 
-        def find(i):
-            while root[i] != i:
-                i = root[i]
-            return i
-
-        for i, j in itertools.combinations(range(len(runs)), 2):
-            (_, p, side), (_, o, other) = runs[i], runs[j]
-            (axis, line, _, _, _), (axis2, line2, _, _, _) = side_line(p, side), side_line(o, other)
-            touch = any(a <= d + 1e-6 and c <= b + 1e-6 for a, b in self.walls(runs[i][0], p, side) for c, d in self.walls(runs[j][0], o, other))
-            heights = max(p.elevation, o.elevation) < min(p.elevation + p.height, o.elevation + o.height) - 1e-6
-            if axis == axis2 and abs(line - line2) < 1e-6 and touch and heights:
-                root[find(i)] = find(j)
-        facts = [(self.beside_outside(*run), self.faces_outside(*run)) for run in runs]
-        self.share = {}
-        for group in {find(i) for i in range(len(runs))}:
-            members = [i for i in range(len(runs)) if find(i) == group]
-            sides = []
-            for k in (1, -1):
-                of = [i for i in members if side_line(runs[i][1], runs[i][2])[2] == k]
-                beside = sum(facts[i][0] for i in of)
-                sides.append({"k": k, "beside": beside, "outside": beside > 0 or any(facts[i][1] for i in of), "floor": max((runs[i][1].elevation for i in of), default=-math.inf)})
-            facing = [side for side in sides if side["beside"]] or [side for side in sides if side["outside"]]
-            owner = max(facing, key=lambda side: (side["floor"], side["beside"], side["k"]))["k"] if facing else None
-            for i in members:
-                k = side_line(runs[i][1], runs[i][2])[2]
-                self.share[(id(runs[i][1]), runs[i][2])] = 0.5 if owner is None else 1.0 if owner == k else 0.0
     def place(self, name):
         (match,) = [p for p in self.places if p.name == name]  # one place, so it's clear which is meant
         return match
@@ -242,60 +198,6 @@ class Layout:
             if o_axis == axis and abs(o_line - line) < 1e-6 and a <= lo + 1e-6 and hi <= b + 1e-6 and bottom <= z0 + 1e-6 and z1 <= bottom + o.height + 1e-6:
                 return True
         return False
-
-    def walls(self, place, p, side):
-        """The stretches of a piece's side with walls: all of it but where another piece of its place adjoins it."""
-        axis, line, k, a, b = side_line(p, side)
-        spans = [(a, b)]
-        for o in pieces(place.plan):
-            if o is p:
-                continue
-            lo, hi = (o.x, o.x + o.width) if axis == "x" else (o.y, o.y + o.depth)
-            across_lo, across_hi = (o.y, o.y + o.depth) if axis == "x" else (o.x, o.x + o.width)
-            if across_lo < line - k * 0.005 < across_hi:  # just past the side
-                spans = [part for u, v in spans for part in ((u, min(v, lo)), (max(u, hi), v)) if part[1] - part[0] > 1e-6]
-        return spans
-
-    def beside_outside(self, place, p, side):
-        """How far along a piece's walls on a side the outside is beyond them beside it, 2 ft over its floor, above the
-        ground."""
-        axis, line, k, _, _ = side_line(p, side)
-        z = p.elevation + 2
-        if z <= self.details.grade or z < self.bases[id(p)]:
-            return 0.0
-        edges = [e for q, o in self.pieces if q.name != place.name for e in ((o.x, o.x + o.width) if axis == "x" else (o.y, o.y + o.depth))]
-        length = 0.0
-        for a, b in self.walls(place, p, side):
-            cuts = sorted({a, b, *(e for e in edges if a < e < b)})
-            for s0, s1 in zip(cuts, cuts[1:]):
-                if not self.occupied(*point(axis, line, (s0 + s1) / 2, -k * 0.01), z, place):
-                    length += s1 - s0
-        return length
-
-    def faces_outside(self, place, p, side):
-        """Whether the outside is beyond any of a piece's walls on a side, along them or up them."""
-        axis, line, k, _, _ = side_line(p, side)
-        edges = [e for q, o in self.pieces if q.name != place.name for e in ((o.x, o.x + o.width) if axis == "x" else (o.y, o.y + o.depth))]
-        for a, b in self.walls(place, p, side):
-            cuts = sorted({a, b, *(e for e in edges if a < e < b)})
-            for s0, s1 in zip(cuts, cuts[1:]):
-                x, y = point(axis, line, (s0 + s1) / 2, -k * 0.01)
-                top = p.elevation + ceiling(p, *point(axis, line, (s0 + s1) / 2, 0))
-                heights = {self.bases[id(p)], top}
-                for q, o in self.pieces:
-                    if q.name != place.name and o.x < x < o.x + o.width and o.y < y < o.y + o.depth:
-                        heights |= {self.bases[id(o)], o.elevation + ceiling(o, x, y)}
-                zs = sorted(z for z in heights if self.bases[id(p)] - 1e-9 <= z <= top + 1e-9)
-                if any(z1 - z0 > 1e-6 and not self.occupied(x, y, (z0 + z1) / 2, place) for z0, z1 in zip(zs, zs[1:])):
-                    return True
-        return False
-
-    def occupied(self, x, y, z, place):
-        """Whether another place's piece is at x, y, z, from its base up to its ceiling, as its walls stand."""
-        return any(
-            q.name != place.name and b.x < x < b.x + b.width and b.y < y < b.y + b.depth and self.bases[id(b)] < z < b.elevation + ceiling(b, x, y)
-            for q, b in self.pieces
-        )
 
     def on_house(self, x, y):
         return any(p.x < x < p.x + p.width and p.y < y < p.y + p.depth for _, p in self.pieces)
@@ -476,8 +378,10 @@ class FixtureTest(HouseTestCase):
                 p, place = h.piece(fixture), h.place(fixture.room)
                 x, y, width, depth = h.absolute(fixture)
                 heights = (p.elevation + fixture.lift, p.elevation + fixture.lift + max(fixture.height, 0.1))
-                left, right = (h.clearance(place, p, side, (y, y + depth), heights) for side in ("left", "right"))
-                back, front = (h.clearance(place, p, side, (x, x + width), heights) for side in ("back", "front"))
+                # Clear of its room's walls, but right at the face of one it stands against.
+                clear = lambda side, span: h.walls.inward(p, side) if side in fixture.against else h.clearance(place, p, side, span, heights)
+                left, right = (clear(side, (y, y + depth)) for side in ("left", "right"))
+                back, front = (clear(side, (x, x + width)) for side in ("back", "front"))
                 self.assertTrue(p.x + left <= x + 1e-9 and x + width <= p.x + p.width - right + 1e-9, fixture.name)
                 self.assertTrue(p.y + back <= y + 1e-9 and y + depth <= p.y + p.depth - front + 1e-9, fixture.name)
                 lowest = min(ceiling(p, x + u * width, y + v * depth) for u in (0, 1) for v in (0, 1))
@@ -755,6 +659,29 @@ class LoadTest(unittest.TestCase):
     def test_without_one_it_loads_the_private_house_or_the_example(self):
         expected = houses.PRIVATE if houses.PRIVATE.exists() else Path(example_house.__file__)
         self.assertEqual(Path(houses.load().__file__).resolve(), expected.resolve())
+
+    def test_a_house_file_loads_again_when_it_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "house.py"
+            path.write_text("from housemon.example_house import AREAS, DETAILS, HOUSE\n")
+            house = houses.HouseFile(path)
+            self.assertIsNone(house.changed())  # not since it loaded
+            path.write_text("from housemon.example_house import AREAS, DETAILS, HOUSE\nHOUSE = HOUSE[:2]\n")
+            os.utime(path, (house.mtime + 1, house.mtime + 1))
+            self.assertEqual(len(house.changed().HOUSE), 2)
+            self.assertIsNone(house.changed())
+
+    def test_a_house_file_that_does_not_load_leaves_the_last(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "house.py"
+            path.write_text("from housemon.example_house import AREAS, DETAILS, HOUSE\n")
+            house = houses.HouseFile(path)
+            path.write_text("HOUSE = (\n")  # half edited
+            os.utime(path, (house.mtime + 1, house.mtime + 1))
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertIsNone(house.changed())
+            self.assertIn("didn't load", err.getvalue())
+            self.assertIs(house.module.HOUSE, example_house.HOUSE)
 
 
 if __name__ == "__main__":

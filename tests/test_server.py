@@ -5,13 +5,14 @@ import tempfile
 import threading
 import time
 import unittest
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
-from housemon.details import Details, Finish, Opening, Roof
+from housemon.details import Details, Finish, Fixture, Opening, Roof
 from housemon.hub import Hub
+from housemon.layout import house_layout
 from housemon.readings import Area, Plan, Reading
-from housemon.server import HouseServer
+from housemon.server import HouseServer, house_json
 from housemon.example_house import HOUSE
 from housemon.store import Store
 
@@ -67,18 +68,48 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([s["name"] for s in sensors], [s.name for s in self.sensors])
         self.assertEqual(sensors[0]["reading"], reading.to_json())
         self.assertIsNone(sensors[1]["reading"])
-        self.assertEqual(sensors[0]["plan"], asdict(self.sensors[0].plan))
+        # Each plan with its share of the wall on each side (layout.py): this one's outer walls, and half of one shared.
+        self.assertEqual(sensors[0]["plan"], {**asdict(self.sensors[0].plan), "sides": {"back": 1, "front": 0.5, "left": 1, "right": 1}})
         self.assertEqual([s["heated"] for s in sensors], [s.heated for s in self.sensors])
         self.assertEqual([s["outside"] for s in sensors], [s.outside for s in self.sensors])
         family_room = next(s for s in self.sensors if s.name == "Family room")  # in pieces: a list of plans
-        self.assertEqual(sensors[self.sensors.index(family_room)]["plan"], [asdict(plan) for plan in family_room.plan])
-        self.assertEqual(body["areas"], [{"name": "Porch", "floor": "Main", "plan": [asdict(p) for p in self.areas[0].plan]}])
+        plans = sensors[self.sensors.index(family_room)]["plan"]
+        self.assertEqual([{k: v for k, v in p.items() if k != "sides"} for p in plans], [asdict(plan) for plan in family_room.plan])
+        self.assertEqual(body["areas"][0]["name"], "Porch")
+        self.assertEqual([{k: v for k, v in p.items() if k != "sides"} for p in body["areas"][0]["plan"]], [asdict(p) for p in self.areas[0].plan])
+        self.assertEqual(body["wall"], 0.33)
         details = body["details"]
         self.assertEqual((details["lot"], details["grade"]), ([[-10, -10], [70, -10], [70, 60], [-10, 60]], -0.5))
         self.assertEqual(details["finishes"], {"Office": {"floor": "carpet", "walls": "paint"}})
         self.assertEqual(details["roofs"][0]["ridge"], "x")
         self.assertEqual(details["openings"][0]["room"], "Office")
         self.assertEqual(details["trees"], [])
+
+    def test_details_place_things_against_walls(self):
+        office = next(s for s in self.sensors if s.name == "Office")
+        details = replace(self.details, fixtures=(Fixture("Desk", "appliance", "Office", 4, 4, 3, 2, 2.5, against=("right",)),),
+                          openings=(Opening("Opening", "opening", "Office", "back", None, None, 7),))
+        body = house_json(self.sensors, self.areas, details)
+        (desk,) = body["details"]["fixtures"]
+        layout = house_layout(self.sensors, self.areas, details)
+        self.assertAlmostEqual(desk["x"], office.plan.width - layout.inward(office.plan, "right") - 3)
+        (opening,) = body["details"]["openings"]
+        self.assertAlmostEqual(opening["offset"], layout.inward(office.plan, "left"))
+        self.assertAlmostEqual(opening["offset"] + opening["width"], office.plan.width - layout.inward(office.plan, "right"))
+
+    def test_the_house_is_refreshed_before_it_is_sent(self):
+        calls = []
+        server = HouseServer(("127.0.0.1", 0), self.hub, self.store, self.sensors, refresh=lambda: calls.append(1))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            conn.request("GET", "/api/sensors")
+            conn.getresponse().read()
+            conn.close()
+            self.assertEqual(calls, [1])
+        finally:
+            server.shutdown()
+            server.server_close()
 
     def test_details_are_null_for_a_source_without_them(self):
         server = HouseServer(("127.0.0.1", 0), self.hub, self.store, self.sensors)
