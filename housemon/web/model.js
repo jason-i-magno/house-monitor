@@ -430,12 +430,19 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         };
         beyond(fx, fy);
         const thick = (z) => (occupant(z) ? MODEL_WALL / 2 : MODEL_WALL);
-        // Stopping short of a wall across an end by its thickness at each height, the least across this wall.
+        // Stopping short of a wall across an end by its thickness at each height, the least across this wall, but
+        // running on through the corner over where that wall is cut away, as an inside wall is under an outside
+        // wall standing whole, so the corner isn't left open.
         const trim = (end) => {
           if (!end) return null;
-          const at = [0.01, MODEL_WALL - 0.01].map((d) => linePoint(SIDE_LINES[end](p), line.line + line.k * d, -0.01));
+          const across = SIDE_LINES[end](p);
+          const at = [0.01, MODEL_WALL - 0.01].map((d) => linePoint(across, line.line + line.k * d, -0.01));
           at.forEach(([x, y]) => beyond(x, y));
-          return (z) => Math.min(...at.map(([x, y]) => (occupiedAt(scene.pieces, x, y, z, q) ? MODEL_WALL / 2 : MODEL_WALL)));
+          const s = line.line + line.k * 0.01;
+          const [cx, cy] = linePoint(across, s, -0.01);
+          const cut = mode === "outside" || (!occupiedAt(scene.pieces, cx, cy, p.elevation + 2, q) && standsWhole(scene, across, s, view)) ? Infinity : p.elevation + MODEL_CUT;
+          if (cut < Infinity) zs.push(cut);
+          return (z) => (z > cut ? 0 : Math.min(...at.map(([x, y]) => (occupiedAt(scene.pieces, x, y, z, q) ? MODEL_WALL / 2 : MODEL_WALL))));
         };
         const [trim0, trim1] = [i === 0 ? trim(across[0]) : null, i === ss.length - 2 ? trim(across[1]) : null]; // at the run's own ends
         const highest = Math.max(raw(sa), raw(sb));
@@ -460,7 +467,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
           return outside(endSide, x, y);
         };
         const ends = line.axis === "x" ? [["left", p.x], ["right", p.x + p.width]] : [["back", p.y], ["front", p.y + p.depth]];
-        const [end0, end1] = [trim0 ? null : corner(sa, ends[0]), trim1 ? null : corner(sb, ends[1])];
+        const [end0, end1] = [corner(sa, ends[0]), corner(sb, ends[1])]; // where it isn't trimmed short of the corner
         const outer = outside(side, fx, fy);
         // A floor over the wall's top, as a room's over the crawlspace under it.
         const [mx, my] = linePoint(line, (sa + sb) / 2, MODEL_WALL / 4);
