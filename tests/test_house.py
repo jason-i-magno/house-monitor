@@ -646,6 +646,8 @@ class KindsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ())
         with self.assertRaises(ValueError):
+            Sprinklers("Zone 1", ((0, 0),), radius=0)
+        with self.assertRaises(ValueError):
             Fence("Fence", ((0, 0), (10, 0)), kind="stone")
         with self.assertRaises(ValueError):
             Ground("Bed", "bed", 0, 0, 10, 10, outline=((0, 0), (10, 0), (5, 10)), cutouts=((4, 1, 2, 2),))

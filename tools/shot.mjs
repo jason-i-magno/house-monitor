@@ -11,6 +11,8 @@
 //     --top             straight down, the front at the bottom (--angle 0 --tilt 90)
 //     --room NAME       zoom the detailed view in on a room or area, or anything else in it by name, as Fireplace
 //     --zoom N          how far, 1 the whole lot (default 3 with --room)
+//     --coverage        in the detailed view, the sprinklers' coverage shown
+//     --focus NAME      and a part of it focused, by name, with its readout, as Zone 1 (front lawn)
 //     --full            the map full screen, the browser's own (with --fallback, fixed over the page instead)
 //     --width PX        the window's width (default 1100), under 500 as a phone
 //     --height PX       the window's height (default 800 full screen, else 3000, for the whole page)
@@ -34,6 +36,8 @@ const { values: opt, positionals } = parseArgs({
     top: { type: "boolean" },
     room: { type: "string" },
     zoom: { type: "string" },
+    coverage: { type: "boolean" },
+    focus: { type: "string" },
     full: { type: "boolean" },
     fallback: { type: "boolean" },
     width: { type: "string", default: "1100" },
@@ -106,6 +110,7 @@ try {
   const click = (selector, text) => `{ const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((b) => b.textContent === ${JSON.stringify(text)}); if (!b) throw new Error("No button " + ${JSON.stringify(text)}); b.click(); await new Promise((r) => setTimeout(r, 700)); }`;
   if (view) steps.push(click(".map figcaption button", view));
   if (opt.level) steps.push(click(".cuts button", /^outside$/i.test(opt.level) ? "Outside" : `${opt.level} level`));
+  if (opt.coverage) steps.push(`if (!state.modelCoverage) ${click(".coverage button", "Sprinkler coverage")}`);
   const [angle, tilt] = opt.top ? [0, 90] : [opt.angle, opt.tilt];
   if (angle != null || tilt != null) {
     steps.push(`moveMap(${angle ?? "state.mapAngle"} - state.mapAngle, ${tilt ?? "state.mapTilt"} - state.mapTilt); await new Promise((r) => setTimeout(r, 400));`);
@@ -114,6 +119,9 @@ try {
     steps.push(`{ const item = state.modelScene?.items.find((i) => i.name === ${JSON.stringify(opt.room)}); if (!item) throw new Error("Nothing named " + ${JSON.stringify(opt.room)} + " in the detailed view"); zoomModel(${Number(opt.zoom ?? 3)}, state.map.layout.centerOf(item.key)); await new Promise((r) => setTimeout(r, 700)); }`);
   } else if (opt.zoom) {
     steps.push(`zoomModel(${Number(opt.zoom)}); await new Promise((r) => setTimeout(r, 700));`);
+  }
+  if (opt.focus) {
+    steps.push(`{ const item = state.modelScene?.items.find((i) => i.name === ${JSON.stringify(opt.focus)}); if (!item) throw new Error("Nothing named " + ${JSON.stringify(opt.focus)} + " in the detailed view"); setMapFocus(item.key); await new Promise((r) => setTimeout(r, 400)); }`);
   }
   for (const step of steps) await run(step);
   if (opt.full) {

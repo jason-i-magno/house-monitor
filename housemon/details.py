@@ -199,17 +199,22 @@ class Tree:
 class Sprinklers:
     """One zone of a sprinkler system: its heads, each at x and y on the plan, in the lawn or a bed, standing in
     whichever they're in. kind is what they are: rotors, throwing far across a lawn, or sprays, smaller and closer
-    together. Its valve is in a valve box, a fixture, and so is the controller that runs it."""
+    together. radius is how far its heads throw, in feet, if not as far as the detailed view takes that kind to
+    by default (MODEL_THROW in model.js: 30 for rotors, 12 for sprays). Its valve is in a valve box, a fixture,
+    and so is the controller that runs it."""
 
     name: str
     heads: tuple[tuple[float, float], ...]
     kind: str = "rotor"
+    radius: float | None = None
     known: bool = False
 
     def __post_init__(self):
         _check(self.kind, SPRINKLERS, "a sprinkler's kind")
         if not self.heads:
             raise ValueError(f"{self.name} needs a head or more")
+        if self.radius is not None and self.radius <= 0:
+            raise ValueError(f"{self.name}'s heads need to throw some way")
 
 
 @dataclass(frozen=True)

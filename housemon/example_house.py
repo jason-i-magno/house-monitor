@@ -210,6 +210,6 @@ DETAILS = Details(
             "Zone 2 (back lawn)",
             ((-19.5, -12), (17, -12), (47, -12), (74.5, -12), (-19.5, -44.5), (17, -44.5), (47, -44.5), (74.5, -44.5)),
         ),
-        Sprinklers("Zone 3 (flower bed)", ((3, 29.5), (12, 29.5), (24.5, 29.5)), kind="spray"),
+        Sprinklers("Zone 3 (flower bed)", ((3, 29.5), (12, 29.5), (24.5, 29.5)), kind="spray", radius=8),
     ),
 )

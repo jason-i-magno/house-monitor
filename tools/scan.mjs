@@ -45,7 +45,7 @@ const found = new Map();
 let triangleCount = 0;
 for (const mode of modes) {
   for (const view of mode === "outside" ? [views[0]] : views) {
-    const data = buildModel(scene, mode, view);
+    const { data } = buildModel(scene, mode, view);
     const n = data.length / 30;
     triangleCount = Math.max(triangleCount, n);
     const tris = [];

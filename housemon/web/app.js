@@ -65,6 +65,7 @@ const state = {
   mapTilt: MAP_HOME.tilt, // degrees the 3D view looks down from level, -90 (from below) to 90 (from above)
   mapFocus: null, // the sensor id the map's readout shows, or in the detailed view any part's key
   modelCut: "outside", // the detailed view's whole house, or the level it's cut away to
+  modelCoverage: false, // the detailed view's lawn and beds shaded by how many sprinkler heads reach them
   modelScene: null, // what the detailed view draws, built from the sensors and details when first needed
   modelZoom: null, // how far the detailed view is zoomed in, 1 showing the whole lot, or null to frame the house
   modelTarget: null, // the point in feet the zoomed-in view centers on, or null for the middle
@@ -560,6 +561,7 @@ function createMap() {
   const outside = el("div", { class: "outside" });
   plot.append(root, canvas, note, outside, tooltip);
   const cuts = el("div", { class: "cuts" }, el("span", { class: "hint" }, "Show"), el("div", { class: "segmented", role: "group", "aria-label": "Show the house whole, or cut away to a level" }));
+  const coverage = el("div", { class: "coverage", hidden: "" });
   const listWrap = el("div", { class: "table-wrap" });
   const full = el("button", { type: "button", class: "full" });
   full.addEventListener("click", () => setMapFull(!state.mapFull));
@@ -569,10 +571,10 @@ function createMap() {
     { class: "chart map" },
     el("figcaption", {}, el("h2", {}, "House map"), el("span", { class: "unit" }, "°F"), el("div", { class: "map-actions" }, views, full)),
     plot,
-    el("div", { class: "map-foot" }, scaleLegend(), cuts, turns),
+    el("div", { class: "map-foot" }, scaleLegend(), cuts, coverage, turns),
     list,
   );
-  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, turns, list, listWrap, layout: null, drag: null, pointers: new Map() };
+  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, coverage, turns, list, listWrap, layout: null, drag: null, pointers: new Map() };
   for (const surface of [root, canvas]) {
     surface.addEventListener("focus", () => setMapFocus(state.mapFocus ?? map.layout?.keys?.[0] ?? indoors()[0]?.id ?? null));
     surface.addEventListener("blur", () => setMapFocus(null));
@@ -879,12 +881,13 @@ function drawMap() {
   const model = view === "model";
   map.figure.classList.toggle("is-model", model);
   map.turns.hidden = view === "plan";
-  map.cuts.hidden = map.list.hidden = !model;
+  map.cuts.hidden = map.list.hidden = map.coverage.hidden = !model;
   map.svg.style.display = model ? "none" : "";
   if (model) {
     map.layout = drawModel(width, fill);
+    const coverage = modelCoverageShown(state.modelScene) ? " The lawn and beds are shaded by how many sprinkler heads reach them, as the key below says." : "";
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
-      + "Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.");
+      + `Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.${coverage}`);
   } else {
     map.canvas.style.display = "none";
     map.note.hidden = true;
@@ -1513,6 +1516,7 @@ async function main() {
     const view = localStorage.getItem("house-monitor-map-view");
     if (MAP_VIEWS.some((v) => v.id === view)) state.mapView = view;
     state.modelCut = localStorage.getItem("house-monitor-model-cut") ?? state.modelCut; // checked when drawn
+    state.modelCoverage = localStorage.getItem("house-monitor-model-coverage") === "true";
   } catch {}
   state.map = createMap();
   document.getElementById("map").append(state.map.figure);
