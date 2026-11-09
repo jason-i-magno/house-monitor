@@ -657,6 +657,21 @@ class KindsTest(unittest.TestCase):
             Ground("Bed", "bed", 0, 0, 10, 3, edging="brick")  # edging holds in a raised one
         with self.assertRaises(ValueError):
             Tree("Tree", "deciduous", 0, 0, height=30, spread=20, ring=3, edging="wood")
+        Tree("Tree", "deciduous", 0, 0, height=30, spread=20, ring=3, edging=None)  # a flat ring of mulch
+        for wrong in ({"crown": "cone"}, {"leaves": "red"}, {"bark": "black"}, {"stems": 0}, {"stems": 2.5}):
+            with self.assertRaises(ValueError, msg=wrong):
+                Tree("Tree", "deciduous", 0, 0, height=30, spread=20, **wrong)
+        with self.assertRaises(ValueError):
+            Tree("Tree", "deciduous", 0, 0, height=30, spread=20, fork=15)  # up in its crown
+        with self.assertRaises(ValueError):
+            Tree("Tree", "deciduous", 0, 0, height=30, spread=20, trunk=10)
+        Tree("Tree", "deciduous", 0, 0, height=30, spread=20, crown="pyramid", clearance=15, lean=(-2, 3), fork=6)
+        for wrong in ({"clearance": 6}, {"clearance": 20}, {"lean": (5, 0)}, {"lean": (1,)}):
+            with self.assertRaises(ValueError, msg=wrong):  # below its fork, too high, off its crown, not x and y
+                Tree("Tree", "deciduous", 0, 0, height=30, spread=20, fork=6, **wrong)
+        for wrong in ({"stems": 2}, {"clearance": 10}, {"lean": (1, 0)}):
+            with self.assertRaises(ValueError, msg=wrong):
+                Tree("Spruce", "evergreen", 0, 0, height=30, spread=12, **wrong)
         with self.assertRaises(ValueError):
             Ground("Deck", "deck", 0, 0, 10, 10, height=1, railings=("up",))
         with self.assertRaises(ValueError):
