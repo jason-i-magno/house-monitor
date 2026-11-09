@@ -9,7 +9,7 @@
 // tilts with the 3D view, and zooms in on any part of it. Cut away to a level,
 // the roof, the trees and the levels above it come off, and walls stop
 // MODEL_CUT ft above their floors, all but the outside walls at the back as
-// seen, which stay whole.
+// seen, which stay whole. The trees can come off the whole house too.
 //
 // Each room's walls stand just inside the edges of its plan, so two rooms side
 // by side each have their own, and never overlap. Each run of wall is split
@@ -237,8 +237,8 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   const grade = details.grade;
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
-  // Trees, like roofs, come off when the house is cut away, so they don't hide it.
-  const trees = details.trees.map((t, i) => ({ ...t, item: outside(`tree:${i}`, t, MODEL_KINDS[t.kind], "Yard", [t.x - t.spread / 2, t.y - t.spread / 2, grade, t.x + t.spread / 2, t.y + t.spread / 2, grade + t.height], { whole: true }) }));
+  // Trees, like roofs, come off when the house is cut away, so they don't hide it, and can be hidden from the whole house too.
+  const trees = details.trees.map((t, i) => ({ ...t, item: outside(`tree:${i}`, t, MODEL_KINDS[t.kind], "Yard", [t.x - t.spread / 2, t.y - t.spread / 2, grade, t.x + t.spread / 2, t.y + t.spread / 2, grade + t.height], { whole: true, tree: true }) }));
   // A shed's doors and windows are the openings naming it, placed on its walls as a room's are, from the ground.
   const sheds = details.sheds.map((b, i) => {
     const item = outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, grade, b.x + b.width, b.y + b.depth, grade + b.peak]);
@@ -327,10 +327,10 @@ function modelColors(details) {
 }
 
 // Whether an item shows when cut away to `mode`: a level, or "outside" for
-// the whole house, with its roof and trees.
-function modelShows(scene, mode) {
+// the whole house, with its roof, and its trees unless they're hidden.
+function modelShows(scene, mode, trees = true) {
   const level = mode === "outside" ? Infinity : (scene.levels.find(([floor]) => floor === mode)?.[1] ?? Infinity);
-  return (item) => (item.whole ? mode === "outside" : item.level == null || item.level <= level + 1e-6);
+  return (item) => (trees || !item.tree) && (item.whole ? mode === "outside" : item.level == null || item.level <= level + 1e-6);
 }
 
 // The middle of an item, or of what shows of it when its walls are cut away, or the point it's centered on.
@@ -1381,10 +1381,10 @@ function fixture(mesh, C, f) {
   }
 }
 
-function buildModel(scene, mode, view) {
+function buildModel(scene, mode, view, trees = true) {
   const mesh = modelMesh();
   const C = scene.colors;
-  const shows = modelShows(scene, mode);
+  const shows = modelShows(scene, mode, trees);
   for (const q of scene.places) if (shows(q.item)) for (const p of q.pieces) placeWalls(mesh, scene, q, p, mode, view);
   for (const o of scene.openings) if (shows(o.item)) openingPanels(mesh, scene, o, mode, view);
   for (const c of scene.closets) if (shows(c.item)) closetWalls(mesh, scene, c, mode);
@@ -1402,8 +1402,8 @@ function buildModel(scene, mode, view) {
   for (const z of scene.sprinklers) {
     for (const [x, y, top] of z.heads) round(mesh, [x, y], z.kind === "spray" ? 0.17 : 0.25, top - 0.1, top + 0.1, C.black, z.item.id, false, 10);
   }
+  for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t);
   if (mode === "outside") {
-    for (const t of scene.trees) tree(mesh, scene, t);
     for (const r of scene.roofs) roofSection(mesh, scene, r);
     for (const v of scene.roofVents) box(mesh, [v.x - 0.2, v.y - 0.2, v.z - 0.5], [v.x + 0.2, v.y + 0.2, v.z + 1], C.black, v.item.id);
   }
@@ -1569,15 +1569,17 @@ function drawModel(width, fill = null) {
   const zoom = state.modelZoom ?? scene.fit;
   const camera = modelCamera(scene, width, height, scale * zoom, state.modelTarget ?? (zoom <= 1 ? scene.center : scene.houseCenter));
   map.camera = { ...camera, base: scale }; // for zooming about the pointer: its turn, size, and scale unzoomed
-  // Walls are cut by which way they face, so the geometry changes only when the view turns past an axis.
-  const built = mode === "outside" ? mode : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
+  // Walls are cut by which way they face, so the geometry changes only when the view turns past an axis, and the
+  // trees are only there for the whole house.
+  const trees = state.modelTrees;
+  const built = mode === "outside" ? `${mode} ${trees}` : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
   if (m.scene !== scene) renderModelList(scene);
   if (m.built !== built || m.scene !== scene) {
-    const data = buildModel(scene, mode, camera.view);
+    const data = buildModel(scene, mode, camera.view, trees);
     m.gl.bufferData(m.gl.ARRAY_BUFFER, data, m.gl.STATIC_DRAW);
     [m.count, m.built, m.scene, m.focusColor] = [data.length / 10, built, scene, scene.colors.focus];
   }
-  const shows = modelShows(scene, mode);
+  const shows = modelShows(scene, mode, trees);
   const visible = scene.items.filter((item) => shows(item) && item !== scene.lawn);
   const byKey = new Map(scene.items.map((item) => [item.key, item]));
   const layout = {
@@ -1647,11 +1649,15 @@ function panModel(dx, dy) {
   drawMapSoon();
 }
 
-// The buttons that cut the house away to a level.
+// The buttons that cut the house away to a level, and the box that shows or
+// hides the trees, there only for the whole house, since cut away they're off.
 function renderModelCuts(scene) {
   const levels = scene.levels ?? [];
   const options = [["outside", "Outside"], ...levels.map(([floor]) => [floor, `${floor} level`])];
   const current = options.some(([id]) => id === state.modelCut) ? state.modelCut : "outside";
+  const trees = state.map.cuts.querySelector(".trees");
+  trees.hidden = current !== "outside" || !scene.trees?.length;
+  trees.querySelector("input").checked = state.modelTrees;
   const group = state.map.cuts.querySelector(".segmented");
   if (group.dataset.options === options.join() && group.dataset.current === current) return;
   [group.dataset.options, group.dataset.current] = [options.join(), current];

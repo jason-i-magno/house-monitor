@@ -65,6 +65,7 @@ const state = {
   mapTilt: MAP_HOME.tilt, // degrees the 3D view looks down from level, -90 (from below) to 90 (from above)
   mapFocus: null, // the sensor id the map's readout shows, or in the detailed view any part's key
   modelCut: "outside", // the detailed view's whole house, or the level it's cut away to
+  modelTrees: true, // whether the detailed view's whole house shows its trees
   modelScene: null, // what the detailed view draws, built from the sensors and details when first needed
   modelZoom: null, // how far the detailed view is zoomed in, 1 showing the whole lot, or null to frame the house
   modelTarget: null, // the point in feet the zoomed-in view centers on, or null for the middle
@@ -559,7 +560,21 @@ function createMap() {
   const note = el("p", { class: "note", hidden: "" });
   const outside = el("div", { class: "outside" });
   plot.append(root, canvas, note, outside, tooltip);
-  const cuts = el("div", { class: "cuts" }, el("span", { class: "hint" }, "Show"), el("div", { class: "segmented", role: "group", "aria-label": "Show the house whole, or cut away to a level" }));
+  const trees = el("input", { type: "checkbox" });
+  trees.addEventListener("change", () => {
+    state.modelTrees = trees.checked;
+    try {
+      localStorage.setItem("house-monitor-model-trees", String(trees.checked));
+    } catch {}
+    drawMap();
+  });
+  const cuts = el(
+    "div",
+    { class: "cuts" },
+    el("span", { class: "hint" }, "Show"),
+    el("div", { class: "segmented", role: "group", "aria-label": "Show the house whole, or cut away to a level" }),
+    el("label", { class: "trees" }, trees, "Trees"),
+  );
   const listWrap = el("div", { class: "table-wrap" });
   const full = el("button", { type: "button", class: "full" });
   full.addEventListener("click", () => setMapFull(!state.mapFull));
@@ -1513,6 +1528,7 @@ async function main() {
     const view = localStorage.getItem("house-monitor-map-view");
     if (MAP_VIEWS.some((v) => v.id === view)) state.mapView = view;
     state.modelCut = localStorage.getItem("house-monitor-model-cut") ?? state.modelCut; // checked when drawn
+    state.modelTrees = localStorage.getItem("house-monitor-model-trees") !== "false";
   } catch {}
   state.map = createMap();
   document.getElementById("map").append(state.map.figure);
