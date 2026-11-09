@@ -267,22 +267,36 @@ class Account:
 class EcobeeSource:
     """Readings for the rooms ecobee sensors read, polled every `interval` seconds. rooms() maps each ecobee sensor's
     name, as the ecobee app shows it, to the sensor id of the room it reads, looked up each poll, so a changed house
-    file takes effect; a name matches whatever its case."""
+    file takes effect; a name matches whatever its case. A name the account has no sensor by is warned about, with
+    the names it has, once until it's matched again."""
 
-    def __init__(self, account: Account, rooms: Callable[[], dict[str, str]], interval: float = POLL):
+    def __init__(self, account: Account, rooms: Callable[[], dict[str, str]], interval: float = POLL, warn: Callable[[str], None] | None = None):
         self.account = account
         self.rooms = rooms
         self.interval = interval
+        self.warn = warn or (lambda message: print(f"ecobee: {message}", file=sys.stderr, flush=True))
+        self.unmatched: set[str] = set()  # the names warned about, casefolded
 
     def poll(self, now: float) -> list[Reading]:
-        rooms = {name.casefold(): sensor_id for name, sensor_id in self.rooms().items()}
+        names = self.rooms()
+        rooms = {name.casefold(): sensor_id for name, sensor_id in names.items()}
         if not rooms:
             return []
+        thermostats = self.account.thermostats()
         readings = []
-        for sensor in sensor_readings(self.account.thermostats()):
+        for sensor in sensor_readings(thermostats):
             sensor_id = rooms.get(sensor.name.casefold())
             if sensor_id:
                 readings.append(Reading(sensor_id, now, sensor.temperature_c, sensor.humidity))
+        # Every sensor's name, a sensor with no reading for now, as when it's offline, included, so it isn't taken for
+        # a name that's wrong.
+        has = [sensor.get("name", "") for thermostat in thermostats for sensor in thermostat.get("remoteSensors", [])]
+        unmatched = sorted((name for name in names if name.casefold() not in {n.casefold() for n in has}), key=str.casefold)
+        new = [name for name in unmatched if name.casefold() not in self.unmatched]
+        if new:
+            listed = ", ".join(repr(name) for name in has) or "none"
+            self.warn(f"no sensor named {', '.join(repr(name) for name in new)}, as the house file has; the account has {listed}")
+        self.unmatched = {name.casefold() for name in unmatched}
         return readings
 
     def run(self, publish: Callable[[Reading], None], stop: threading.Event) -> None:
