@@ -56,7 +56,7 @@ class Reading:
     sensor_id: str
     ts: float  # Unix time, seconds
     temperature_c: float
-    humidity: float  # relative humidity, percent
+    humidity: float | None  # relative humidity, percent; None from a sensor that reads only temperature
     battery: int | None = None  # percent
     rssi: int | None = None  # Bluetooth signal strength, dBm
 

@@ -2,7 +2,7 @@
 
 Live temperature and humidity for every room, in a web app you run at home.
 
-For now the readings come from simulated sensors in a house: an example two-story house over a basement, with warm rooms upstairs, a cold basement, the thermostat on the main floor and a space heater in the office during the work day, or a house file of your own. Real Govee H5075 Bluetooth sensors come next.
+For now the readings come from simulated sensors in a house: an example two-story house over a basement, with warm rooms upstairs, a cold basement, the thermostat on the main floor and a space heater in the office during the work day, or a house file of your own. Rooms with an ecobee thermostat or SmartSensor can read from it instead (see [ecobee sensors](#ecobee-sensors)). Real Govee H5075 Bluetooth sensors come next.
 
 It uses only the Python standard library (Python 3.10 or newer) and plain HTML, CSS and JavaScript, with no build step.
 
@@ -26,6 +26,18 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--store-every` | 60 | Seconds between stored readings per sensor. |
 | `--backfill-hours` | 24 | Simulated history to create in a new database; 0 for none. |
 | `--dump` | | Print the house as the page gets it, with its walls worked out, and exit. |
+| `--ecobee` | `data/ecobee.json` | The saved ecobee sign-in. |
+| `--ecobee-sign-in` | | Sign in to ecobee, save it to `--ecobee`, list its sensors, and exit. |
+
+## ecobee sensors
+
+A room with an ecobee thermostat or SmartSensor in it can show that sensor's readings in place of simulated ones. Sign in once; it asks for your ecobee email, password and, if your account has one, the code from your second factor:
+
+```sh
+python3 -m housemon --ecobee-sign-in
+```
+
+It saves only the refresh token ecobee gives, to `data/ecobee.json` (readable only by you, and gitignored), never your password, and lists the sensors it found. In your house file, give the room the sensor's name as the ecobee app shows it, as `SimulatedRoom(..., ecobee="Dining Room")`, and start the app. It polls ecobee every three minutes. A SmartSensor reads temperature but not humidity, so that room shows no humidity. ecobee no longer gives out developer API keys, so this signs in as ecobee's own web app does, as Home Assistant's ecobee integration does; it isn't an official API, and could stop working if ecobee changes its sign-in. If the sign-in lapses, the terminal says so; sign in again.
 
 ## Your own house
 

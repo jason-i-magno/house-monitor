@@ -6,6 +6,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import ecobee
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -33,7 +34,23 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--dump", action="store_true", help="print the house as /api/sensors sends it, without readings, and exit"
     )
+    parser.add_argument(
+        "--ecobee",
+        type=Path,
+        default=Path("data") / "ecobee.json",
+        help="the saved ecobee sign-in: with it, rooms the house file gives an ecobee sensor read from that sensor (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--ecobee-sign-in", action="store_true", help="sign in to ecobee, save the sign-in to --ecobee, list its sensors, and exit"
+    )
     args = parser.parse_args(argv)
+
+    if args.ecobee_sign_in:
+        try:
+            ecobee.sign_in_interactively(args.ecobee)
+        except ecobee.EcobeeError as e:
+            raise SystemExit(f"Couldn't sign in to ecobee: {e}") from None
+        return
 
     house_file = houses.HouseFile(args.house)
     house = house_file.module
@@ -41,6 +58,14 @@ def main(argv: list[str] | None = None) -> None:
     if args.dump:
         print(json.dumps(house_json(source.sensors, source.areas, source.details)))
         return
+
+    # Signed in to ecobee, the rooms that name an ecobee sensor read from it, and the simulator leaves them be.
+    def ecobee_rooms() -> dict[str, str]:
+        return {room.ecobee: room.sensor.id for room in source.rooms if getattr(room, "ecobee", None)}
+
+    signed_in = args.ecobee.exists()
+    if signed_in:
+        source.skip = set(ecobee_rooms().values())
 
     db = args.db or Path("data") / f"{args.source}.sqlite3"
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +81,8 @@ def main(argv: list[str] | None = None) -> None:
         changed = house_file.changed()
         if changed:
             source.rooms = changed.HOUSE
+            if signed_in:
+                source.skip = set(ecobee_rooms().values())
             source.areas = list(getattr(changed, "AREAS", ()))
             source.details = getattr(changed, "DETAILS", None)
             server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
@@ -64,18 +91,27 @@ def main(argv: list[str] | None = None) -> None:
         (args.host, args.port), hub, store, source.sensors, getattr(source, "areas", []), getattr(source, "details", None), refresh
     )
     stop = threading.Event()
-    collector = threading.Thread(target=source.run, args=(hub.publish, stop), name="collector", daemon=True)
-    collector.start()
+    collectors = [threading.Thread(target=source.run, args=(hub.publish, stop), name="collector", daemon=True)]
+    if signed_in:
+        poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms)
+        collectors.append(threading.Thread(target=poller.run, args=(hub.publish, stop), name="ecobee", daemon=True))
+    for collector in collectors:
+        collector.start()
     file = Path(house.__file__).resolve()
     file = file.relative_to(Path.cwd()) if file.is_relative_to(Path.cwd()) else file
-    print(f"House monitor on http://{args.host}:{server.server_port}/ ({args.source} sensors, {file}, {db})", flush=True)
+    sources = f"{args.source} sensors"
+    if signed_in:
+        names = ", ".join(sorted(ecobee_rooms())) or "no room names one yet"
+        sources += f", ecobee sensors ({names})"
+    print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
-        collector.join()
+        for collector in collectors:
+            collector.join()
         server.server_close()
         store.close()
 

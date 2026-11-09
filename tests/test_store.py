@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,7 +7,7 @@ from housemon.readings import Reading
 from housemon.store import Store
 
 
-def reading(sensor_id: str, ts: float, temperature_c: float = 20.0, humidity: float = 35.0) -> Reading:
+def reading(sensor_id: str, ts: float, temperature_c: float = 20.0, humidity: float | None = 35.0) -> Reading:
     return Reading(sensor_id, ts, temperature_c, humidity, battery=90, rssi=-70)
 
 
@@ -52,6 +53,31 @@ class StoreTest(unittest.TestCase):
         history = self.store.history(since=900, bucket=200)
         self.assertEqual(history["a"], [[1050.0, 21.0, 35.0], [1300.0, 25.0, 50.0]])
         self.assertEqual(history["b"], [[1250.0, 18.0, 45.0]])
+
+    def test_a_reading_can_have_no_humidity(self):
+        """A sensor that reads only temperature: its humidity is None, stored and given back as such."""
+        self.store.add_many([reading("a", 1000, 20.0, None), reading("a", 1100, 22.0, None), reading("b", 1000, 19.0, 40.0)])
+        self.assertIsNone(self.store.latest()["a"].humidity)
+        self.assertEqual(self.store.history(since=900, bucket=200)["a"], [[1050.0, 21.0, None]])
+
+    def test_a_database_from_before_no_humidity_was_allowed_keeps_its_readings(self):
+        self.store.close()
+        path = Path(self.dir.name) / "old.sqlite3"
+        old = sqlite3.connect(path)
+        old.executescript("""
+            CREATE TABLE readings (sensor_id TEXT NOT NULL, ts REAL NOT NULL, temperature_c REAL NOT NULL,
+                humidity REAL NOT NULL, battery INTEGER, rssi INTEGER, PRIMARY KEY (sensor_id, ts)) WITHOUT ROWID;
+            CREATE INDEX readings_by_time ON readings (ts);
+            INSERT INTO readings VALUES ('a', 1000, 20.0, 35.0, 90, -70), ('a', 1100, 21.5, 36.0, 90, -70);
+        """)
+        old.close()
+        self.store = Store(path, min_interval=60)
+        self.assertEqual(self.store.latest()["a"], reading("a", 1100, 21.5, 36.0))
+        self.assertFalse(self.store.add(reading("a", 1120)))  # its clock resumes too
+        self.assertTrue(self.store.add(reading("a", 1200, 22.0, None)))
+        self.store.close()
+        self.store = Store(path, min_interval=60)  # and opens again as it is
+        self.assertEqual(len(self.store.history(since=0, bucket=1)["a"]), 3)
 
 
 if __name__ == "__main__":

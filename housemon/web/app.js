@@ -14,11 +14,12 @@ const HUMIDITY = { unit: "%", index: 2, value: (h) => h, digits: 0, minSpan: 10 
 // Each chart's measure and rooms. Unheated spaces, like the garage, and the
 // outside get their own temperature chart, since their range would flatten the
 // rooms' lines.
-// A chart with no rooms is hidden.
+// A chart with no rooms is hidden. A room whose sensor reads only temperature,
+// its latest reading with no humidity, is left out of the humidity chart.
 const CHARTS = [
   { title: "Temperature", metric: TEMPERATURE, rooms: (sensor) => sensor.heated },
   { title: "Temperature outside and in unheated spaces", metric: TEMPERATURE, rooms: (sensor) => !sensor.heated },
-  { title: "Humidity", metric: HUMIDITY, rooms: () => true },
+  { title: "Humidity", metric: HUMIDITY, rooms: (sensor) => sensor.reading?.humidity !== null },
 ];
 const SERIES_SLOTS = 8; // rooms past the eighth share a gray rather than reuse a color
 // The gray rooms are told apart by dash pattern, solid first. Each is the
@@ -173,7 +174,7 @@ function updateRooms() {
     }
     const age = now - reading.ts;
     value.textContent = fahrenheit(reading.temperature_c).toFixed(1);
-    humidity.textContent = `${Math.round(reading.humidity)}% humidity`;
+    humidity.textContent = reading.humidity == null ? "Reads temperature only" : `${Math.round(reading.humidity)}% humidity`;
     updatedAt.textContent = `Updated ${ago(age)}`;
     // Each detail stays whole, so a narrow card wraps between them.
     const details = [];
@@ -332,7 +333,7 @@ function drawChart(chart) {
     color: seriesColor(i),
     dash: seriesDash(i, 2),
     points: (state.history.series[sensor.id] || [])
-      .filter((p) => p[0] >= since)
+      .filter((p) => p[0] >= since && p[metric.index] != null) // a sensor that reads only temperature has no humidity
       .map((p) => [p[0], metric.value(p[metric.index])]),
   })).filter((s) => shown(chart, s.sensor)); // the scale fits the rooms shown
   const values = series.flatMap((s) => s.points.map((p) => p[1]));
@@ -497,7 +498,7 @@ function renderTable(chart) {
   const rows = new Map();
   for (const sensor of sensors) {
     for (const p of state.history.series[sensor.id] || []) {
-      if (p[0] < since) continue;
+      if (p[0] < since || p[metric.index] == null) continue;
       const key = Math.floor(p[0] / bucket);
       if (!rows.has(key)) rows.set(key, { t: p[0], values: {} });
       rows.get(key).values[sensor.id] = metric.value(p[metric.index]);
@@ -932,7 +933,7 @@ function renderOutside() {
       el("span", { class: "swatch", style: `background: ${roomFill(sensor, "transparent")}`, "aria-hidden": "true" }),
       sensor.name,
       el("strong", {}, reading ? `${fahrenheit(reading.temperature_c).toFixed(1)}°F` : "–"),
-      reading ? `${Math.round(reading.humidity)}%` : "",
+      reading?.humidity != null ? `${Math.round(reading.humidity)}%` : "",
       reading && isStale(reading) ? el("span", { class: "chip-stale", title: "No recent reading" }, "⚠") : "",
     );
   }));
@@ -1035,7 +1036,7 @@ function roomLabel(group, sensor, box) {
   const lines = [
     ...nameLines(group, name, room).map((text) => ({ kind: "name", text, size: 12, weight: 600 })),
     { kind: "value", text: reading ? `${fahrenheit(reading.temperature_c).toFixed(1)}°` : "–", size: 20, weight: 600 },
-    { kind: "humidity", text: reading ? `${Math.round(reading.humidity)}%` : "", size: 12, weight: 400 },
+    { kind: "humidity", text: reading?.humidity != null ? `${Math.round(reading.humidity)}%` : "", size: 12, weight: 400 },
   ];
   const lead = (line) => Math.round(line.size * 1.3);
   const total = (shown) => shown.reduce((sum, line) => sum + lead(line), 0);
@@ -1416,7 +1417,7 @@ function roomReadout(sensor) {
     const age = Date.now() / 1000 - reading.ts;
     rows.push(
       el("div", { class: "row" }, el("strong", {}, `${fahrenheit(reading.temperature_c).toFixed(1)}°F`), el("span", { class: "name" }, "Temperature")),
-      el("div", { class: "row" }, el("strong", {}, `${Math.round(reading.humidity)}%`), el("span", { class: "name" }, "Humidity")),
+      ...(reading.humidity == null ? [] : [el("div", { class: "row" }, el("strong", {}, `${Math.round(reading.humidity)}%`), el("span", { class: "name" }, "Humidity"))]),
       el("div", { class: "time" }, `Updated ${ago(age)}`),
     );
     if (isStale(reading)) {
@@ -1467,7 +1468,10 @@ async function loadHistory() {
 function onReading(reading) {
   const sensor = state.sensors.find((s) => s.id === reading.sensor_id);
   if (!sensor) return;
+  const charted = state.charts.map((chart) => chart.rooms(sensor));
   sensor.reading = reading;
+  // A room that starts or stops reading humidity joins or leaves the humidity chart.
+  state.charts.forEach((chart, i) => chart.rooms(sensor) !== charted[i] && renderLegend(chart));
   sensor.card.classList.remove("updated");
   void sensor.card.offsetWidth; // restart the arrival animation
   sensor.card.classList.add("updated");
