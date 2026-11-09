@@ -85,6 +85,12 @@
   --model-coverage-1: #86b6ef;
   --model-coverage-2: #3987e5;
   --model-coverage-3: #1c5cab;
+  /* Sprinkler water: under ¼ in an hour, ¼–½, ½–1, 1–2, and 2 in or more, light to dark, after the same dry. */
+  --model-water-1: #86b6ef;
+  --model-water-2: #5598e7;
+  --model-water-3: #2a78d6;
+  --model-water-4: #1c5cab;
+  --model-water-5: #0d366b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -166,6 +172,12 @@
     --model-coverage-1: #1c5cab;
     --model-coverage-2: #3987e5;
     --model-coverage-3: #86b6ef;
+    /* More water lighter, out of the dark. */
+    --model-water-1: #184f95;
+    --model-water-2: #256abf;
+    --model-water-3: #3987e5;
+    --model-water-4: #6da7ec;
+    --model-water-5: #9ec5f4;
   }
 }
 
@@ -535,7 +547,7 @@ html.map-full { overflow: hidden; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start; /* each part where it starts, the turns pushed right (margin-left: auto) */
   gap: 12px 16px;
   margin-top: 16px;
 }
@@ -544,8 +556,16 @@ html.map-full { overflow: hidden; }
 
 .turns[hidden], .cuts[hidden], .coverage[hidden] { display: none; }
 
-/* The sprinklers' coverage: its button, and while it's on, the key to its colors and whose coverage it is. */
-.coverage { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+/* The sprinklers' coverage: its button, and while it's on, heads or water, under them the key to its colors, and under
+   that whose coverage it is. It starts just past the levels, at the top of their row, in a box as wide whatever it
+   holds, so nothing in it moves as it changes or turns on and off; both keys take one place, the one not shown hidden,
+   so switching between them keeps every size. */
+.coverage { display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; gap: 6px; flex: 1 1 320px; min-width: 0; }
+.coverage-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.coverage-details { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 100%; }
+.coverage-keys { display: grid; max-width: 100%; }
+.coverage-legend { grid-area: 1 / 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.coverage-legend[aria-hidden="true"] { visibility: hidden; }
 .coverage-key {
   display: flex;
   flex-wrap: wrap;
@@ -558,7 +578,7 @@ html.map-full { overflow: hidden; }
 }
 .coverage-key li { display: flex; align-items: center; gap: 4px; }
 .coverage-key .swatch { width: 10px; height: 10px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--border); }
-.coverage-of { color: var(--text-muted); font-size: 0.75rem; }
+.coverage-of, .coverage-unit { color: var(--text-muted); font-size: 0.75rem; }
 
 /* The detailed view's colors don't encode temperature, so it has no scale or swatches. */
 .map.is-model .scale, .map.is-model .outside .swatch { display: none; }

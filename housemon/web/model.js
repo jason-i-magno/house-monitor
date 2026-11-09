@@ -29,14 +29,30 @@ const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_THROW = { rotor: 30, spray: 12 }; // feet a sprinkler head throws, unless it or its zone says, as details.THROWS
 const MODEL_COVERAGE_CELL = 0.1; // feet across a cell of the sprinklers' coverage grid, at the finest
 const MODEL_COVERAGE_CELLS = 1024; // cells at most along a side of the lot
+// How much water the heads put down, for the map of it: every rotor turns at the same speed and puts out the same
+// water, MODEL_ROTOR_FLOW gallons a minute, spread over its arc out to its throw as it turns, so one turning through
+// a quarter circle passes each spot four times as often as one going all the way round, and puts four times the
+// water on it; a static spray head sprays its whole area at once, MODEL_SPRAY_RATE inches an hour on each spot of it.
+const MODEL_ROTOR_FLOW = 3;
+const MODEL_SPRAY_RATE = 1.5;
+const MODEL_INCHES_AN_HOUR = 96.25; // inches an hour that a gallon a minute puts on a square foot: 231 in³ × 60 / 144 in²
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
   "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
-  "coverage-0", "coverage-1", "coverage-2", "coverage-3",
+  "coverage-0", "coverage-1", "coverage-2", "coverage-3", "water-1", "water-2", "water-3", "water-4", "water-5",
 ];
 // The sprinklers' coverage: how many heads reach a spot, dry for none, up to 3 or more.
 const MODEL_COVERAGE_KEY = ["Dry", "1 head", "2 heads", "3 or more"];
+// The water a spot gets in an hour of each zone running, all the heads reaching it together: dry, and then up to
+// each of MODEL_WATER_STEPS inches, or more.
+const MODEL_WATER_STEPS = [0.25, 0.5, 1, 2];
+const MODEL_WATER_KEY = ["Dry", "Under ¼ in", "¼–½ in", "½–1 in", "1–2 in", "2 in or more"];
+// Each map's colors, a token a step, the shader's six, the heads' last repeated.
+const MODEL_COVERAGE_TOKENS = {
+  heads: ["coverage-0", "coverage-1", "coverage-2", "coverage-3", "coverage-3", "coverage-3"],
+  water: ["coverage-0", "water-1", "water-2", "water-3", "water-4", "water-5"],
+};
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
@@ -287,6 +303,11 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       radius: h.radius ?? z.radius ?? MODEL_THROW[z.kind],
       guessed: h.radius == null && z.radius == null && !details.example,
     }));
+    // The inches an hour each puts down on its area (MODEL_ROTOR_FLOW).
+    for (const h of heads) {
+      const area = ((h.arc ? h.arc[1] : 360) / 360) * Math.PI * h.radius ** 2;
+      h.rate = z.kind === "spray" ? MODEL_SPRAY_RATE : (MODEL_INCHES_AN_HOUR * MODEL_ROTOR_FLOW) / area;
+    }
     const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
     const [xs, ys, zs] = ["x", "y", "top"].map((k) => heads.map((h) => h[k]));
     const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, grade, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
@@ -1656,8 +1677,8 @@ void main() {
   }
 }`;
 
-// With `coverage` on, a face takes its color from how many sprinkler heads reach the spot, from the grid of counts
-// in the `counts` texture, instead of its own. focusTint is focusColor again: a uniform both shaders share must
+// With `coverage` on, a face takes its color from how many sprinkler heads reach the spot, or how much water they put
+// on it, from the grid of steps of it in the `counts` texture, instead of its own. focusTint is focusColor again: a uniform both shaders share must
 // have one precision, and this one's may be lower than the vertex shader's.
 const MODEL_FRAGMENT = `
 #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -1667,7 +1688,7 @@ precision mediump float;
 #endif
 uniform float coverage;
 uniform sampler2D counts;
-uniform vec3 coverageColors[4];
+uniform vec3 coverageColors[6];
 uniform vec3 focusTint;
 varying vec3 shade;
 varying vec2 spot;
@@ -1677,7 +1698,8 @@ void main() {
   vec3 color = shade;
   if (coverage > 0.5) {
     float n = floor(texture2D(counts, spot).r * 255.0 + 0.5);
-    vec3 base = n < 0.5 ? coverageColors[0] : n < 1.5 ? coverageColors[1] : n < 2.5 ? coverageColors[2] : coverageColors[3];
+    vec3 base = n < 0.5 ? coverageColors[0] : n < 1.5 ? coverageColors[1] : n < 2.5 ? coverageColors[2]
+      : n < 3.5 ? coverageColors[3] : n < 4.5 ? coverageColors[4] : coverageColors[5];
     color = (focused > 0.5 ? mix(base, focusTint, 0.55) : base) * lit;
   }
   gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
@@ -1776,16 +1798,18 @@ function renderModel(m, camera, focus, picking) {
   }
 }
 
-// How many sprinkler heads reach each spot of the lot, or only those of a zone or head: a grid of counts, a cell
+// How many sprinkler heads reach each spot of the lot, or only those of a zone or head, or with `measure` "water",
+// which step of MODEL_WATER_STEPS the water they put on it comes to (0 for none): a grid of them, a cell
 // MODEL_COVERAGE_CELL ft across, or wider where the lot is too big for MODEL_COVERAGE_CELLS of them along a side,
-// each counting the heads whose throw, out to its radius and within its arc, reaches its middle.
-function modelCoverage(scene, part = null) {
+// each from the heads whose throw, out to its radius and within its arc, reaches its middle.
+function modelCoverage(scene, part = null, measure = "heads") {
   const [x0, y0, , x1, y1] = scene.lawn.bbox;
   const cell = Math.max(MODEL_COVERAGE_CELL, (x1 - x0) / MODEL_COVERAGE_CELLS, (y1 - y0) / MODEL_COVERAGE_CELLS);
   const [w, h] = [Math.max(1, Math.ceil((x1 - x0) / cell)), Math.max(1, Math.ceil((y1 - y0) / cell))];
   const counts = new Uint8Array(w * h);
+  const water = measure === "water" ? new Float32Array(w * h) : null;
   for (const { heads } of part ? [part.water] : scene.sprinklers.map((z) => z.item.water)) {
-    for (const { x, y, radius, arc } of heads) {
+    for (const { x, y, radius, arc, rate } of heads) {
       const within = modelArc(arc);
       // Row by row, the cells whose middles are within its throw.
       const [j0, j1] = [Math.max(0, Math.ceil((y - radius - y0) / cell - 0.5)), Math.min(h - 1, Math.floor((y + radius - y0) / cell - 0.5))];
@@ -1794,11 +1818,14 @@ function modelCoverage(scene, part = null) {
         const half = Math.sqrt(Math.max(0, radius * radius - dy * dy));
         const [i0, i1] = [Math.max(0, Math.ceil((x - half - x0) / cell - 0.5)), Math.min(w - 1, Math.floor((x + half - x0) / cell - 0.5))];
         for (let i = i0; i <= i1; i++) {
-          if (within(x0 + (i + 0.5) * cell - x, dy)) counts[j * w + i] = Math.min(255, counts[j * w + i] + 1);
+          if (!within(x0 + (i + 0.5) * cell - x, dy)) continue;
+          if (water) water[j * w + i] += rate;
+          else counts[j * w + i] = Math.min(255, counts[j * w + i] + 1);
         }
       }
     }
   }
+  if (water) water.forEach((inches, k) => (counts[k] = inches > 0 ? 1 + MODEL_WATER_STEPS.filter((step) => inches >= step).length : 0));
   return { box: [x0, y0, 1 / (w * cell), 1 / (h * cell)], w, h, counts };
 }
 
@@ -1813,12 +1840,13 @@ function modelArc(arc) {
   return (dx, dy) => !(ex * dy - ey * dx > 0 && dx * sy - dy * sx > 0);
 }
 
-// Show the coverage of every zone, or of the zone or head focused: its grid, worked out once a scene, in the texture.
-function useCoverage(m, scene, part) {
-  const key = part?.key ?? "all";
+// Show the coverage of every zone, or of the zone or head focused, by heads or water (`measure`): its grid, worked
+// out once a scene, in the texture.
+function useCoverage(m, scene, part, measure) {
+  const key = `${measure} ${part?.key ?? "all"}`;
   if (m.counts.scene === scene && m.counts.key === key) return;
   scene.coverage ??= new Map();
-  if (!scene.coverage.has(key)) scene.coverage.set(key, modelCoverage(scene, part));
+  if (!scene.coverage.has(key)) scene.coverage.set(key, modelCoverage(scene, part, measure));
   const { box, w, h, counts } = scene.coverage.get(key);
   const gl = m.gl;
   gl.bindTexture(gl.TEXTURE_2D, m.counts.texture);
@@ -1896,9 +1924,10 @@ function drawModel(width, fill = null) {
     const { data, wet } = buildModel(scene, mode, camera.view, { trees, season });
     m.gl.bufferData(m.gl.ARRAY_BUFFER, data, m.gl.STATIC_DRAW);
     [m.count, m.wet, m.built, m.scene, m.focusColor] = [data.length / 10, wet, built, scene, scene.colors.focus];
-    m.coverageColors = new Float32Array([0, 1, 2, 3].flatMap((n) => scene.colors[`coverage-${n}`]));
   }
   m.coverage = modelCoverageShown(scene);
+  const measure = state.modelCoverageBy;
+  m.coverageColors = new Float32Array(MODEL_COVERAGE_TOKENS[measure].flatMap((token) => scene.colors[token]));
   const shows = modelShows(scene, mode, trees);
   const visible = scene.items.filter((item) => shows(item) && item !== scene.lawn);
   const byKey = new Map(scene.items.map((item) => [item.key, item]));
@@ -1911,7 +1940,7 @@ function drawModel(width, fill = null) {
       const item = byKey.get(key);
       if (m.coverage) {
         const part = item?.water ? item : null;
-        useCoverage(m, scene, part);
+        useCoverage(m, scene, part, measure);
         renderModelCoverageOf(part);
       }
       renderModel(m, camera, item ? item.ids ?? [item.id, item.id] : null, false);
@@ -2025,28 +2054,54 @@ function modelCoverageShown(scene) {
   return state.modelCoverage && scene.sprinklers?.length > 0;
 }
 
-// The button that shows the sprinklers' coverage, for a house with them, and while it's on, its key: what each
-// color means, and whose coverage it is, every zone's or the one focused.
+// The button that shows the sprinklers' coverage, for a house with them, and while it's on, whether it's of the heads
+// reaching each spot or the water they put on it, and its key: what each color means, and whose coverage it is, every
+// zone's or the one focused. Both keys are laid out in one place, the other hidden, so switching between them moves
+// nothing: the buttons stay where they are, and the map keeps its size.
 function renderModelCoverage(scene, drawn) {
   const box = state.map.coverage;
   box.hidden = !(drawn && scene.sprinklers?.length);
   if (box.hidden) return;
-  const on = state.modelCoverage;
-  const swatches = MODEL_COVERAGE_KEY.map((_, n) => `rgb(${scene.colors[`coverage-${n}`].map((v) => Math.round(v * 255)).join(" ")})`);
-  const current = `${on} ${swatches.join()}`;
+  const [on, by] = [state.modelCoverage, state.modelCoverageBy];
+  const swatches = (measure) => MODEL_COVERAGE_TOKENS[measure].map((token) => `rgb(${scene.colors[token].map((v) => Math.round(v * 255)).join(" ")})`);
+  const current = `${on} ${by} ${swatches("heads").join()} ${swatches("water").join()}`;
   if (box.dataset.current === current) return;
   box.dataset.current = current;
+  const save = (name, value) => {
+    try {
+      localStorage.setItem(name, String(value));
+    } catch {}
+  };
   const button = el("button", { type: "button", "aria-pressed": String(on) }, "Sprinkler coverage");
   button.addEventListener("click", () => {
     state.modelCoverage = !state.modelCoverage;
-    try {
-      localStorage.setItem("house-monitor-model-coverage", String(state.modelCoverage));
-    } catch {}
+    save("house-monitor-model-coverage", state.modelCoverage);
     drawMap();
   });
-  const key = el("ul", { class: "coverage-key", "aria-label": "Heads reaching each spot of the lawn and beds" },
-    ...MODEL_COVERAGE_KEY.map((label, n) => el("li", {}, el("span", { class: "swatch", style: `background: ${swatches[n]}` }), label)));
-  box.replaceChildren(button, ...(on ? [key, el("span", { class: "coverage-of" }, "All zones")] : []));
+  if (!on) return box.replaceChildren(el("div", { class: "coverage-controls" }, button));
+  const choices = [["heads", "Heads"], ["water", "Water"]].map(([id, label]) => {
+    const choice = el("button", { type: "button", "aria-pressed": String(id === by) }, label);
+    choice.addEventListener("click", () => {
+      state.modelCoverageBy = id;
+      save("house-monitor-model-coverage-by", id);
+      drawMap();
+    });
+    return choice;
+  });
+  const keys = [
+    ["heads", MODEL_COVERAGE_KEY, "Heads reaching each spot of the lawn and beds", null],
+    ["water", MODEL_WATER_KEY, "Inches of water each spot of the lawn and beds gets in an hour of each zone", "per hour each zone runs"],
+  ].map(([measure, labels, about, unit]) => {
+    const colors = swatches(measure);
+    const key = el("ul", { class: "coverage-key", "aria-label": about },
+      ...labels.map((label, n) => el("li", {}, el("span", { class: "swatch", style: `background: ${colors[n]}` }), label)));
+    return el("div", { class: "coverage-legend", ...(measure === by ? {} : { "aria-hidden": "true" }) }, key, ...(unit ? [el("span", { class: "coverage-unit" }, unit)] : []));
+  });
+  box.replaceChildren(
+    el("div", { class: "coverage-controls" }, button,
+      el("div", { class: "segmented", role: "group", "aria-label": "Show the heads reaching each spot, or the water on it" }, ...choices)),
+    el("div", { class: "coverage-details" }, el("div", { class: "coverage-keys" }, ...keys), el("span", { class: "coverage-of" }, "All zones")),
+  );
 }
 
 // Whose coverage shows, in the key: every zone's, or a zone's or head's.
@@ -2088,12 +2143,22 @@ function modelThrow(heads) {
   return `Throws ${far}${arc}${guessed}`;
 }
 
+// The water a head puts down on its area, or a zone's heads, in inches an hour, for the readout.
+function modelRate(heads) {
+  const inches = (v) => (v < 1 ? v.toFixed(2) : v.toFixed(1));
+  const rates = heads.map((h) => h.rate);
+  const [lo, hi] = [Math.min(...rates), Math.max(...rates)];
+  const amount = `${inches(lo)}${hi - lo >= 0.005 ? ` to ${inches(hi)}` : ""} in an hour`;
+  return heads.length > 1 ? `Each puts down ${amount}` : `Puts down ${amount}`;
+}
+
 // The readout for a thing in the detailed view other than a room.
 function modelReadout(item) {
   const rows = [el("div", { class: "head" }, el("strong", {}, item.name), " ", el("span", {}, item.kind))];
   if (item.place && !item.sensor) rows.push(el("div", { class: "time" }, `${item.place.floor} level, no sensor`));
   if (item.where && item.where !== "Outside" && item.where !== "Roof") rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.where)));
   if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelThrow(item.water.heads))));
+  if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelRate(item.water.heads))));
   if (!item.place && !item.known) rows.push(el("div", { class: "time" }, "Placed by guess"));
   return rows;
 }
