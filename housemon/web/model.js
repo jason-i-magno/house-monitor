@@ -1353,6 +1353,25 @@ function backflow(mesh, C, f) {
 // room's wall color, with a cap in its finish. A fireplace's firebox is dark, a little proud of the side away
 // from the wall it's against, across its middle and from low on it to a little over halfway up. A backflow
 // preventer is pipes, and a valve box is sunk in the ground, its lid just over it.
+// A register set in the corner of its floor and the wall it stands against, its grille sloping from the floor out
+// in the room up to the wall, as high as its height.
+function cornerRegister(mesh, C, f) {
+  const wall = f.against[0];
+  // The point u of the way along the wall and v of the way out from it, at height z.
+  const at = (u, v, z) => {
+    if (wall === "left" || wall === "right") return [wall === "left" ? f.x0 + v * (f.x1 - f.x0) : f.x1 - v * (f.x1 - f.x0), f.y0 + u * (f.y1 - f.y0), z];
+    return [f.x0 + u * (f.x1 - f.x0), wall === "back" ? f.y0 + v * (f.y1 - f.y0) : f.y1 - v * (f.y1 - f.y0), z];
+  };
+  const [z0, z1, color] = [f.z0, f.z1, C[f.finish] ?? C.grille];
+  mesh.solid([
+    [[at(0, 0, z0), at(1, 0, z0), at(1, 1, z0), at(0, 1, z0)], color], // on the floor
+    [[at(0, 0, z0), at(1, 0, z0), at(1, 0, z1), at(0, 0, z1)], color], // against the wall
+    [[at(0, 1, z0), at(1, 1, z0), at(1, 0, z1), at(0, 0, z1)], color], // the grille
+    [[at(0, 0, z0), at(0, 1, z0), at(0, 0, z1)], color],
+    [[at(1, 0, z0), at(1, 1, z0), at(1, 0, z1)], color],
+  ], f.item.id);
+}
+
 function fixture(mesh, C, f) {
   if (f.kind === "backflow") {
     backflow(mesh, C, f);
@@ -1366,6 +1385,10 @@ function fixture(mesh, C, f) {
     const along = f.x1 - f.x0 >= f.y1 - f.y0 ? "x" : "y";
     const [s, d] = along === "x" ? [[f.x0, f.x1], [f.y0, f.y1]] : [[f.y0, f.y1], [f.x0, f.x1]];
     railing(mesh, C[f.finish] ?? C.white, f.item.id, along, s, d, () => f.z0, () => f.z1);
+    return;
+  }
+  if (f.kind === "vent" && !f.lift && f.against?.length === 1) {
+    cornerRegister(mesh, C, f);
     return;
   }
   if (f.kind === "half wall") {
