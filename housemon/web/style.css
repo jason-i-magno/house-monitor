@@ -58,7 +58,11 @@
   --model-black: #3a3a3a;
   --model-grille: #74736f;
   --model-trunk: #6d5037;
+  --model-bark-gray: #827d75;
+  --model-bark-white: #dedbd0;
   --model-leaves: #5f9142;
+  --model-leaves-light: #7f9f33;
+  --model-leaves-dark: #44703a;
   --model-needles: #3f6c4a;
   --model-focus: #2a6fdb;
   --model-sash: #f3f1eb;
@@ -124,7 +128,11 @@
     --model-black: #262626;
     --model-grille: #4f4e4b;
     --model-trunk: #4a3726;
+    --model-bark-gray: #5a5650;
+    --model-bark-white: #9d9a91;
     --model-leaves: #3f6430;
+    --model-leaves-light: #596f22;
+    --model-leaves-dark: #2d4c2a;
     --model-needles: #2b4a34;
     --model-focus: #5b9bf0;
     --model-sash: #a9a69e;
@@ -520,10 +528,16 @@ html.map-full { overflow: hidden; }
 .cuts { display: flex; align-items: center; gap: 4px; }
 .cuts .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
 .cuts .segmented { flex-wrap: wrap; min-width: 0; }
+.cuts .trees { display: flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--text-secondary); font-size: 0.875rem; cursor: pointer; }
+.cuts .trees[hidden] { display: none; }
+.cuts .trees input { margin: 0; accent-color: var(--text-secondary); cursor: pointer; }
 
-/* On a narrow screen the hint gets a row of its own, above the buttons. */
+/* On a narrow screen the hint gets a row of its own, above the buttons, and the trees' box one below the levels. */
 @media (max-width: 600px) {
   .turns .hint { flex-basis: 100%; margin-right: 0; text-align: right; }
+  .cuts { flex-wrap: wrap; row-gap: 8px; }
+  .cuts .segmented { flex: 1 1 0; }
+  .cuts .trees { flex-basis: 100%; margin-left: 0; }
 }
 
 .map .table-view { margin-top: 12px; }

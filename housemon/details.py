@@ -20,6 +20,9 @@ FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing"
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
+CROWNS = ("round", "vase", "spreading", "pyramid")
+LEAVES = ("green", "light", "dark")
+BARKS = ("brown", "gray", "white")
 SPRINKLERS = ("rotor", "spray")
 FENCES = ("wood", "chain link")
 EDGINGS = ("stone", "brick")
@@ -178,8 +181,20 @@ class Ground:
 
 @dataclass(frozen=True)
 class Tree:
-    """A tree, its trunk at x and y on the plan; spread is its canopy's width, and ring the radius of a
-    raised bed around its trunk, if it has one, edged in stone or brick (edging) and filled with mulch."""
+    """A tree, its trunk at x and y on the plan, height to its top; spread is its crown's width.
+
+    A deciduous tree's crown is round, widest in the middle (an oval or a column, as its height and spread make
+    it), a vase, narrow below and widest high up with a broad top, spreading, widest low under a dome, or a
+    pyramid, widest at its bottom and narrowing to a rounded top. clearance is how high its lowest leaves are,
+    if not where its crown's shape puts them, as for a crown down low or held up high, and lean how far its
+    crown's middle stands off its trunk, along x and y, as a tree grows out away from a house. The detailed view
+    keeps a crown clear of the house and sheds, standing off their walls under the eaves, so one can reach over
+    a roof without touching it. Its leaves are green, light (a yellower green) or dark. stems is how many trunks
+    rise from the ground, as a clump's do, and fork how high each splits into limbs, or 0 for a trunk running on
+    up into the crown. trunk is each stem's width at the ground, by default from the tree's spread, and bark its
+    color: brown, gray or white. ring is the radius of a bed of mulch around the trunk, if it has one: raised and
+    edged in stone or brick (edging), or flat on the lawn with no edging (None).
+    """
 
     name: str
     kind: str
@@ -188,12 +203,38 @@ class Tree:
     height: float
     spread: float
     ring: float = 0.0
-    edging: str = "stone"
+    edging: str | None = "stone"
+    crown: str = "round"
+    clearance: float | None = None
+    lean: tuple[float, float] = (0.0, 0.0)
+    leaves: str = "green"
+    stems: int = 1
+    fork: float = 0.0
+    trunk: float | None = None
+    bark: str = "brown"
     known: bool = False
 
     def __post_init__(self):
         _check(self.kind, TREES, "a tree's kind")
-        _check(self.edging, EDGINGS, "an edging")
+        if self.edging is not None:
+            _check(self.edging, EDGINGS, "an edging")
+        _check(self.crown, CROWNS, "a crown")
+        _check(self.leaves, LEAVES, "a tree's leaves")
+        _check(self.bark, BARKS, "a bark")
+        if not isinstance(self.stems, int) or self.stems < 1:
+            raise ValueError(f"{self.name} has at least one stem, as a whole number")
+        if not 0 <= self.fork < self.height / 2:
+            raise ValueError(f"{self.name} forks below its crown, under half its height")
+        if self.trunk is not None and not 0 < self.trunk < self.spread / 2:
+            raise ValueError(f"{self.name}'s trunk is narrower than half its spread")
+        if self.clearance is not None and not self.fork < self.clearance <= self.height * 0.6:
+            raise ValueError(f"{self.name}'s crown starts above its fork, at most 60% of the way up")
+        if len(self.lean) != 2 or (self.lean[0] ** 2 + self.lean[1] ** 2) ** 0.5 >= self.spread / 4:
+            raise ValueError(f"{self.name}'s crown leans off its trunk along x and y, under a quarter of its spread")
+        if self.kind == "evergreen" and (
+            self.crown, self.clearance, tuple(self.lean), self.leaves, self.stems, self.fork
+        ) != ("round", None, (0, 0), "green", 1, 0):
+            raise ValueError(f"{self.name} is an evergreen, its needles in tiers on one trunk")
 
 
 @dataclass(frozen=True)
