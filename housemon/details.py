@@ -6,7 +6,8 @@ A house file (example_house.py, or your own) gives its details as a Details.
 Like the rooms' plans, they're in feet, with x to the right, y toward the front
 (the street) and heights above the main floor. Rooms are named as the house
 names them, and things in a room are placed from its plan's back-left corner
-(its first piece's, for a room in pieces), standing in any of its pieces.
+(its first piece's, for a room in pieces), standing in any of its pieces or
+across them.
 Each thing is either known, from photos of the house or someone who knows it,
 or a guess to correct.
 """

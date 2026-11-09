@@ -213,9 +213,10 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     if (thing.room != null && !q) return [];
     const first = q?.pieces[0];
     const [x, y] = first ? [first.x + thing.x, first.y + thing.y] : [thing.x, thing.y];
-    // The piece it stands in: the one its rectangle is in, else the first.
+    // The piece it stands in: the one its rectangle is in, else the first it stands across, else the first.
     const within = (o) => o.x - 1e-6 <= x && x + thing.width <= o.x + o.width + 1e-6 && o.y - 1e-6 <= y && y + thing.depth <= o.y + o.depth + 1e-6;
-    const p = q ? q.pieces.find(within) ?? first : null;
+    const across = (o) => planOverlap(o, { x, y, width: thing.width, depth: thing.depth });
+    const p = q ? q.pieces.find(within) ?? q.pieces.find(across) ?? first : null;
     const z = p ? p.elevation : groundTop(details, x + (thing.width ?? 0) / 2, y + (thing.depth ?? 0) / 2);
     const resolved = { ...thing, place: q, piece: p, x0: x, y0: y, x1: x + thing.width, y1: y + thing.depth, z0: z + (thing.lift ?? 0) };
     resolved.z1 = resolved.z0 + (thing.height ?? MODEL_CLOSET_HEIGHT);
@@ -433,29 +434,31 @@ function wallRun(mesh, C, w, id) {
       const [za, zc] = [zs[j], zs[j + 1]];
       const zm = (za + zc) / 2;
       const [t0, t1] = [w.trim0?.(zm) ?? 0, w.trim1?.(zm) ?? 0];
-      const sa = i === 0 ? w.s0 + t0 : Math.max(sList[i], w.s0 + t0);
-      const sb = i === sList.length - 2 ? w.s1 - t1 : Math.min(sList[i + 1], w.s1 - t1);
-      if (sb - sa < 1e-6) continue;
-      const [ta, tb] = [top(sa), top(sb)];
-      const [ha, hb] = [Math.min(zc, ta), Math.min(zc, tb)];
-      if (ha <= za + 1e-6 && hb <= za + 1e-6) continue; // above the wall's top
-      const within = (h) => h.s0 <= Math.max(sa, w.s0) + 1e-6 && Math.min(sb, w.s1) <= h.s1 + 1e-6;
-      if (w.holes.some((h) => within(h) && h.z0 <= za + 1e-6 && zc <= h.z1 + 1e-6)) continue;
-      const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
-      const underFloor = atTop && w.topColor && ha >= raw(sa) - 1e-6 && hb >= raw(sb) - 1e-6; // not cut away
-      const sill = w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
-      const z = (za + Math.min(ha, hb)) / 2;
-      const depth = w.depth(z);
-      if (!depth || depth[1] - depth[0] < 1e-6) continue;
-      // A sill down to the floor whose plane it's in: its room's, or the place beyond's where it stands wholly there.
-      const floor = sill && w.floorAt ? w.floorAt(zc, depth) : null;
-      const threshold = floor && Math.abs(zc - floor.z) < 1e-6;
-      const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner; // not trimmed
-      const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
-      const above = j + 2 < zs.length ? w.depth((zc + zs[j + 2]) / 2) : null;
-      const bared = !above || above[0] > depth[0] + 1e-6 || above[1] < depth[1] - 1e-6; // stepping in over it, as a top
-      const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? floor.color : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
-      slab(mesh, w, [sa, sb], depth, za, [ha, hb], colors, id);
+      const [s0, s1] = [i === 0 ? w.s0 + t0 : Math.max(sList[i], w.s0 + t0), i === sList.length - 2 ? w.s1 - t1 : Math.min(sList[i + 1], w.s1 - t1)];
+      if (s1 - s0 < 1e-6) continue;
+      // A hole takes the cell, but for where it runs on past the run's ends to close a corner, which no hole reaches.
+      const within = (h) => h.s0 <= Math.max(s0, w.s0) + 1e-6 && Math.min(s1, w.s1) <= h.s1 + 1e-6;
+      const holed = w.holes.some((h) => within(h) && h.z0 <= za + 1e-6 && zc <= h.z1 + 1e-6);
+      for (const [sa, sb] of holed ? [[s0, w.s0], [w.s1, s1]].filter(([a, b]) => b - a > 1e-6) : [[s0, s1]]) {
+        const [ta, tb] = [top(sa), top(sb)];
+        const [ha, hb] = [Math.min(zc, ta), Math.min(zc, tb)];
+        if (ha <= za + 1e-6 && hb <= za + 1e-6) continue; // above the wall's top
+        const atTop = ha >= ta - 1e-6 && hb >= tb - 1e-6;
+        const underFloor = atTop && w.topColor && ha >= raw(sa) - 1e-6 && hb >= raw(sb) - 1e-6; // not cut away
+        const sill = !holed && w.holes.some((h) => within(h) && Math.abs(h.z0 - zc) < 1e-6);
+        const z = (za + Math.min(ha, hb)) / 2;
+        const depth = w.depth(z);
+        if (!depth || depth[1] - depth[0] < 1e-6) continue;
+        // A sill down to the floor whose plane it's in: its room's, or the place beyond's where it stands wholly there.
+        const floor = sill && w.floorAt ? w.floorAt(zc, depth) : null;
+        const threshold = floor && Math.abs(zc - floor.z) < 1e-6;
+        const end0 = sa <= w.s0 + 1e-6 && w.end0 ? w.end0(z) : w.inner; // not trimmed
+        const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
+        const above = j + 2 < zs.length ? w.depth((zc + zs[j + 2]) / 2) : null;
+        const bared = !above || above[0] > depth[0] + 1e-6 || above[1] < depth[1] - 1e-6; // stepping in over it, as a top
+        const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? floor.color : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
+        slab(mesh, w, [sa, sb], depth, za, [ha, hb], colors, id);
+      }
     }
   }
 }
@@ -715,30 +718,39 @@ function stairwells(scene, p, [x0, y0, x1, y1]) {
   return cells;
 }
 
-// A closet's walls, but where it's against its room's, with doors across one side.
+// A closet's walls, but where it's against its room's, with doors across one side. It can stand across its room's
+// pieces, against the walls of any of them.
 function closetWalls(mesh, scene, c, mode) {
   const C = scene.colors;
   const [p, t] = [c.piece, MODEL_CLOSET_WALL];
-  const sides = {
-    back: { axis: "x", line: c.y0, k: 1, a: c.x0, b: c.x1, against: c.y0 <= p.y + 1e-6 },
-    front: { axis: "x", line: c.y1, k: -1, a: c.x0, b: c.x1, against: c.y1 >= p.y + p.depth - 1e-6 },
-    left: { axis: "y", line: c.x0, k: 1, a: c.y0, b: c.y1, against: c.x0 <= p.x + 1e-6 },
-    right: { axis: "y", line: c.x1, k: -1, a: c.y0, b: c.y1, against: c.x1 >= p.x + p.width - 1e-6 },
-  };
+  // Each side, and the stretches of it against its room's walls: its pieces' walls on the same line.
+  const sides = Object.fromEntries(Object.entries(SIDE_LINES).map(([side, sideLine]) => {
+    const w = sideLine({ x: c.x0, y: c.y0, width: c.x1 - c.x0, depth: c.y1 - c.y0 });
+    const against = c.place.pieces
+      .flatMap((o) => (Math.abs(sideLine(o).line - w.line) > 1e-6 ? [] : o.walls[side].map(([s0, s1]) => ({ s0: Math.max(s0, w.a), s1: Math.min(s1, w.b), piece: o }))))
+      .filter((r) => r.s1 - r.s0 > 1e-6);
+    return [side, { ...w, against }];
+  }));
+  const wallAt = (side, s) => sides[side].against.find((r) => r.s0 - 1e-6 <= s && s <= r.s1 + 1e-6);
   const paint = C[c.place.finish.walls];
   const cap = Math.min(p.elevation + MODEL_CLOSET_HEIGHT, mode === "outside" ? Infinity : p.elevation + MODEL_CUT);
   for (const [side, w] of Object.entries(sides)) {
-    if (w.against) continue;
-    // Inside the room's walls, and the left and right ones between the closet's back and front.
-    const room = (end) => Math.max(0, p.slab[end][1]);
-    let [a, b] = w.axis === "x" ? [Math.max(w.a, p.x + room("left")), Math.min(w.b, p.x + p.width - room("right"))] : [Math.max(w.a, p.y + room("back")), Math.min(w.b, p.y + p.depth - room("front"))];
-    if (w.axis === "y" && !sides.back.against) a = Math.max(a, w.a + t);
-    if (w.axis === "y" && !sides.front.against) b = Math.min(b, w.b - t);
-    const raw = (s) => p.top(...linePoint(w, s, 0));
+    // End to end, inside the room's wall at an end whose side is against one there, else to the closet's own, the
+    // left and right ones between its back and front; and but where it's against the room's.
+    const [lo, hi] = w.axis === "x" ? ["left", "right"] : ["back", "front"];
+    const own = w.axis === "y" ? t : 0;
+    const [r0, r1] = [wallAt(lo, w.line), wallAt(hi, w.line)];
+    const a = r0 ? w.a + Math.max(0, r0.piece.slab[lo][1]) : w.a + own;
+    const b = r1 ? w.b - Math.max(0, r1.piece.slab[hi][1]) : w.b - own;
     const doors = { s0: a + 0.3, s1: b - 0.3, z0: p.elevation, z1: p.elevation + MODEL_CLOSET_DOOR };
-    const holes = side === c.door ? [doors] : [];
-    wallRun(mesh, C, { ...w, depth: () => [0, t], s0: a, s1: b, base: p.elevation, raw0: raw(a), raw1: raw(b), cap, zs: [], holes, inner: paint, outer: () => paint }, c.item.id);
-    if (side === c.door) {
+    let hung = false;
+    for (const [s0, s1] of subtract([a, b], w.against.map((r) => [r.s0, r.s1]))) {
+      const raw = (s) => p.top(...linePoint(w, s, 0));
+      const holes = side === c.door && s0 <= doors.s0 && doors.s1 <= s1 ? [doors] : [];
+      hung ||= holes.length > 0;
+      wallRun(mesh, C, { ...w, depth: () => [0, t], s0, s1, base: p.elevation, raw0: raw(s0), raw1: raw(s1), cap, zs: [], holes, inner: paint, outer: () => paint }, c.item.id);
+    }
+    if (hung) {
       const z1 = Math.min(doors.z1, cap);
       slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C.white, c.item.id);
       const mid = (doors.s0 + doors.s1) / 2; // where the two doors meet
