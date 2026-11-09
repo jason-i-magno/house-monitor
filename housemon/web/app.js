@@ -69,6 +69,7 @@ const state = {
   modelTrees: true, // whether the detailed view's whole house shows its trees
   modelSeason: seasonOf(new Date()), // the season they're shown in, today's when the page loads
   modelCoverage: false, // the detailed view's lawn and beds shaded by how many sprinkler heads reach them
+  modelCoverageBy: "heads", // or by how much water they put on each spot, "water"
   modelScene: null, // what the detailed view draws, built from the sensors and details when first needed
   modelZoom: null, // how far the detailed view is zoomed in, 1 showing the whole lot, or null to frame the house
   modelTarget: null, // the point in feet the zoomed-in view centers on, or null for the middle
@@ -912,7 +913,8 @@ function drawMap() {
   map.svg.style.display = model ? "none" : "";
   if (model) {
     map.layout = drawModel(width, fill);
-    const coverage = modelCoverageShown(state.modelScene) ? " The lawn and beds are shaded by how many sprinkler heads reach them, as the key below says." : "";
+    const by = state.modelCoverageBy === "water" ? "how much water the sprinkler heads put on them in an hour of each zone" : "how many sprinkler heads reach them";
+    const coverage = modelCoverageShown(state.modelScene) ? ` The lawn and beds are shaded by ${by}, as the key below says.` : "";
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
       + `Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.${coverage}`);
   } else {
@@ -1548,6 +1550,7 @@ async function main() {
     state.modelCut = localStorage.getItem("house-monitor-model-cut") ?? state.modelCut; // checked when drawn
     state.modelTrees = localStorage.getItem("house-monitor-model-trees") !== "false";
     state.modelCoverage = localStorage.getItem("house-monitor-model-coverage") === "true";
+    state.modelCoverageBy = localStorage.getItem("house-monitor-model-coverage-by") === "water" ? "water" : "heads";
   } catch {}
   state.map = createMap();
   document.getElementById("map").append(state.map.figure);

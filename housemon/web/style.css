@@ -85,6 +85,12 @@
   --model-coverage-1: #86b6ef;
   --model-coverage-2: #3987e5;
   --model-coverage-3: #1c5cab;
+  /* Sprinkler water: under ¼ in an hour, ¼–½, ½–1, 1–2, and 2 in or more, light to dark, after the same dry. */
+  --model-water-1: #86b6ef;
+  --model-water-2: #5598e7;
+  --model-water-3: #2a78d6;
+  --model-water-4: #1c5cab;
+  --model-water-5: #0d366b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -166,6 +172,12 @@
     --model-coverage-1: #1c5cab;
     --model-coverage-2: #3987e5;
     --model-coverage-3: #86b6ef;
+    /* More water lighter, out of the dark. */
+    --model-water-1: #184f95;
+    --model-water-2: #256abf;
+    --model-water-3: #3987e5;
+    --model-water-4: #6da7ec;
+    --model-water-5: #9ec5f4;
   }
 }
 

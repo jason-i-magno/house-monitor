@@ -14,6 +14,7 @@
 //     --room NAME       zoom the detailed view in on a room or area, or anything else in it by name, as Fireplace
 //     --zoom N          how far, 1 the whole lot (default 3 with --room)
 //     --coverage        in the detailed view, the sprinklers' coverage shown
+//     --water           and of the water they put down, not the heads reaching each spot
 //     --focus NAME      and a part of it focused, by name, with its readout, as Zone 1 (front lawn), or by name
 //                       and where, as Head 2, Zone 1 (front lawn)
 //     --full            the map full screen, the browser's own (with --fallback, fixed over the page instead)
@@ -42,6 +43,7 @@ const { values: opt, positionals } = parseArgs({
     room: { type: "string" },
     zoom: { type: "string" },
     coverage: { type: "boolean" },
+    water: { type: "boolean" },
     focus: { type: "string" },
     full: { type: "boolean" },
     fallback: { type: "boolean" },
@@ -119,7 +121,8 @@ try {
   if (opt["no-trees"]) {
     steps.push(`{ const box = document.querySelector(".cuts .trees input"); if (!box || box.closest("[hidden]")) throw new Error("No trees to hide"); if (box.checked) box.click(); await new Promise((r) => setTimeout(r, 700)); }`);
   }
-  if (opt.coverage) steps.push(`if (!state.modelCoverage) ${click(".coverage button", "Sprinkler coverage")}`);
+  if (opt.coverage || opt.water) steps.push(`if (!state.modelCoverage) ${click(".coverage button", "Sprinkler coverage")}`);
+  if (opt.coverage || opt.water) steps.push(click(".coverage .segmented button", opt.water ? "Water" : "Heads"));
   const [angle, tilt] = opt.top ? [0, 90] : [opt.angle, opt.tilt];
   if (angle != null || tilt != null) {
     steps.push(`moveMap(${angle ?? "state.mapAngle"} - state.mapAngle, ${tilt ?? "state.mapTilt"} - state.mapTilt); await new Promise((r) => setTimeout(r, 400));`);
