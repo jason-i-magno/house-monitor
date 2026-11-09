@@ -18,7 +18,7 @@ SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
 FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller")
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
-PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
+PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet", "dirt")
 TREES = ("deciduous", "evergreen")
 CROWNS = ("round", "vase", "spreading", "pyramid")
 LEAVES = ("green", "light", "dark")
@@ -153,7 +153,8 @@ class Ground:
     have an outline, its corners on the plan in order, that cuts it to that shape within its rectangle and
     the lot: along a slanting fence, say. railings are the sides it has a railing along, 3 ft over its top: a
     deck's. edging, for a raised one, is a low wall of stone or brick along its edges, up to its top, holding
-    in its paving: a raised bed's.
+    in its paving: a raised bed's. Its paving can be bare dirt, as a path worn along a fence, where trees and
+    sprinkler heads stand as they do in the lawn.
     """
 
     name: str
@@ -272,6 +273,29 @@ class Head:
             raise ValueError(f"The head at {self.x}, {self.y} throws between two directions, or all the way round (None)")
         if self.radius is not None and self.radius <= 0:
             raise ValueError(f"The head at {self.x}, {self.y} needs to throw some way")
+
+
+@dataclass(frozen=True)
+class Hedge:
+    """A hedge along these points on the plan, in order: a row of shrubs, or of a tree's shoots, width across and
+    height tall. Its leaves are green, light or dark, and turn yellow, orange or red in the fall (fall), as a tree's
+    do; the detailed view shows them fresher in spring, and the hedge bare in winter, a wall of stems."""
+
+    name: str
+    points: tuple[tuple[float, float], ...]
+    height: float
+    width: float
+    leaves: str = "green"
+    fall: str = "yellow"
+    known: bool = False
+
+    def __post_init__(self):
+        if len(self.points) < 2:
+            raise ValueError(f"{self.name} runs along at least two points")
+        if not (self.height > 0 and self.width > 0):
+            raise ValueError(f"{self.name} has a height and a width")
+        _check(self.leaves, LEAVES, "a hedge's leaves")
+        _check(self.fall, FALLS, "a hedge's fall color")
 
 
 @dataclass(frozen=True)
@@ -472,6 +496,7 @@ class Details:
     fixtures: tuple[Fixture, ...] = ()
     grounds: tuple[Ground, ...] = ()
     trees: tuple[Tree, ...] = ()
+    hedges: tuple[Hedge, ...] = ()
     sheds: tuple[Shed, ...] = ()
     fences: tuple[Fence, ...] = ()
     steps: tuple[Steps, ...] = ()
