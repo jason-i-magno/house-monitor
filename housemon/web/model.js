@@ -1996,14 +1996,15 @@ function modelCoverageShown(scene) {
 
 // The button that shows the sprinklers' coverage, for a house with them, and while it's on, whether it's of the heads
 // reaching each spot or the water they put on it, and its key: what each color means, and whose coverage it is, every
-// zone's or the one focused.
+// zone's or the one focused. Both keys are laid out in one place, the other hidden, so switching between them moves
+// nothing: the buttons stay where they are, and the map keeps its size.
 function renderModelCoverage(scene, drawn) {
   const box = state.map.coverage;
   box.hidden = !(drawn && scene.sprinklers?.length);
   if (box.hidden) return;
   const [on, by] = [state.modelCoverage, state.modelCoverageBy];
-  const swatches = MODEL_COVERAGE_TOKENS[by].map((token) => `rgb(${scene.colors[token].map((v) => Math.round(v * 255)).join(" ")})`);
-  const current = `${on} ${by} ${swatches.join()}`;
+  const swatches = (measure) => MODEL_COVERAGE_TOKENS[measure].map((token) => `rgb(${scene.colors[token].map((v) => Math.round(v * 255)).join(" ")})`);
+  const current = `${on} ${by} ${swatches("heads").join()} ${swatches("water").join()}`;
   if (box.dataset.current === current) return;
   box.dataset.current = current;
   const save = (name, value) => {
@@ -2017,7 +2018,7 @@ function renderModelCoverage(scene, drawn) {
     save("house-monitor-model-coverage", state.modelCoverage);
     drawMap();
   });
-  if (!on) return box.replaceChildren(button);
+  if (!on) return box.replaceChildren(el("div", { class: "coverage-controls" }, button));
   const choices = [["heads", "Heads"], ["water", "Water"]].map(([id, label]) => {
     const choice = el("button", { type: "button", "aria-pressed": String(id === by) }, label);
     choice.addEventListener("click", () => {
@@ -2027,23 +2028,25 @@ function renderModelCoverage(scene, drawn) {
     });
     return choice;
   });
-  const [labels, about] = by === "water"
-    ? [MODEL_WATER_KEY, "Inches of water each spot of the lawn and beds gets in an hour of each zone"]
-    : [MODEL_COVERAGE_KEY, "Heads reaching each spot of the lawn and beds"];
-  const key = el("ul", { class: "coverage-key", "aria-label": about },
-    ...labels.map((label, n) => el("li", {}, el("span", { class: "swatch", style: `background: ${swatches[n]}` }), label)));
+  const keys = [
+    ["heads", MODEL_COVERAGE_KEY, "Heads reaching each spot of the lawn and beds", null],
+    ["water", MODEL_WATER_KEY, "Inches of water each spot of the lawn and beds gets in an hour of each zone", "per hour each zone runs"],
+  ].map(([measure, labels, about, unit]) => {
+    const colors = swatches(measure);
+    const key = el("ul", { class: "coverage-key", "aria-label": about },
+      ...labels.map((label, n) => el("li", {}, el("span", { class: "swatch", style: `background: ${colors[n]}` }), label)));
+    return el("div", { class: "coverage-legend", ...(measure === by ? {} : { "aria-hidden": "true" }) }, key, ...(unit ? [el("span", { class: "coverage-unit" }, unit)] : []));
+  });
   box.replaceChildren(
-    button,
-    el("div", { class: "segmented", role: "group", "aria-label": "Show the heads reaching each spot, or the water on it" }, ...choices),
-    key,
-    ...(by === "water" ? [el("span", { class: "coverage-of coverage-unit" }, "per hour each zone runs")] : []),
-    el("span", { class: "coverage-of" }, "All zones"),
+    el("div", { class: "coverage-controls" }, button,
+      el("div", { class: "segmented", role: "group", "aria-label": "Show the heads reaching each spot, or the water on it" }, ...choices)),
+    el("div", { class: "coverage-details" }, el("div", { class: "coverage-keys" }, ...keys), el("span", { class: "coverage-of" }, "All zones")),
   );
 }
 
 // Whose coverage shows, in the key: every zone's, or a zone's or head's.
 function renderModelCoverageOf(part) {
-  const of = state.map.coverage.querySelector(".coverage-of:not(.coverage-unit)");
+  const of = state.map.coverage.querySelector(".coverage-of");
   if (of) of.textContent = part ? part.water.of : "All zones";
 }
 
