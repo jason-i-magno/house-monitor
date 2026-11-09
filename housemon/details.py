@@ -106,7 +106,9 @@ class Fixture:
     faces are, in place of x or y on that side's axis. A fireplace is in a room, against a wall, its firebox
     opening on the side away from that wall. A half wall is in a room too, out from one of its walls, in the
     room's wall color with a cap in its finish. A railing runs along its longer side, in its finish: posts at its
-    ends, a handrail as wide as it on top, and poles between, as along the open edge of a floor.
+    ends, a handrail as wide as it on top, and poles between, as along the open edge of a floor. A vent on the
+    floor standing against one wall is a register set in the corner, its grille sloping from the floor out in the
+    room up to the wall, as high as its height.
 
     A sprinkler system's parts: a backflow, its backflow preventer, the pipe its water comes up out of the ground
     through, past a valve on either side, and goes back down, along the fixture's longer side and as high as its
