@@ -26,7 +26,7 @@ const MODEL_ROOF_DEPTH = 0.6; // feet from a roof's eaves down to its underside,
 const MODEL_SIZE = 720; // px at most across the scene's bounding sphere
 const MODEL_PAD = 16;
 const MODEL_ZOOM_MAX = 6; // times the house's framing
-const MODEL_THROW = { rotor: 30, spray: 12 }; // feet a sprinkler head throws, unless its zone says, as in details.Sprinklers
+const MODEL_THROW = { rotor: 30, spray: 12 }; // feet a sprinkler head throws, unless it or its zone says, as details.THROWS
 const MODEL_COVERAGE_CELL = 0.1; // feet across a cell of the sprinklers' coverage grid, at the finest
 const MODEL_COVERAGE_CELLS = 1024; // cells at most along a side of the lot
 const MODEL_TOKENS = [
@@ -270,26 +270,30 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   });
   // A sprinkler zone's heads are each a part, and the zone one more with no faces of its own: focusing it lights up
   // all its heads, their ids a run (`ids`), centered on its head nearest their middle, as theirs may be far from any.
-  // Each head stands in the lawn or the bed it's in, and throws its zone's radius, else as far as its kind does;
-  // `water` is what a zone or head waters, for the coverage shown while it's focused.
+  // Each head stands in the lawn or the bed it's in, and throws over its arc (`arc`, its first direction and how far
+  // round from it, in degrees, null for all the way round) as far as it says, else as its zone's do, else as far as
+  // its kind does, by guess; `water` is what a zone or head waters, for the coverage shown while it's focused.
   const sprinklers = details.sprinklers.map((z, i) => {
-    const heads = z.heads.map(([x, y]) => [x, y, groundTop(details, x, y)]);
-    const radius = z.radius ?? MODEL_THROW[z.kind];
-    const guessed = z.radius == null && !details.example;
+    const heads = z.heads.map((h) => ({
+      x: h.x, y: h.y, top: groundTop(details, h.x, h.y),
+      arc: h.arc && [h.arc[0], (((h.arc[1] - h.arc[0]) % 360) + 360) % 360],
+      radius: h.radius ?? z.radius ?? MODEL_THROW[z.kind],
+      guessed: h.radius == null && z.radius == null && !details.example,
+    }));
     const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
-    const [xs, ys, zs] = [0, 1, 2].map((k) => heads.map((h) => h[k]));
+    const [xs, ys, zs] = ["x", "y", "top"].map((k) => heads.map((h) => h[k]));
     const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, grade, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
     const [mx, my] = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2];
-    const [hx, hy, hz] = heads.reduce((a, b) => (Math.hypot(b[0] - mx, b[1] - my) < Math.hypot(a[0] - mx, a[1] - my) ? b : a));
-    const item = outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [hx, hy, hz + 0.1], water: { heads, radius, guessed, of: z.name } });
-    const headItems = heads.map(([x, y, top], k) => {
+    const middle = heads.reduce((a, b) => (Math.hypot(b.x - mx, b.y - my) < Math.hypot(a.x - mx, a.y - my) ? b : a));
+    const item = outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [middle.x, middle.y, middle.top + 0.1], water: { heads, of: z.name } });
+    const headItems = heads.map((h, k) => {
       const head = { name: `Head ${k + 1}`, known: z.known };
-      const water = { heads: [[x, y, top]], radius, guessed, of: `${head.name} of ${z.name}` };
-      const box = [x - 0.3, y - 0.3, grade, x + 0.3, y + 0.3, top + 0.2];
-      return outside(`sprinkler:${i}:${k}`, head, z.kind === "spray" ? "Spray head" : "Rotor", "Sprinklers", box, { where: z.name, center: [x, y, top + 0.1], water });
+      const water = { heads: [h], of: `${head.name} of ${z.name}` };
+      const box = [h.x - 0.3, h.y - 0.3, grade, h.x + 0.3, h.y + 0.3, h.top + 0.2];
+      return outside(`sprinkler:${i}:${k}`, head, z.kind === "spray" ? "Spray head" : "Rotor", "Sprinklers", box, { where: z.name, center: [h.x, h.y, h.top + 0.1], water });
     });
     item.ids = [headItems[0].id, headItems.at(-1).id];
-    return { ...z, heads, radius, item, headItems };
+    return { ...z, heads, item, headItems };
   });
   const roofs = details.roofs.map((r, i) => ({ ...r, item: add({ key: `roof:${i}`, name: r.name, kind: "Roof", group: "Roof", where: "Roof", known: r.known, level: null, whole: true, bbox: [r.x, r.y, r.eave - MODEL_ROOF_DEPTH, r.x + r.width, r.y + r.depth, r.peak] }) }));
   const roofVents = details.roof_vents.flatMap((v, i) => {
@@ -1425,7 +1429,7 @@ function buildModel(scene, mode, view) {
   for (const f of scene.fences) fence(mesh, scene, f);
   // Sprinkler heads, at rest, their caps just over the ground, sunk into it so they're not in its plane.
   for (const z of scene.sprinklers) {
-    z.heads.forEach(([x, y, top], k) => round(mesh, [x, y], z.kind === "spray" ? 0.17 : 0.25, top - 0.1, top + 0.1, C.black, z.headItems[k].id, false, 10));
+    z.heads.forEach((h, k) => round(mesh, [h.x, h.y], z.kind === "spray" ? 0.17 : 0.25, h.top - 0.1, h.top + 0.1, C.black, z.headItems[k].id, false, 10));
   }
   if (mode === "outside") {
     for (const t of scene.trees) tree(mesh, scene, t);
@@ -1590,25 +1594,39 @@ function renderModel(m, camera, focus, picking) {
 
 // How many sprinkler heads reach each spot of the lot, or only those of a zone or head: a grid of counts, a cell
 // MODEL_COVERAGE_CELL ft across, or wider where the lot is too big for MODEL_COVERAGE_CELLS of them along a side,
-// each counting the heads whose throw reaches its middle.
+// each counting the heads whose throw, out to its radius and within its arc, reaches its middle.
 function modelCoverage(scene, part = null) {
   const [x0, y0, , x1, y1] = scene.lawn.bbox;
   const cell = Math.max(MODEL_COVERAGE_CELL, (x1 - x0) / MODEL_COVERAGE_CELLS, (y1 - y0) / MODEL_COVERAGE_CELLS);
   const [w, h] = [Math.max(1, Math.ceil((x1 - x0) / cell)), Math.max(1, Math.ceil((y1 - y0) / cell))];
   const counts = new Uint8Array(w * h);
-  for (const { heads, radius } of part ? [part.water] : scene.sprinklers.map((z) => z.item.water)) {
-    for (const [x, y] of heads) {
+  for (const { heads } of part ? [part.water] : scene.sprinklers.map((z) => z.item.water)) {
+    for (const { x, y, radius, arc } of heads) {
+      const within = modelArc(arc);
       // Row by row, the cells whose middles are within its throw.
       const [j0, j1] = [Math.max(0, Math.ceil((y - radius - y0) / cell - 0.5)), Math.min(h - 1, Math.floor((y + radius - y0) / cell - 0.5))];
       for (let j = j0; j <= j1; j++) {
         const dy = y0 + (j + 0.5) * cell - y;
         const half = Math.sqrt(Math.max(0, radius * radius - dy * dy));
         const [i0, i1] = [Math.max(0, Math.ceil((x - half - x0) / cell - 0.5)), Math.min(w - 1, Math.floor((x + half - x0) / cell - 0.5))];
-        for (let i = i0; i <= i1; i++) counts[j * w + i] = Math.min(255, counts[j * w + i] + 1);
+        for (let i = i0; i <= i1; i++) {
+          if (within(x0 + (i + 0.5) * cell - x, dy)) counts[j * w + i] = Math.min(255, counts[j * w + i] + 1);
+        }
       }
     }
   }
   return { box: [x0, y0, 1 / (w * cell), 1 / (h * cell)], w, h, counts };
+}
+
+// Whether a spot dx, dy from a sprinkler head is within its arc, [first direction, how far round] the way the angles
+// count, from the right toward the front: past its first end and short of its last, by which side of each the spot
+// is on, or for an arc of more than half a turn, not within the rest of the way round.
+function modelArc(arc) {
+  if (!arc) return () => true;
+  const [a, b] = [arc[0], arc[0] + arc[1]].map((d) => (d * Math.PI) / 180);
+  const [sx, sy, ex, ey] = [Math.cos(a), Math.sin(a), Math.cos(b), Math.sin(b)];
+  if (arc[1] <= 180) return (dx, dy) => sx * dy - sy * dx >= 0 && dx * ey - dy * ex >= 0;
+  return (dx, dy) => !(ex * dy - ey * dx > 0 && dx * sy - dy * sx > 0);
 }
 
 // Show the coverage of every zone, or of the zone or head focused: its grid, worked out once a scene, in the texture.
@@ -1853,12 +1871,22 @@ function renderModelList(scene) {
   state.map.listWrap.replaceChildren(el("table", {}, el("thead", {}, head), el("tbody", {}, ...rows)));
 }
 
+// How far a head throws and over what arc, or a zone's heads, for the readout; a throw the house file doesn't give is
+// its kind's, by guess.
+function modelThrow(heads) {
+  const radii = [...new Set(heads.map((h) => h.radius))].sort((a, b) => a - b);
+  const far = radii.length === 1 ? `${radii[0]} ft` : `${radii[0]} to ${radii.at(-1)} ft`;
+  const arc = heads.length > 1 ? "" : heads[0].arc ? ` over ${Math.round(heads[0].arc[1])}°` : " all the way round";
+  const guessed = heads.every((h) => h.guessed) ? ", by guess" : heads.some((h) => h.guessed) ? ", some by guess" : "";
+  return `Throws ${far}${arc}${guessed}`;
+}
+
 // The readout for a thing in the detailed view other than a room.
 function modelReadout(item) {
   const rows = [el("div", { class: "head" }, el("strong", {}, item.name), " ", el("span", {}, item.kind))];
   if (item.place && !item.sensor) rows.push(el("div", { class: "time" }, `${item.place.floor} level, no sensor`));
   if (item.where && item.where !== "Outside" && item.where !== "Roof") rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.where)));
-  if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, `Throws ${item.water.radius} ft${item.water.guessed ? ", by guess" : ""}`)));
+  if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelThrow(item.water.heads))));
   if (!item.place && !item.known) rows.push(el("div", { class: "time" }, "Placed by guess"));
   return rows;
 }
