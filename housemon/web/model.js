@@ -29,7 +29,7 @@ const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
+  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
@@ -926,7 +926,23 @@ const MODEL_CROWNS = {
   pyramid: { base: 0.25, widest: 0.18, below: 0.5, above: 1.25, taper: -0.3 },
 };
 const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dark" };
+const MODEL_FALLS = { yellow: "fall-yellow", orange: "fall-orange", red: "fall-red" };
 const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
+const MODEL_SEASONS = ["spring", "summer", "fall", "winter"];
+
+// The season the trees show on a date, in the northern hemisphere: spring from March, summer from June, fall from
+// September and winter from December.
+function seasonOf(date) {
+  return MODEL_SEASONS[Math.floor(((date.getMonth() + 10) % 12) / 3)];
+}
+
+// Where a bare tree's branches reach: directions spread evenly over a ball (a Fibonacci sphere's), but for its
+// underside, as branches don't hang straight down.
+const MODEL_TIPS = Array.from({ length: 32 }, (_, i) => {
+  const z = 1 - (2 * i + 1) / 32;
+  const a = i * Math.PI * (3 - Math.sqrt(5));
+  return [Math.sqrt(1 - z * z) * Math.cos(a), Math.sqrt(1 - z * z) * Math.sin(a), z];
+}).filter(([, , z]) => z > -0.5);
 const MODEL_LUMP = 0.22; // how far a crown's hollows sink between its lumps, as a share of its size
 const MODEL_CROWN_GAP = 1; // feet a crown keeps clear of the house and sheds
 
@@ -965,7 +981,8 @@ function clearOfBuildings(scene, [cx, cy], reach, gap) {
   };
 }
 
-function tree(mesh, scene, t) {
+// A tree as it is in a season: a deciduous one in leaf, or in winter bare; an evergreen the same all year.
+function tree(mesh, scene, t, season = "summer") {
   const [C, grade, id] = [scene.colors, scene.details.grade, t.item.id];
   const bark = C[MODEL_BARKS[t.bark]] ?? C.trunk;
   const [R, H, stems, fork] = [t.spread / 2, t.height, t.stems ?? 1, t.fork ?? 0];
@@ -1029,7 +1046,9 @@ function tree(mesh, scene, t) {
 
   // The stems, splayed out from the foot if there are several, up to where each forks, or on into the crown
   // under its middle, and each one's limbs up from its fork into the crown, ending further from the buildings
-  // than its leaves.
+  // than its leaves. Bare, a stem running on into the crown shows, on up as a leader.
+  const bare = season === "winter";
+  const ends = []; // where a bare tree's branches can start, and how thick it is there: [point, radius]
   const clearer = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP + 1.5);
   const turn = random() * 2 * Math.PI;
   const top = fork > 0 ? grade + fork : z0 + 0.4 * (z1 - z0);
@@ -1040,19 +1059,67 @@ function tree(mesh, scene, t) {
     const splay = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
     const head = [...(fork > 0 ? out : under)(splay), top];
     limb(mesh, [...out(stems > 1 ? stem * 0.8 : 0), grade - 0.1 - 0.01 * k], head, stem, stem * (fork > 0 ? 0.8 : 0.45), bark, id, 8);
-    if (!(fork > 0)) continue;
+    if (!(fork > 0)) {
+      if (!bare) continue;
+      const lead = clearer([...under(splay * 0.5), middle + 0.45 * (z1 - middle)]);
+      limb(mesh, [head[0], head[1], head[2] - 0.3], lead, stem * 0.45, stem * 0.2, bark, id, 6); // its foot in the stem's top
+      ends.push([head, stem * 0.45], [lead, stem * 0.2]);
+      continue;
+    }
     for (let j = 0; j < 3; j++) {
       const z = z0 + (0.3 + 0.15 * random()) * (z1 - z0);
       const a = angle + (2 * Math.PI * j) / 3 + (random() - 0.5) * 0.8;
-      limb(mesh, head, clearer([...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z]), stem * 0.6, stem * 0.25, bark, id, 6);
+      const end = clearer([...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z]);
+      limb(mesh, head, end, stem * 0.6, stem * 0.25, bark, id, 6);
+      ends.push([end, stem * 0.25]);
     }
   }
 
-  // Its facets a little lighter or darker in turn.
+  // Bare, in winter: a branch out to each of MODEL_TIPS, just inside where the crown's edge would be, so the tree
+  // keeps its crown's outline, from the nearest of its limbs' ends or leaders, arching up a little, with twigs off
+  // it; all of them ending further from the buildings than its leaves would, and left off where that would cut one
+  // back by more than half, so a tree beside a wall is bare on that side.
+  if (bare) {
+    const far = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    const inward = (p, f) => p.map((c, k) => center[k] + f * (c - center[k]));
+    const unit = (v) => v.map((c) => c / Math.hypot(...v));
+    const reach = (p) => Math.hypot(p[0] - cx, p[1] - cy);
+    const out = (p) => {
+      const kept = clearer(p);
+      return reach(kept) < 0.5 * reach(p) ? null : kept;
+    };
+    for (const v of MODEL_TIPS) {
+      const tip = out(inward(place(v), 0.92));
+      if (!tip) continue;
+      const [from, r] = ends.reduce((best, e) => (far(e[0], tip) < far(best[0], tip) ? e : best));
+      const bend = [(from[0] + tip[0]) / 2, (from[1] + tip[1]) / 2, (from[2] + tip[2]) / 2 + 0.08 * far(from, tip)];
+      const r0 = Math.min(r, stem * 0.3);
+      limb(mesh, from, bend, r0, r0 * 0.6, bark, id, 5);
+      limb(mesh, bend, tip, r0 * 0.6, 0.05, bark, id, 5);
+      // Its twigs, more on a bigger tree, from its bend or halfway on from there.
+      const along = bend.map((c, k) => c + 0.5 * (tip[k] - c));
+      for (let j = 0; j < Math.max(1, Math.min(4, Math.round(R / 5))); j++) {
+        const twig = out(inward(place(unit(v.map((c) => c + (random() - 0.5) * 0.7))), 0.95));
+        const [start, width] = j % 2 ? [along, r0 * 0.2] : [bend, r0 * 0.35];
+        if (twig) limb(mesh, start, twig, Math.max(width, 0.045), 0.02, bark, id, 3); // three-sided: no two sides parallel
+      }
+    }
+    return;
+  }
+
+  // In leaf, its leaves in their season, its facets a little lighter or darker in turn: fresher in spring, half a
+  // new leaf's green, and in the fall its fall color, but for a few facets not yet turned.
   const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
+  const fall = C[MODEL_FALLS[t.fall]] ?? C["fall-yellow"];
+  const mix = (a, b, f) => a.map((c, k) => c + f * (b[k] - c));
+  const color = (i) => {
+    if (season === "spring") return mix(leaves, C["leaves-spring"], 0.5);
+    if (season === "fall") return i % 7 === 3 ? mix(fall, leaves, 0.4) : fall;
+    return leaves;
+  };
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
-    mesh.face(triangle.map(place), leaves.map((c) => Math.min(1, c * shade)), id, center);
+    mesh.face(triangle.map(place), color(i).map((c) => Math.min(1, c * shade)), id, center);
   });
 }
 
@@ -1393,7 +1460,8 @@ function fixture(mesh, C, f) {
   }
 }
 
-function buildModel(scene, mode, view, trees = true) {
+// The scene's triangles, cut away to `mode` and seen along `view`, its trees shown or not and in a season.
+function buildModel(scene, mode, view, { trees = true, season = "summer" } = {}) {
   const mesh = modelMesh();
   const C = scene.colors;
   const shows = modelShows(scene, mode, trees);
@@ -1414,7 +1482,7 @@ function buildModel(scene, mode, view, trees = true) {
   for (const z of scene.sprinklers) {
     for (const [x, y, top] of z.heads) round(mesh, [x, y], z.kind === "spray" ? 0.17 : 0.25, top - 0.1, top + 0.1, C.black, z.item.id, false, 10);
   }
-  for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t);
+  for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t, season);
   if (mode === "outside") {
     for (const r of scene.roofs) roofSection(mesh, scene, r);
     for (const v of scene.roofVents) box(mesh, [v.x - 0.2, v.y - 0.2, v.z - 0.5], [v.x + 0.2, v.y + 0.2, v.z + 1], C.black, v.item.id);
@@ -1582,12 +1650,12 @@ function drawModel(width, fill = null) {
   const camera = modelCamera(scene, width, height, scale * zoom, state.modelTarget ?? (zoom <= 1 ? scene.center : scene.houseCenter));
   map.camera = { ...camera, base: scale }; // for zooming about the pointer: its turn, size, and scale unzoomed
   // Walls are cut by which way they face, so the geometry changes only when the view turns past an axis, and the
-  // trees are only there for the whole house.
-  const trees = state.modelTrees;
-  const built = mode === "outside" ? `${mode} ${trees}` : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
+  // trees, in their season, are only there for the whole house.
+  const [trees, season] = [state.modelTrees, state.modelSeason];
+  const built = mode === "outside" ? `${mode} ${trees} ${season}` : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
   if (m.scene !== scene) renderModelList(scene);
   if (m.built !== built || m.scene !== scene) {
-    const data = buildModel(scene, mode, camera.view, trees);
+    const data = buildModel(scene, mode, camera.view, { trees, season });
     m.gl.bufferData(m.gl.ARRAY_BUFFER, data, m.gl.STATIC_DRAW);
     [m.count, m.built, m.scene, m.focusColor] = [data.length / 10, built, scene, scene.colors.focus];
   }
@@ -1661,29 +1729,46 @@ function panModel(dx, dy) {
   drawMapSoon();
 }
 
-// The buttons that cut the house away to a level, and the box that shows or
-// hides the trees, there only for the whole house, since cut away they're off.
+// The buttons that cut the house away to a level, and under them the box that
+// shows or hides the trees and the buttons for their season, there only for
+// the whole house, since cut away they're off. The season isn't kept, so the
+// page always opens on today's.
 function renderModelCuts(scene) {
   const levels = scene.levels ?? [];
   const options = [["outside", "Outside"], ...levels.map(([floor]) => [floor, `${floor} level`])];
   const current = options.some(([id]) => id === state.modelCut) ? state.modelCut : "outside";
-  const trees = state.map.cuts.querySelector(".trees");
-  trees.hidden = current !== "outside" || !scene.trees?.length;
-  trees.querySelector("input").checked = state.modelTrees;
-  const group = state.map.cuts.querySelector(".segmented");
-  if (group.dataset.options === options.join() && group.dataset.current === current) return;
-  [group.dataset.options, group.dataset.current] = [options.join(), current];
-  group.replaceChildren(...options.map(([id, label]) => {
-    const button = el("button", { type: "button", "aria-pressed": String(id === current) }, label);
-    button.addEventListener("click", () => {
-      state.modelCut = id;
-      try {
-        localStorage.setItem("house-monitor-model-cut", id);
-      } catch {}
-      drawMap();
-    });
-    return button;
-  }));
+  const row = state.map.cuts.querySelector(".tree-options");
+  row.hidden = current !== "outside" || !scene.trees?.length;
+  row.querySelector("input").checked = state.modelTrees;
+  const seasons = row.querySelector(".seasons");
+  seasons.hidden = !state.modelTrees || !scene.trees?.some((t) => t.kind === "deciduous");
+  const now = seasonOf(new Date());
+  renderModelButtons(seasons, MODEL_SEASONS.map((s) => [s, s[0].toUpperCase() + s.slice(1), s === now ? "The season now" : null]), state.modelSeason, (id) => {
+    state.modelSeason = id;
+    drawMap();
+  });
+  renderModelButtons(state.map.cuts.querySelector(".levels .segmented"), options, current, (id) => {
+    state.modelCut = id;
+    try {
+      localStorage.setItem("house-monitor-model-cut", id);
+    } catch {}
+    drawMap();
+  });
+}
+
+// A group of buttons, one pressed: each option its id, label and tooltip, if any, and what a click on it does.
+// Made again only when the options change, and otherwise just pressed anew, so a button keeps its focus.
+function renderModelButtons(group, options, current, pick) {
+  const key = options.map((o) => o.join("/")).join();
+  if (group.dataset.options !== key) {
+    group.dataset.options = key;
+    group.replaceChildren(...options.map(([id, label, title]) => {
+      const button = el("button", { type: "button", "data-id": id, ...(title ? { title } : {}) }, label);
+      button.addEventListener("click", () => pick(id));
+      return button;
+    }));
+  }
+  for (const button of group.children) button.setAttribute("aria-pressed", String(button.dataset.id === current));
 }
 
 // The list of everything placed, by kind, as a table: the view's text

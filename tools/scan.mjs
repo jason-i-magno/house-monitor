@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Finds faces in the map's detailed view that would flicker against each other: two in one plane, overlapping,
 // that differ in color or facing, where a ray from where they overlap gets out of the scene, so they can be seen.
-// Checks the house whole and cut away to each level, from four ways round.
+// Checks the house whole, its trees in leaf and bare in winter, and cut away to each level, from four ways round.
 //
 //   node tools/scan.mjs [house file]   # as the server picks it, if none given
 import { loadHouse, loadModel, sceneOf } from "./model.mjs";
@@ -43,9 +43,11 @@ function clipPoly(poly, clip) {
 }
 const found = new Map();
 let triangleCount = 0;
-for (const mode of modes) {
+// The whole house twice, as its trees in winter are bare branches, not crowns; each pass named as it reports.
+const passes = [["outside", "summer", "outside"], ["outside", "winter", "winter"], ...modes.slice(1).map((m) => [m, "summer", m])];
+for (const [mode, season, pass] of passes) {
   for (const view of mode === "outside" ? [views[0]] : views) {
-    const data = buildModel(scene, mode, view);
+    const data = buildModel(scene, mode, view, { season });
     const n = data.length / 30;
     triangleCount = Math.max(triangleCount, n);
     const tris = [];
@@ -158,7 +160,7 @@ for (const mode of modes) {
               }
             }
             found.set(fkey, {
-              a: name(ids[0]), b: name(ids[1]), mode, normal: g.map((v) => +v.toFixed(2)), d: +A.d.toFixed(3),
+              a: name(ids[0]), b: name(ids[1]), mode: pass, normal: g.map((v) => +v.toFixed(2)), d: +A.d.toFixed(3),
               at: [0, 1, 2].map((k) => +(c[0] * U[k] + c[1] * V[k] + A.d * g[k]).toFixed(2)),
               colors: [A.color, B.color].map((col) => col.map((v) => +v.toFixed(2))), facing: [A.facing, B.facing],
               area: Math.max(prev?.area ?? 0, area), checked: (prev?.checked ?? 0) + 1, seen,

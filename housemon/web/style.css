@@ -63,6 +63,10 @@
   --model-leaves: #5f9142;
   --model-leaves-light: #7f9f33;
   --model-leaves-dark: #44703a;
+  --model-leaves-spring: #a6c95a;
+  --model-fall-yellow: #d9aa2b;
+  --model-fall-orange: #d27a2a;
+  --model-fall-red: #b9412e;
   --model-needles: #3f6c4a;
   --model-focus: #2a6fdb;
   --model-sash: #f3f1eb;
@@ -133,6 +137,10 @@
     --model-leaves: #3f6430;
     --model-leaves-light: #596f22;
     --model-leaves-dark: #2d4c2a;
+    --model-leaves-spring: #6e8a34;
+    --model-fall-yellow: #a07f22;
+    --model-fall-orange: #985820;
+    --model-fall-red: #852f22;
     --model-needles: #2b4a34;
     --model-focus: #5b9bf0;
     --model-sash: #a9a69e;
@@ -525,19 +533,18 @@ html.map-full { overflow: hidden; }
 /* The detailed view's colors don't encode temperature, so it has no scale or swatches. */
 .map.is-model .scale, .map.is-model .outside .swatch { display: none; }
 .map:not(.is-model) .model-only { display: none; }
-.cuts { display: flex; align-items: center; gap: 4px; }
+/* The levels in a row, and under them the trees' box and their seasons, each row's buttons wrapping as they must. */
+.cuts { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 100%; }
+.cuts .levels, .cuts .tree-options { display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.cuts .tree-options[hidden], .cuts .seasons[hidden] { display: none; }
 .cuts .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
 .cuts .segmented { flex-wrap: wrap; min-width: 0; }
-.cuts .trees { display: flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--text-secondary); font-size: 0.875rem; cursor: pointer; }
-.cuts .trees[hidden] { display: none; }
+.cuts .trees { display: flex; align-items: center; gap: 6px; margin-right: 8px; color: var(--text-secondary); font-size: 0.875rem; cursor: pointer; }
 .cuts .trees input { margin: 0; accent-color: var(--text-secondary); cursor: pointer; }
 
-/* On a narrow screen the hint gets a row of its own, above the buttons, and the trees' box one below the levels. */
+/* On a narrow screen the hint gets a row of its own, above the buttons. */
 @media (max-width: 600px) {
   .turns .hint { flex-basis: 100%; margin-right: 0; text-align: right; }
-  .cuts { flex-wrap: wrap; row-gap: 8px; }
-  .cuts .segmented { flex: 1 1 0; }
-  .cuts .trees { flex-basis: 100%; margin-left: 0; }
 }
 
 .map .table-view { margin-top: 12px; }

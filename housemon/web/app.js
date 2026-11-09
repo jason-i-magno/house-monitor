@@ -66,6 +66,7 @@ const state = {
   mapFocus: null, // the sensor id the map's readout shows, or in the detailed view any part's key
   modelCut: "outside", // the detailed view's whole house, or the level it's cut away to
   modelTrees: true, // whether the detailed view's whole house shows its trees
+  modelSeason: seasonOf(new Date()), // the season they're shown in, today's when the page loads
   modelScene: null, // what the detailed view draws, built from the sensors and details when first needed
   modelZoom: null, // how far the detailed view is zoomed in, 1 showing the whole lot, or null to frame the house
   modelTarget: null, // the point in feet the zoomed-in view centers on, or null for the middle
@@ -568,12 +569,22 @@ function createMap() {
     } catch {}
     drawMap();
   });
+  // The levels in a row, and under them whether the trees show, and in which season.
   const cuts = el(
     "div",
     { class: "cuts" },
-    el("span", { class: "hint" }, "Show"),
-    el("div", { class: "segmented", role: "group", "aria-label": "Show the house whole, or cut away to a level" }),
-    el("label", { class: "trees" }, trees, "Trees"),
+    el(
+      "div",
+      { class: "levels" },
+      el("span", { class: "hint" }, "Show"),
+      el("div", { class: "segmented", role: "group", "aria-label": "Show the house whole, or cut away to a level" }),
+    ),
+    el(
+      "div",
+      { class: "tree-options" },
+      el("label", { class: "trees" }, trees, "Trees"),
+      el("div", { class: "segmented seasons", role: "group", "aria-label": "The trees' season" }),
+    ),
   );
   const listWrap = el("div", { class: "table-wrap" });
   const full = el("button", { type: "button", class: "full" });

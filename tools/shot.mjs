@@ -7,6 +7,7 @@
 //     --view NAME       the map's view: plan, 3d or detailed (default: the page as it loads, all of it)
 //     --level NAME      in the detailed view, cut away to a level by its floor's name, as Upper or Main; or outside
 //     --no-trees        in the detailed view, the whole house with its trees hidden
+//     --season NAME     or with its trees in a season: spring, summer, fall or winter (default: today's)
 //     --angle DEG       turn the 3D or detailed view to an angle, 0 looking at the front
 //     --tilt DEG        and tilt it, 90 looking straight down
 //     --top             straight down, the front at the bottom (--angle 0 --tilt 90)
@@ -31,6 +32,7 @@ const { values: opt, positionals } = parseArgs({
     view: { type: "string" },
     level: { type: "string" },
     "no-trees": { type: "boolean" },
+    season: { type: "string" },
     angle: { type: "string" },
     tilt: { type: "string" },
     top: { type: "boolean" },
@@ -108,6 +110,7 @@ try {
   const click = (selector, text) => `{ const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((b) => b.textContent === ${JSON.stringify(text)}); if (!b) throw new Error("No button " + ${JSON.stringify(text)}); b.click(); await new Promise((r) => setTimeout(r, 700)); }`;
   if (view) steps.push(click(".map figcaption button", view));
   if (opt.level) steps.push(click(".cuts button", /^outside$/i.test(opt.level) ? "Outside" : `${opt.level} level`));
+  if (opt.season) steps.push(click(".cuts .seasons button", opt.season[0].toUpperCase() + opt.season.slice(1).toLowerCase()));
   if (opt["no-trees"]) {
     steps.push(`{ const box = document.querySelector(".cuts .trees input"); if (!box || box.closest("[hidden]")) throw new Error("No trees to hide"); if (box.checked) box.click(); await new Promise((r) => setTimeout(r, 700)); }`);
   }
