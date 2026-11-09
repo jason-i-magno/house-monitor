@@ -15,7 +15,7 @@ from pathlib import Path
 from housemon import example_house
 from housemon import house as houses
 from housemon import layout
-from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Sprinklers, Steps, Tree
+from housemon.details import THROWS, Closet, Fence, Fixture, Ground, Head, Opening, Roof, Sprinklers, Steps, Tree
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
 # side where half the wall stands, and none where it stands past the side, in the place beyond (layout.py)
@@ -109,6 +109,28 @@ def stands_on(x, y, thing):
         return False
     outline = getattr(thing, "outline", None)
     return within_rect(x, y, rect(thing)) and (not outline or in_polygon(x, y, list(outline)))
+
+
+def throw_edge(x, y, radius, arc):
+    """Points a few inches apart round the edge of a sprinkler head's throw: along its arc, and, for less than all
+    the way round, out along its ends."""
+    start, sweep = (0, 360) if arc is None else (arc[0], (arc[1] - arc[0]) % 360)
+    n = max(8, math.ceil(math.radians(sweep) * radius / 0.25))
+    for i in range(n + 1):
+        a = math.radians(start + sweep * i / n)
+        yield x + radius * math.cos(a), y + radius * math.sin(a)
+    if sweep < 360:
+        m = math.ceil(radius / 0.25)
+        for a in (math.radians(start), math.radians(start + sweep)):
+            for k in range(1, m):
+                yield x + radius * k / m * math.cos(a), y + radius * k / m * math.sin(a)
+
+
+def in_throw(px, py, x, y, radius, arc):
+    """Whether a point is inside the throw of a head at x, y."""
+    if math.hypot(px - x, py - y) >= radius:
+        return False
+    return arc is None or (math.degrees(math.atan2(py - y, px - x)) - arc[0]) % 360 <= (arc[1] - arc[0]) % 360
 
 
 def on_roof(r, x, y):
@@ -526,16 +548,31 @@ class YardTest(HouseTestCase):
         """Not on paving, a shed or the house, and no two heads in one spot."""
         for h in self.each():
             d = h.details
-            spots = [(z.name, x, y) for z in d.sprinklers for x, y in z.heads]
+            spots = [(z.name, head.x, head.y) for z in d.sprinklers for head in z.heads]
             spots += [(f.name, f.x + f.width / 2, f.y + f.depth / 2) for f in d.fixtures if f.kind == "valve box"]
             for name, x, y in spots:
                 self.assertTrue(h.in_lot(x, y), (name, x, y))
                 self.assertFalse(h.on_house(x, y), (name, x, y))
                 for thing in (*(g for g in d.grounds if g.kind != "bed"), *d.sheds):
                     self.assertFalse(stands_on(x, y, thing), (name, x, y, thing.name))
-            heads = [(z.name, x, y) for z in d.sprinklers for x, y in z.heads]
+            heads = [(z.name, head.x, head.y) for z in d.sprinklers for head in z.heads]
             for (name, x1, y1), (other, x2, y2) in itertools.combinations(heads, 2):
                 self.assertGreater(math.hypot(x2 - x1, y2 - y1), 0.5, (name, x1, y1, other))
+
+    def test_sprinklers_throw_in_the_lot_and_clear_of_the_house(self):
+        """Each head's throw, over its arc and out as far as it throws, stays in the lot and off the house."""
+        for h in self.each():
+            for z in h.details.sprinklers:
+                for k, head in enumerate(z.heads, 1):
+                    radius, arc = head.radius or z.radius or THROWS[z.kind], head.arc
+                    where = (z.name, f"head {k}", head.x, head.y)
+                    for x, y in throw_edge(head.x, head.y, radius, arc):
+                        self.assertTrue(h.in_lot(x, y), (*where, "out of the lot at", round(x, 1), round(y, 1)))
+                        self.assertFalse(h.on_house(x, y), (*where, "on the house at", round(x, 1), round(y, 1)))
+                    # Its edge clear of the house, the house could still be inside it, as a corner poking into it.
+                    for place, p in h.pieces:
+                        for x, y in corners(rect(p)):
+                            self.assertFalse(in_throw(x, y, head.x, head.y, radius, arc), (*where, "on", place.name))
 
     def test_outlines_are_in_their_grounds(self):
         for h in self.each():
@@ -676,6 +713,14 @@ class KindsTest(unittest.TestCase):
             Sprinklers("Zone 1", ((0, 0),), kind="drip")
         with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ())
+        with self.assertRaises(ValueError):
+            Sprinklers("Zone 1", ((0, 0),), radius=0)
+        with self.assertRaises(ValueError):
+            Head(0, 0, radius=0)
+        with self.assertRaises(ValueError):
+            Head(0, 0, arc=(0, 360))  # all the way round is None
+        with self.assertRaises(ValueError):
+            Head(0, 0, arc=(90,))
         with self.assertRaises(ValueError):
             Fence("Fence", ((0, 0), (10, 0)), kind="stone")
         with self.assertRaises(ValueError):

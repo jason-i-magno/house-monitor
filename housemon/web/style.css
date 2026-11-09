@@ -80,6 +80,11 @@
   --model-mulch: #6e4b34;
   --model-fence: #9a8366;
   --model-deck: #a07a55;
+  /* Sprinkler coverage: dry, a straw apart from the blues, then 1, 2, and 3 or more heads, light to dark. */
+  --model-coverage-0: #c4a55a;
+  --model-coverage-1: #86b6ef;
+  --model-coverage-2: #3987e5;
+  --model-coverage-3: #1c5cab;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -156,6 +161,11 @@
     --model-mulch: #4a3223;
     --model-fence: #665744;
     --model-deck: #6b5139;
+    /* More heads lighter, out of the dark. */
+    --model-coverage-0: #a07d2e;
+    --model-coverage-1: #1c5cab;
+    --model-coverage-2: #3987e5;
+    --model-coverage-3: #86b6ef;
   }
 }
 
@@ -284,7 +294,7 @@ h1 { font-size: 1.5rem; font-weight: 600; }
   margin: 28px 0 12px;
 }
 
-.filters button, .segmented button, .turns button {
+.filters button, .segmented button, .turns button, .coverage button {
   padding: 6px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -295,9 +305,9 @@ h1 { font-size: 1.5rem; font-weight: 600; }
   cursor: pointer;
 }
 
-.filters button:hover, .segmented button:hover, .turns button:hover { background: var(--hover); }
+.filters button:hover, .segmented button:hover, .turns button:hover, .coverage button:hover { background: var(--hover); }
 
-.filters button[aria-pressed="true"], .segmented button[aria-pressed="true"] {
+.filters button[aria-pressed="true"], .segmented button[aria-pressed="true"], .coverage button[aria-pressed="true"] {
   border-color: var(--text-secondary);
   color: var(--text-primary);
   font-weight: 600;
@@ -532,7 +542,23 @@ html.map-full { overflow: hidden; }
 
 .turns { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; margin-left: auto; }
 
-.turns[hidden], .cuts[hidden] { display: none; }
+.turns[hidden], .cuts[hidden], .coverage[hidden] { display: none; }
+
+/* The sprinklers' coverage: its button, and while it's on, the key to its colors and whose coverage it is. */
+.coverage { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.coverage-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.coverage-key li { display: flex; align-items: center; gap: 4px; }
+.coverage-key .swatch { width: 10px; height: 10px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--border); }
+.coverage-of { color: var(--text-muted); font-size: 0.75rem; }
 
 /* The detailed view's colors don't encode temperature, so it has no scale or swatches. */
 .map.is-model .scale, .map.is-model .outside .swatch { display: none; }

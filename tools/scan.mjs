@@ -49,7 +49,7 @@ const seasons = ["summer", "spring", "fall", "winter"];
 const passes = [...seasons.map((s) => ["outside", s, s === "summer" ? "outside" : s]), ...modes.slice(1).map((m) => [m, "summer", m])];
 for (const [mode, season, pass] of passes) {
   for (const view of mode === "outside" ? [views[0]] : views) {
-    const data = buildModel(scene, mode, view, { season });
+    const { data } = buildModel(scene, mode, view, { season });
     const n = data.length / 30;
     triangleCount = Math.max(triangleCount, n);
     const tris = [];

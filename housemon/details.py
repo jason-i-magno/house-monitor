@@ -27,6 +27,7 @@ FLOWERS = ("white", "pink")
 BLOOMS = ("spring", "summer")
 BARKS = ("brown", "gray", "white")
 SPRINKLERS = ("rotor", "spray")
+THROWS = {"rotor": 30, "spray": 12}  # feet a head of each kind throws, unless it or its zone says (MODEL_THROW in model.js)
 FENCES = ("wood", "chain link")
 EDGINGS = ("stone", "brick")
 CLADDINGS = ("siding", "paneling", "stone")
@@ -255,20 +256,45 @@ class Tree:
 
 
 @dataclass(frozen=True)
+class Head:
+    """A sprinkler head at x and y on the plan. arc is the directions it throws between, in degrees on the plan, 0
+    to the right, 90 to the front, 180 to the left and 270 to the back, counting up from the first to the second:
+    (0, 90) is the quarter between the right and the front, and (270, 90) the half to the right. None, the default,
+    throws all the way round. radius is how far it throws, in feet, if not as far as its zone's heads do."""
+
+    x: float
+    y: float
+    arc: tuple[float, float] | None = None
+    radius: float | None = None
+
+    def __post_init__(self):
+        if self.arc is not None and (len(self.arc) != 2 or (self.arc[1] - self.arc[0]) % 360 == 0):
+            raise ValueError(f"The head at {self.x}, {self.y} throws between two directions, or all the way round (None)")
+        if self.radius is not None and self.radius <= 0:
+            raise ValueError(f"The head at {self.x}, {self.y} needs to throw some way")
+
+
+@dataclass(frozen=True)
 class Sprinklers:
-    """One zone of a sprinkler system: its heads, each at x and y on the plan, in the lawn or a bed, standing in
-    whichever they're in. kind is what they are: rotors, throwing far across a lawn, or sprays, smaller and closer
-    together. Its valve is in a valve box, a fixture, and so is the controller that runs it."""
+    """One zone of a sprinkler system: its heads, in the lawn or a bed, standing in whichever they're in, each a Head,
+    or for one throwing all the way round, its point (x, y) on the plan. kind is what they are: rotors, throwing far
+    across a lawn, or sprays, smaller and closer together. radius is how far its heads throw, in feet, but for one
+    that says, if not as far as that kind does by default (THROWS: 30 for rotors, 12 for sprays). Its valve is in a
+    valve box, a fixture, and so is the controller that runs it."""
 
     name: str
-    heads: tuple[tuple[float, float], ...]
+    heads: tuple[Head | tuple[float, float], ...]
     kind: str = "rotor"
+    radius: float | None = None
     known: bool = False
 
     def __post_init__(self):
         _check(self.kind, SPRINKLERS, "a sprinkler's kind")
         if not self.heads:
             raise ValueError(f"{self.name} needs a head or more")
+        if self.radius is not None and self.radius <= 0:
+            raise ValueError(f"{self.name}'s heads need to throw some way")
+        object.__setattr__(self, "heads", tuple(h if isinstance(h, Head) else Head(*h) for h in self.heads))
 
 
 @dataclass(frozen=True)
