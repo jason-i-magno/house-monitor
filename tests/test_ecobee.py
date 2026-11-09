@@ -196,9 +196,25 @@ class AccountTest(unittest.TestCase):
 class EcobeeSourceTest(unittest.TestCase):
     def test_reads_the_rooms_named_for_its_sensors(self):
         account = unittest.mock.Mock(thermostats=lambda: THERMOSTATS)
-        source = ecobee.EcobeeSource(account, lambda: {"dining room": "dining", "Main Floor": "hall", "Attic": "attic"})
+        source = ecobee.EcobeeSource(account, lambda: {"dining room": "dining", "Main Floor": "hall", "Attic": "attic"}, warn=[].append)
         self.assertEqual(source.poll(1000.0), [Reading("hall", 1000.0, 21.22, 41.0), Reading("dining", 1000.0, 20.39, None)])
         self.assertEqual(ecobee.EcobeeSource(account, dict).poll(1000.0), [])  # nothing to read, nothing asked
+
+    def test_warns_once_of_a_name_the_account_has_no_sensor_by(self):
+        account = unittest.mock.Mock(thermostats=lambda: THERMOSTATS)
+        names = {"Dining Room": "dining", "Attic": "attic", "bedroom": "bedroom", "Garage": "garage"}
+        warnings = []
+        source = ecobee.EcobeeSource(account, lambda: names, warn=warnings.append)
+        source.poll(1000.0)
+        # Not a sensor with no reading yet, nor an offline thermostat's: their names are right.
+        self.assertEqual(warnings, ["no sensor named 'Attic', as the house file has; the account has 'Main floor', 'Dining Room', 'Bedroom', 'Den', 'Garage'"])
+        source.poll(1180.0)
+        self.assertEqual(len(warnings), 1)  # once, not every poll
+        del names["Attic"]
+        source.poll(1360.0)
+        names["ATTIC"] = "attic"
+        source.poll(1540.0)
+        self.assertEqual(len(warnings), 2)  # and again once it's put back after being fixed
 
 
 if __name__ == "__main__":
