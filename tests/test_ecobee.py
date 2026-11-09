@@ -97,10 +97,10 @@ def sign_in_route(mfa: str | None = None, password: str = "secret", code: str = 
 
 THERMOSTATS = [
     {
-        "name": "Main floor",
+        "name": "Hallway",
         "runtime": {"connected": True},
         "remoteSensors": [
-            {"name": "Main floor", "type": "ecobee3", "capability": [{"type": "temperature", "value": "702"}, {"type": "humidity", "value": "41"}, {"type": "occupancy", "value": "true"}]},
+            {"name": "Hallway", "type": "ecobee3", "capability": [{"type": "temperature", "value": "702"}, {"type": "humidity", "value": "41"}, {"type": "occupancy", "value": "true"}]},
             {"name": "Dining Room", "type": "ecobee3_remote_sensor", "capability": [{"type": "temperature", "value": "687"}, {"type": "occupancy", "value": "false"}]},
             {"name": "Bedroom", "type": "ecobee3_remote_sensor", "capability": [{"type": "temperature", "value": "unknown"}]},
             {"name": "Den", "type": "ecobee3_remote_sensor", "capability": [{"type": "temperature", "value": -5002}]},
@@ -139,8 +139,8 @@ class SensorReadingsTest(unittest.TestCase):
     def test_reads_each_sensor_in_celsius(self):
         readings = list(ecobee.sensor_readings(THERMOSTATS))
         self.assertEqual(readings, [
-            ecobee.SensorReading("Main floor", "Main floor", 21.22, 41.0),  # 70.2 °F
-            ecobee.SensorReading("Dining Room", "Main floor", 20.39, None),  # a SmartSensor reads no humidity
+            ecobee.SensorReading("Hallway", "Hallway", 21.22, 41.0),  # 70.2 °F
+            ecobee.SensorReading("Dining Room", "Hallway", 20.39, None),  # a SmartSensor reads no humidity
         ])  # but not one with no temperature yet, nor an offline thermostat's
 
 
@@ -196,7 +196,7 @@ class AccountTest(unittest.TestCase):
 class EcobeeSourceTest(unittest.TestCase):
     def test_reads_the_rooms_named_for_its_sensors(self):
         account = unittest.mock.Mock(thermostats=lambda: THERMOSTATS)
-        source = ecobee.EcobeeSource(account, lambda: {"dining room": "dining", "Main Floor": "hall", "Attic": "attic"}, warn=[].append)
+        source = ecobee.EcobeeSource(account, lambda: {"dining room": "dining", "HALLWAY": "hall", "Attic": "attic"}, warn=[].append)
         self.assertEqual(source.poll(1000.0), [Reading("hall", 1000.0, 21.22, 41.0), Reading("dining", 1000.0, 20.39, None)])
         self.assertEqual(ecobee.EcobeeSource(account, dict).poll(1000.0), [])  # nothing to read, nothing asked
 
@@ -207,7 +207,7 @@ class EcobeeSourceTest(unittest.TestCase):
         source = ecobee.EcobeeSource(account, lambda: names, warn=warnings.append)
         source.poll(1000.0)
         # Not a sensor with no reading yet, nor an offline thermostat's: their names are right.
-        self.assertEqual(warnings, ["no sensor named 'Attic', as the house file has; the account has 'Main floor', 'Dining Room', 'Bedroom', 'Den', 'Garage'"])
+        self.assertEqual(warnings, ["no sensor named 'Attic', as the house file has; the account has 'Hallway', 'Dining Room', 'Bedroom', 'Den', 'Garage'"])
         source.poll(1180.0)
         self.assertEqual(len(warnings), 1)  # once, not every poll
         del names["Attic"]
