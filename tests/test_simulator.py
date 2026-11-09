@@ -86,6 +86,22 @@ class SimulatedSourceTest(unittest.TestCase):
         self.assertEqual(len(readings), 10 * len(HOUSE))
         self.assertEqual({r.ts for r in readings}, {since + 60 * i for i in range(10)})
 
+    def test_rooms_another_source_reads_are_left_out(self):
+        source = SimulatedSource(HOUSE, interval=0.06)
+        source.skip = {HOUSE[0].sensor.id}
+        since = 1_800_000_000
+        self.assertNotIn(HOUSE[0].sensor.id, {r.sensor_id for r in source.backfill(since, since + 600, 60)})
+        readings, stop = [], threading.Event()
+        worker = threading.Thread(target=source.run, args=(readings.append, stop))
+        worker.start()
+        time.sleep(0.15)
+        stop.set()
+        worker.join(timeout=1)
+        ids = {r.sensor_id for r in readings}
+        self.assertNotIn(HOUSE[0].sensor.id, ids)
+        self.assertIn(HOUSE[1].sensor.id, ids)
+        self.assertEqual(len(source.sensors), len(HOUSE))  # the page still shows the room
+
     def test_run_publishes_every_room_in_turn_until_stopped(self):
         source = SimulatedSource(HOUSE, interval=0.06)
         readings, stop = [], threading.Event()

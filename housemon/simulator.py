@@ -33,6 +33,9 @@ class SimulatedRoom:
     thermostat: bool = True  # on the main thermostat's schedule; if not, it holds near 68°F plus offset_f
     battery: int = 100
     rssi: int = -70
+    # The name of the ecobee sensor in the room, as the ecobee app shows it: signed in to ecobee, the room's readings
+    # come from it instead (ecobee.py).
+    ecobee: str | None = None
 
 
 def _smoothstep(x: float) -> float:
@@ -113,7 +116,8 @@ def reading_at(room: SimulatedRoom, t: float) -> Reading:
 
 
 class SimulatedSource:
-    """Reports each room every `interval` seconds, staggered like real broadcasts."""
+    """Reports each room every `interval` seconds, staggered like real broadcasts, but the rooms whose sensor ids are
+    in `skip`, which another source reads."""
 
     def __init__(
         self,
@@ -126,16 +130,22 @@ class SimulatedSource:
         self.interval = interval
         self.areas = list(areas)
         self.details = details
+        self.skip: set[str] = set()
 
     @property
     def sensors(self) -> list[Sensor]:
         return [room.sensor for room in self.rooms]
 
+    def simulated(self) -> list[SimulatedRoom]:
+        """The rooms it reports, all but those another source reads."""
+        return [room for room in self.rooms if room.sensor.id not in self.skip]
+
     def backfill(self, since: float, until: float, step: float) -> Iterator[Reading]:
         """The readings the simulator would have stored had it been running."""
+        rooms = self.simulated()
         t = math.ceil(since / step) * step
         while t < until:
-            for room in self.rooms:
+            for room in rooms:
                 yield reading_at(room, t)
             t += step
 
@@ -144,7 +154,7 @@ class SimulatedSource:
         are then, so rooms swapped in while it runs, from a changed house file, get their turns."""
         due = time.time()
         while True:
-            rooms = self.rooms
+            rooms = self.simulated()
             step = self.interval / max(1, len(rooms))
             for room in rooms:
                 if stop.wait(max(0.0, due - time.time())):

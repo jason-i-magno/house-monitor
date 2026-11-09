@@ -7,18 +7,18 @@ from pathlib import Path
 
 from .readings import Reading
 
-SCHEMA = """
+TABLE = """
 CREATE TABLE IF NOT EXISTS readings (
     sensor_id TEXT NOT NULL,
     ts REAL NOT NULL,
     temperature_c REAL NOT NULL,
-    humidity REAL NOT NULL,
+    humidity REAL,
     battery INTEGER,
     rssi INTEGER,
     PRIMARY KEY (sensor_id, ts)
-) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS readings_by_time ON readings (ts);
+) WITHOUT ROWID
 """
+INDEX = "CREATE INDEX IF NOT EXISTS readings_by_time ON readings (ts)"
 
 COLUMNS = "sensor_id, ts, temperature_c, humidity, battery, rssi"
 
@@ -35,8 +35,26 @@ class Store:
         self._lock = threading.Lock()
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.executescript(SCHEMA)
+        self._db.execute(TABLE)
+        self._db.execute(INDEX)
+        if any(name == "humidity" and notnull for _, name, _, notnull, *_ in self._db.execute("PRAGMA table_info(readings)")):
+            self._allow_no_humidity()
         self._last_stored = dict(self._db.execute("SELECT sensor_id, MAX(ts) FROM readings GROUP BY sensor_id"))
+
+    def _allow_no_humidity(self) -> None:
+        """Let a reading have no humidity, as a sensor that reads only temperature gives, in a database from before
+        that was allowed: its table rebuilt with the column nullable, every reading kept, all or nothing."""
+        self._db.execute("BEGIN")
+        try:
+            self._db.execute("ALTER TABLE readings RENAME TO readings_before")
+            self._db.execute(TABLE)
+            self._db.execute(f"INSERT INTO readings ({COLUMNS}) SELECT {COLUMNS} FROM readings_before")
+            self._db.execute("DROP TABLE readings_before")  # and its index, which went with it
+            self._db.execute(INDEX)
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -80,7 +98,8 @@ class Store:
         """Readings since `since`, averaged into `bucket`-second buckets.
 
         Returns {sensor_id: [[ts, temperature_c, humidity], ...]} in time order,
-        where ts is the mean time of the readings in the bucket.
+        where ts is the mean time of the readings in the bucket, and humidity is
+        None for a bucket with none.
         """
         with self._lock:
             rows = self._db.execute(
@@ -90,5 +109,6 @@ class Store:
             ).fetchall()
         series: dict[str, list[list[float]]] = {}
         for sensor_id, ts, temperature_c, humidity in rows:
-            series.setdefault(sensor_id, []).append([round(ts, 1), round(temperature_c, 2), round(humidity, 2)])
+            humidity = None if humidity is None else round(humidity, 2)
+            series.setdefault(sensor_id, []).append([round(ts, 1), round(temperature_c, 2), humidity])
         return series
