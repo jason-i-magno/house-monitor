@@ -148,6 +148,17 @@ class Layout:
                 return p
         return self.first(thing.room)
 
+    def parts(self, thing):
+        """A closet's or fixture's rectangle cut by the pieces of its room it stands across: each piece and the part
+        of the rectangle in it, or its own piece and all of it, for one with no area."""
+        x, y, width, depth = self.absolute(thing)
+        cut = []
+        for p in pieces(self.place(thing.room).plan):
+            x0, y0, x1, y1 = max(x, p.x), max(y, p.y), min(x + width, p.x + p.width), min(y + depth, p.y + p.depth)
+            if x1 - x0 > 1e-9 and y1 - y0 > 1e-9:
+                cut.append((p, (x0, y0, x1 - x0, y1 - y0)))
+        return cut or [(self.piece(thing), (x, y, width, depth))]
+
     def wall(self, opening: Opening):
         """The piece an opening's wall belongs to, the wall's axis and line, and the opening's span along it."""
         side = opening.wall
@@ -190,10 +201,25 @@ class Layout:
     def clearance(self, place, p, side, span, heights):
         """How far a thing in a place's piece p stays from a side, along span and over heights: WALL where the wall on
         that side stands in its plan, half that where half of it does, and none where it stands past the side, or an
-        open wall leaves no wall there."""
-        if self.open(p, side, span, heights):
+        open wall, or another piece of its place carrying on past it, leaves no wall there."""
+        if self.open(p, side, span, heights) or self.adjoined(place, p, side, span):
             return 0.0
         return WALL * self.share.get((id(p), side), 1)
+
+    def adjoined(self, place, p, side, span):
+        """Whether other pieces of a place carry on past a side of its piece p all along span, leaving no wall."""
+        line = {"left": p.x, "right": p.x + p.width, "back": p.y, "front": p.y + p.depth}[side]
+        left = [span]
+        for o in pieces(place.plan):
+            if o is p:
+                continue
+            if side in ("left", "right"):
+                beyond, lo, hi = (o.x + o.width if side == "left" else o.x), o.y, o.y + o.depth
+            else:
+                beyond, lo, hi = (o.y + o.depth if side == "back" else o.y), o.x, o.x + o.width
+            if abs(beyond - line) < 1e-6:
+                left = [(u, v) for a, b in left for u, v in ((a, min(b, lo)), (max(a, hi), b)) if v - u > 1e-6]
+        return not left
 
     def open(self, p, side, span, heights):
         """Whether an opening with no door, an open wall, leaves no wall on a piece's side along span and over heights."""
@@ -348,18 +374,19 @@ class ClosetTest(HouseTestCase):
     def test_sits_in_its_room_with_its_doors_facing_in_or_set_into_its_wall(self):
         for h in self.each():
             for closet in h.details.closets:
-                p = h.piece(closet)
+                place, parts = h.place(closet.room), h.parts(closet)
                 x, y, width, depth = h.absolute(closet)
-                self.assertTrue(p.x - 1e-9 <= x and x + width <= p.x + p.width + 1e-9, closet.name)
-                self.assertTrue(p.y - 1e-9 <= y and y + depth <= p.y + p.depth + 1e-9, closet.name)
-                on_wall = {
-                    "left": abs(x - p.x) < 1e-6,
-                    "right": abs(x + width - p.x - p.width) < 1e-6,
-                    "back": abs(y - p.y) < 1e-6,
-                    "front": abs(y + depth - p.y - p.depth) < 1e-6,
-                }
+                # In one of its room's pieces, or across them.
+                self.assertAlmostEqual(sum(w * d for _, (_, _, w, d) in parts), width * depth, msg=closet.name)
+                # Its doors' side on a wall of its room: a piece's side with no other piece of it carrying on past.
+                edge = {"left": x, "right": x + width, "back": y, "front": y + depth}[closet.door]
+                on_wall = False
+                for p, (px, py, pw, pd) in parts:
+                    line = {"left": p.x, "right": p.x + p.width, "back": p.y, "front": p.y + p.depth}[closet.door]
+                    span = (py, py + pd) if closet.door in ("left", "right") else (px, px + pw)
+                    on_wall |= abs(edge - line) < 1e-6 and not h.adjoined(place, p, closet.door, span)
                 set_in = any(closet_door(h, closet, o) for o in h.openings)
-                self.assertFalse(on_wall[closet.door] and not set_in, closet.name)
+                self.assertFalse(on_wall and not set_in, closet.name)
 
     def test_closets_do_not_overlap_or_cover_a_door_or_window(self):
         for h in self.each():
@@ -383,17 +410,21 @@ class FixtureTest(HouseTestCase):
     def test_fits_in_its_room_under_the_ceiling(self):
         for h in self.each():
             for fixture in (f for f in h.details.fixtures if f.room):
-                p, place = h.piece(fixture), h.place(fixture.room)
-                x, y, width, depth = h.absolute(fixture)
-                heights = (p.elevation + fixture.lift, p.elevation + fixture.lift + max(fixture.height, 0.1))
-                # Clear of its room's walls, but right at the face of one it stands against.
-                clear = lambda side, span: h.walls.inward(p, side) if side in fixture.against else h.clearance(place, p, side, span, heights)
-                left, right = (clear(side, (y, y + depth)) for side in ("left", "right"))
-                back, front = (clear(side, (x, x + width)) for side in ("back", "front"))
-                self.assertTrue(p.x + left <= x + 1e-9 and x + width <= p.x + p.width - right + 1e-9, fixture.name)
-                self.assertTrue(p.y + back <= y + 1e-9 and y + depth <= p.y + p.depth - front + 1e-9, fixture.name)
-                lowest = min(ceiling(p, x + u * width, y + v * depth) for u in (0, 1) for v in (0, 1))
-                self.assertLessEqual(fixture.lift + fixture.height, lowest, fixture.name)
+                place, parts = h.place(fixture.room), h.parts(fixture)
+                _, _, width, depth = h.absolute(fixture)
+                # In one of its room's pieces, or across them, each part clear of its piece's walls, but right at the
+                # face of one it stands against.
+                self.assertAlmostEqual(sum(w * d for _, (_, _, w, d) in parts), width * depth, msg=fixture.name)
+                for p, (x, y, w, d) in parts:
+                    heights = (p.elevation + fixture.lift, p.elevation + fixture.lift + max(fixture.height, 0.1))
+                    flush = lambda side, span: side in fixture.against and not h.adjoined(place, p, side, span)
+                    clear = lambda side, span: h.walls.inward(p, side) if flush(side, span) else h.clearance(place, p, side, span, heights)
+                    left, right = (clear(side, (y, y + d)) for side in ("left", "right"))
+                    back, front = (clear(side, (x, x + w)) for side in ("back", "front"))
+                    self.assertTrue(p.x + left <= x + 1e-9 and x + w <= p.x + p.width - right + 1e-9, fixture.name)
+                    self.assertTrue(p.y + back <= y + 1e-9 and y + d <= p.y + p.depth - front + 1e-9, fixture.name)
+                    lowest = min(ceiling(p, x + u * w, y + v * d) for u in (0, 1) for v in (0, 1))
+                    self.assertLessEqual(fixture.lift + fixture.height, lowest, fixture.name)
 
     def test_fireplaces_and_half_walls_stand_against_a_wall(self):
         for h in self.each():
