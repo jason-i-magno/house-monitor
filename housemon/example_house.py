@@ -15,7 +15,7 @@ colors, and the garage, bathroom and outside share the gray.
 """
 
 from housemon.details import (
-    Closet, Details, Fence, Finish, Fixture, Ground, Opening, Roof, RoofVent, Shed, Sprinklers, Steps, Tree,
+    Closet, Details, Fence, Finish, Fixture, Ground, Head, Opening, Roof, RoofVent, Shed, Sprinklers, Steps, Tree,
 )
 from housemon.readings import Area, Plan, Sensor
 from housemon.simulator import SimulatedRoom
@@ -189,8 +189,14 @@ DETAILS = Details(
         Ground("Gravel path", "walk", -12, -10, 12, 30, paving="gravel", outline=((-12, 20), (-8, 20), (0, -6), (0, -10))),
     ),
     trees=(
-        Tree("Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4, crown="vase", fork=7, bark="gray"),
-        Tree("Backyard tree", "deciduous", 8, -30, height=28, spread=30, crown="spreading", leaves="dark", stems=3),
+        Tree(
+            "Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4, crown="vase", fork=7, fall="orange",
+            flowers="white", bark="gray",
+        ),
+        Tree(
+            "Backyard tree", "deciduous", 8, -30, height=28, spread=30, crown="spreading", leaves="dark", fall="red",
+            stems=3,
+        ),
         Tree("Birch", "deciduous", 66, 8, height=26, spread=12, crown="pyramid", leaves="light", stems=3, bark="white"),
         Tree("Spruce", "evergreen", 62, -22, height=24, spread=12),
     ),
@@ -206,11 +212,27 @@ DETAILS = Details(
         Steps("Garage steps", 36.4, 16, 2, 3, bottom=-1, top=0, up="left", room="Garage"),
     ),
     sprinklers=(
-        Sprinklers("Zone 1 (front lawn)", ((-19.5, 20.5), (-19.5, 59.5), (4, 59.5), (27.5, 59.5), (25.5, 31.5), (-0.5, 31.5))),
+        # Each throwing over the lawn or the bed it's in, clear of the house and in the lot: those along an edge a half
+        # circle, those in a corner a quarter, and so on.
+        Sprinklers(
+            "Zone 1 (front lawn)",
+            (
+                Head(-19.5, 20.5, arc=(25, 90)), Head(-19.5, 59.5, arc=(270, 360)), Head(4, 59.5, arc=(180, 360)),
+                Head(27.5, 59.5, arc=(180, 360)), Head(25.5, 31.5, arc=(0, 180)), Head(-0.5, 31.5, arc=(0, 180), radius=19),
+            ),
+            radius=23,
+        ),
         Sprinklers(
             "Zone 2 (back lawn)",
-            ((-19.5, -12), (17, -12), (47, -12), (74.5, -12), (-19.5, -44.5), (17, -44.5), (47, -44.5), (74.5, -44.5)),
+            (
+                Head(-19.5, -12, arc=(270, 20)), Head(17, -12, arc=(180, 360)), Head(47, -12, arc=(180, 330)),
+                Head(74.5, -12, arc=(150, 270)), Head(-19.5, -44.5, arc=(0, 90)), Head(17, -44.5, arc=(0, 180)),
+                Head(47, -44.5, arc=(30, 180)), Head(74.5, -44.5, arc=(90, 180)),
+            ),
         ),
-        Sprinklers("Zone 3 (flower bed)", ((3, 29.5), (12, 29.5), (24.5, 29.5)), kind="spray"),
+        Sprinklers(
+            "Zone 3 (flower bed)", (Head(3, 29.5, arc=(0, 180)), Head(12, 29.5, arc=(0, 180)), Head(24.5, 29.5, arc=(0, 180))),
+            kind="spray", radius=8,
+        ),
     ),
 )

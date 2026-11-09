@@ -26,11 +26,17 @@ const MODEL_ROOF_DEPTH = 0.6; // feet from a roof's eaves down to its underside,
 const MODEL_SIZE = 720; // px at most across the scene's bounding sphere
 const MODEL_PAD = 16;
 const MODEL_ZOOM_MAX = 6; // times the house's framing
+const MODEL_THROW = { rotor: 30, spray: 12 }; // feet a sprinkler head throws, unless it or its zone says, as details.THROWS
+const MODEL_COVERAGE_CELL = 0.1; // feet across a cell of the sprinklers' coverage grid, at the finest
+const MODEL_COVERAGE_CELLS = 1024; // cells at most along a side of the lot
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
+  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
+  "coverage-0", "coverage-1", "coverage-2", "coverage-3",
 ];
+// The sprinklers' coverage: how many heads reach a spot, dry for none, up to 3 or more.
+const MODEL_COVERAGE_KEY = ["Dry", "1 head", "2 heads", "3 or more"];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
@@ -263,16 +269,32 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     });
     return { ...f, item, gates };
   });
-  // A sprinkler zone is one thing, all its heads, so focusing it shows them all, centered on its head nearest their
-  // middle, as theirs may be far from any. Each head stands in the lawn or the bed it's in.
+  // A sprinkler zone's heads are each a part, and the zone one more with no faces of its own: focusing it lights up
+  // all its heads, their ids a run (`ids`), centered on its head nearest their middle, as theirs may be far from any.
+  // Each head stands in the lawn or the bed it's in, and throws over its arc (`arc`, its first direction and how far
+  // round from it, in degrees, null for all the way round) as far as it says, else as its zone's do, else as far as
+  // its kind does, by guess; `water` is what a zone or head waters, for the coverage shown while it's focused.
   const sprinklers = details.sprinklers.map((z, i) => {
-    const heads = z.heads.map(([x, y]) => [x, y, groundTop(details, x, y)]);
+    const heads = z.heads.map((h) => ({
+      x: h.x, y: h.y, top: groundTop(details, h.x, h.y),
+      arc: h.arc && [h.arc[0], (((h.arc[1] - h.arc[0]) % 360) + 360) % 360],
+      radius: h.radius ?? z.radius ?? MODEL_THROW[z.kind],
+      guessed: h.radius == null && z.radius == null && !details.example,
+    }));
     const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
-    const [xs, ys, zs] = [0, 1, 2].map((k) => heads.map((h) => h[k]));
+    const [xs, ys, zs] = ["x", "y", "top"].map((k) => heads.map((h) => h[k]));
     const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, grade, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
     const [mx, my] = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2];
-    const [hx, hy, hz] = heads.reduce((a, b) => (Math.hypot(b[0] - mx, b[1] - my) < Math.hypot(a[0] - mx, a[1] - my) ? b : a));
-    return { ...z, heads, item: outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [hx, hy, hz + 0.1] }) };
+    const middle = heads.reduce((a, b) => (Math.hypot(b.x - mx, b.y - my) < Math.hypot(a.x - mx, a.y - my) ? b : a));
+    const item = outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [middle.x, middle.y, middle.top + 0.1], water: { heads, of: z.name } });
+    const headItems = heads.map((h, k) => {
+      const head = { name: `Head ${k + 1}`, known: z.known };
+      const water = { heads: [h], of: `${head.name} of ${z.name}` };
+      const box = [h.x - 0.3, h.y - 0.3, grade, h.x + 0.3, h.y + 0.3, h.top + 0.2];
+      return outside(`sprinkler:${i}:${k}`, head, z.kind === "spray" ? "Spray head" : "Rotor", "Sprinklers", box, { where: z.name, center: [h.x, h.y, h.top + 0.1], water });
+    });
+    item.ids = [headItems[0].id, headItems.at(-1).id];
+    return { ...z, heads, item, headItems };
   });
   const roofs = details.roofs.map((r, i) => ({ ...r, item: add({ key: `roof:${i}`, name: r.name, kind: "Roof", group: "Roof", where: "Roof", known: r.known, level: null, whole: true, bbox: [r.x, r.y, r.eave - MODEL_ROOF_DEPTH, r.x + r.width, r.y + r.depth, r.peak] }) }));
   const roofVents = details.roof_vents.flatMap((v, i) => {
@@ -345,9 +367,10 @@ function modelCenter(item, mode) {
 // --- Geometry: triangles, each vertex its position, normal, color and the id of what it's part of
 
 function modelMesh() {
-  const data = [];
-  // A flat polygon, its normal (Newell's) pointing away from the center of the solid it's a face of.
-  const face = (points, color, id, center) => {
+  const [data, wet] = [[], []];
+  // A flat polygon, its normal (Newell's) pointing away from the center of the solid it's a face of. The lawn's
+  // and planted beds' tops are `watered`, kept apart to come last, so they can be drawn by the sprinklers' coverage.
+  const face = (points, color, id, center, watered = false) => {
     let [nx, ny, nz] = [0, 0, 0];
     points.forEach((p, i) => {
       const q = points[(i + 1) % points.length];
@@ -360,8 +383,9 @@ function modelMesh() {
     const mid = [0, 1, 2].map((k) => points.reduce((sum, p) => sum + p[k], 0) / points.length);
     const sign = (mid[0] - center[0]) * nx + (mid[1] - center[1]) * ny + (mid[2] - center[2]) * nz < 0 ? -1 : 1;
     const n = [nx, ny, nz].map((v) => (sign * v) / length);
+    const into = watered ? wet : data;
     for (let i = 1; i < points.length - 1; i++) {
-      for (const p of [points[0], points[i], points[i + 1]]) data.push(p[0], p[1], p[2], n[0], n[1], n[2], color[0], color[1], color[2], id);
+      for (const p of [points[0], points[i], points[i + 1]]) into.push(p[0], p[1], p[2], n[0], n[1], n[2], color[0], color[1], color[2], id);
     }
   };
   // A convex solid from its faces, each [points, color].
@@ -370,7 +394,7 @@ function modelMesh() {
     const center = [0, 1, 2].map((k) => all.reduce((sum, p) => sum + p[k], 0) / all.length);
     for (const [points, color] of faces) face(points, color, id, center);
   };
-  return { data, face, solid };
+  return { data, wet, face, solid };
 }
 
 // Colors for a six-sided solid's faces: one for all, or {top, bottom, sides: [four]}.
@@ -832,19 +856,19 @@ function earth(mesh, scene, shows) {
     const [x, y] = [(xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2];
     const covering = scene.pieces.filter(([, p]) => inside(p, x, y));
     const shown = covering.filter(([q]) => shows(q.item));
-    const cell = { shape, top: grade, color: C.lawn, id: scene.lawn.id };
-    if (shown.length) return { ...cell, top: Math.min(grade, ...shown.map(([, p]) => p.base)), color: C.soil, id: shown[0][0].item.id };
-    if (covering.length) return { ...cell, color: C.slab, id: covering[0][0].item.id };
+    const cell = { shape, top: grade, color: C.lawn, id: scene.lawn.id, wet: true };
+    if (shown.length) return { ...cell, top: Math.min(grade, ...shown.map(([, p]) => p.base)), color: C.soil, id: shown[0][0].item.id, wet: false };
+    if (covering.length) return { ...cell, color: C.slab, id: covering[0][0].item.id, wet: false };
     const ground = scene.grounds.find((g) => !g.outline && inside(g, x, y));
     if (!ground) return cell;
     const cut = (ground.cutouts ?? []).some(([cx, cy, w, d]) => inside({ x: cx, y: cy, width: w, depth: d }, x, y));
-    return { ...cell, color: cut ? C.dirt : paving(C, ground), id: ground.item.id };
+    return { ...cell, color: cut ? C.dirt : paving(C, ground), id: ground.item.id, wet: !cut && watered(ground) };
   }));
   cells.forEach((column, i) => column.forEach((cell, j) => {
     if (!cell) return;
     const [x0, x1, y0, y1, z] = [xs[i], xs[i + 1], ys[j], ys[j + 1], cell.top];
     const center = [(x0 + x1) / 2, (y0 + y1) / 2, z - 1];
-    for (const triangle of triangulate(cell.shape)) mesh.face(triangle.map(([x, y]) => [x, y, z]), cell.color, cell.id, center);
+    for (const triangle of triangulate(cell.shape)) mesh.face(triangle.map(([x, y]) => [x, y, z]), cell.color, cell.id, center, cell.wet);
     // Steps down to lower neighbors, under the house, a hair inside this cell, so a wall on the edge covers them.
     const [a0, a1, b0, b1] = [x0 + 0.005, x1 - 0.005, y0 + 0.005, y1 - 0.005];
     const neighbors = [[i - 1, j, [[a0, y0], [a0, y1]]], [i + 1, j, [[a1, y0], [a1, y1]]], [i, j - 1, [[x0, b0], [x1, b0]]], [i, j + 1, [[x0, b1], [x1, b1]]]];
@@ -856,7 +880,7 @@ function earth(mesh, scene, shows) {
   // A flat ground cut to an outline lies just over the lawn.
   for (const g of scene.grounds.filter((g) => g.outline && !(g.height > 0))) {
     const center = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
-    for (const triangle of triangulate(g.outline)) mesh.face(triangle.map(([x, y]) => [x, y, grade + 0.03]), paving(C, g), g.item.id, center);
+    for (const triangle of triangulate(g.outline)) mesh.face(triangle.map(([x, y]) => [x, y, grade + 0.03]), paving(C, g), g.item.id, center, watered(g));
   }
   // The lot's sides, down to its bottom.
   const sign = Math.sign(polygonArea(lot));
@@ -926,7 +950,24 @@ const MODEL_CROWNS = {
   pyramid: { base: 0.25, widest: 0.18, below: 0.5, above: 1.25, taper: -0.3 },
 };
 const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dark" };
+const MODEL_FALLS = { yellow: "fall-yellow", orange: "fall-orange", red: "fall-red" };
+const MODEL_FLOWERS = { white: "flowers-white", pink: "flowers-pink" };
 const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
+const MODEL_SEASONS = ["spring", "summer", "fall", "winter"];
+
+// The season the trees show on a date, in the northern hemisphere: spring from March, summer from June, fall from
+// September and winter from December.
+function seasonOf(date) {
+  return MODEL_SEASONS[Math.floor(((date.getMonth() + 10) % 12) / 3)];
+}
+
+// Where a bare tree's branches reach: directions spread evenly over a ball (a Fibonacci sphere's), but for its
+// underside, as branches don't hang straight down.
+const MODEL_TIPS = Array.from({ length: 32 }, (_, i) => {
+  const z = 1 - (2 * i + 1) / 32;
+  const a = i * Math.PI * (3 - Math.sqrt(5));
+  return [Math.sqrt(1 - z * z) * Math.cos(a), Math.sqrt(1 - z * z) * Math.sin(a), z];
+}).filter(([, , z]) => z > -0.5);
 const MODEL_LUMP = 0.22; // how far a crown's hollows sink between its lumps, as a share of its size
 const MODEL_CROWN_GAP = 1; // feet a crown keeps clear of the house and sheds
 
@@ -965,7 +1006,8 @@ function clearOfBuildings(scene, [cx, cy], reach, gap) {
   };
 }
 
-function tree(mesh, scene, t) {
+// A tree as it is in a season: a deciduous one in leaf, or in winter bare; an evergreen the same all year.
+function tree(mesh, scene, t, season = "summer") {
   const [C, grade, id] = [scene.colors, scene.details.grade, t.item.id];
   const bark = C[MODEL_BARKS[t.bark]] ?? C.trunk;
   const [R, H, stems, fork] = [t.spread / 2, t.height, t.stems ?? 1, t.fork ?? 0];
@@ -1029,7 +1071,9 @@ function tree(mesh, scene, t) {
 
   // The stems, splayed out from the foot if there are several, up to where each forks, or on into the crown
   // under its middle, and each one's limbs up from its fork into the crown, ending further from the buildings
-  // than its leaves.
+  // than its leaves. Bare, a stem running on into the crown shows, on up as a leader.
+  const bare = season === "winter";
+  const ends = []; // where a bare tree's branches can start, and how thick it is there: [point, radius]
   const clearer = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP + 1.5);
   const turn = random() * 2 * Math.PI;
   const top = fork > 0 ? grade + fork : z0 + 0.4 * (z1 - z0);
@@ -1040,20 +1084,88 @@ function tree(mesh, scene, t) {
     const splay = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
     const head = [...(fork > 0 ? out : under)(splay), top];
     limb(mesh, [...out(stems > 1 ? stem * 0.8 : 0), grade - 0.1 - 0.01 * k], head, stem, stem * (fork > 0 ? 0.8 : 0.45), bark, id, 8);
-    if (!(fork > 0)) continue;
+    if (!(fork > 0)) {
+      if (!bare) continue;
+      const lead = clearer([...under(splay * 0.5), middle + 0.45 * (z1 - middle)]);
+      limb(mesh, [head[0], head[1], head[2] - 0.3], lead, stem * 0.45, stem * 0.2, bark, id, 6); // its foot in the stem's top
+      ends.push([head, stem * 0.45], [lead, stem * 0.2]);
+      continue;
+    }
     for (let j = 0; j < 3; j++) {
       const z = z0 + (0.3 + 0.15 * random()) * (z1 - z0);
       const a = angle + (2 * Math.PI * j) / 3 + (random() - 0.5) * 0.8;
-      limb(mesh, head, clearer([...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z]), stem * 0.6, stem * 0.25, bark, id, 6);
+      const end = clearer([...under(Math.max(splay, (0.45 + 0.2 * random()) * inside(z)), a), z]);
+      limb(mesh, head, end, stem * 0.6, stem * 0.25, bark, id, 6);
+      ends.push([end, stem * 0.25]);
     }
   }
 
-  // Its facets a little lighter or darker in turn.
+  // Bare, in winter: a branch out to each of MODEL_TIPS, just inside where the crown's edge would be, so the tree
+  // keeps its crown's outline, from the nearest of its limbs' ends or leaders, arching up a little, with twigs off
+  // it; all of them ending further from the buildings than its leaves would, and left off where that would cut one
+  // back by more than half, so a tree beside a wall is bare on that side.
+  if (bare) {
+    const far = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    const inward = (p, f) => p.map((c, k) => center[k] + f * (c - center[k]));
+    const unit = (v) => v.map((c) => c / Math.hypot(...v));
+    const reach = (p) => Math.hypot(p[0] - cx, p[1] - cy);
+    const out = (p) => {
+      const kept = clearer(p);
+      return reach(kept) < 0.5 * reach(p) ? null : kept;
+    };
+    for (const v of MODEL_TIPS) {
+      const tip = out(inward(place(v), 0.92));
+      if (!tip) continue;
+      const [from, r] = ends.reduce((best, e) => (far(e[0], tip) < far(best[0], tip) ? e : best));
+      const bend = [(from[0] + tip[0]) / 2, (from[1] + tip[1]) / 2, (from[2] + tip[2]) / 2 + 0.08 * far(from, tip)];
+      const r0 = Math.min(r, stem * 0.3);
+      limb(mesh, from, bend, r0, r0 * 0.6, bark, id, 5);
+      limb(mesh, bend, tip, r0 * 0.6, 0.05, bark, id, 5);
+      // Its twigs, more on a bigger tree, from its bend or halfway on from there.
+      const along = bend.map((c, k) => c + 0.5 * (tip[k] - c));
+      for (let j = 0; j < Math.max(1, Math.min(4, Math.round(R / 5))); j++) {
+        const twig = out(inward(place(unit(v.map((c) => c + (random() - 0.5) * 0.7))), 0.95));
+        const [start, width] = j % 2 ? [along, r0 * 0.2] : [bend, r0 * 0.35];
+        if (twig) limb(mesh, start, twig, Math.max(width, 0.045), 0.02, bark, id, 3); // three-sided: no two sides parallel
+      }
+    }
+    return;
+  }
+
+  // In leaf, its leaves in their season, its facets a little lighter or darker in turn: fresher in spring, half a
+  // new leaf's green, and in the fall its fall color, but for a few facets not yet turned. In bloom, every third
+  // facet is paled toward its flowers' color, thick with them.
   const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
+  const fall = C[MODEL_FALLS[t.fall]] ?? C["fall-yellow"];
+  const flower = C[MODEL_FLOWERS[t.flowers]] ?? C["flowers-white"];
+  const blooming = Boolean(t.flowers) && season === (t.blooms ?? "spring");
+  const mix = (a, b, f) => a.map((c, k) => c + f * (b[k] - c));
+  const color = (i) => {
+    const green = season === "spring" ? mix(leaves, C["leaves-spring"], 0.5) : leaves;
+    if (blooming && i % 3 === 1) return mix(green, flower, 0.35);
+    if (season === "fall") return i % 7 === 3 ? mix(fall, leaves, 0.4) : fall;
+    return green;
+  };
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
-    mesh.face(triangle.map(place), leaves.map((c) => Math.min(1, c * shade)), id, center);
+    mesh.face(triangle.map(place), color(i).map((c) => Math.min(1, c * shade)), id, center);
   });
+
+  // And its flowers: upright clusters, squat cones of a few sizes standing out of its leaves, spread over the crown
+  // from its top to a little under its middle (a Fibonacci sphere's band, each moved a little at random, so they
+  // don't line up), more on a bigger crown.
+  if (blooming) {
+    const count = Math.min(400, Math.max(30, Math.round(R * (z1 - z0) * 0.5)));
+    for (let i = 0; i < count; i++) {
+      const vz = Math.max(-0.3, Math.min(1, 1 - (1.3 * (i + 0.2 + 0.6 * random())) / count));
+      const a = i * Math.PI * (3 - Math.sqrt(5)) + (random() - 0.5) * 1.2;
+      const p = place([Math.sqrt(1 - vz * vz) * Math.cos(a), Math.sqrt(1 - vz * vz) * Math.sin(a), vz]);
+      const out = Math.hypot(p[0] - cx, p[1] - cy, p[2] - middle);
+      const q = p.map((c, k) => c - (0.35 * (c - center[k])) / Math.max(out, 1e-6)); // a little way in
+      const size = 0.7 + 0.6 * random();
+      round(mesh, [q[0], q[1]], 0.6 * size, q[2] - 0.2, q[2] + 0.9 * size, flower, id, true, 6);
+    }
+  }
 }
 
 // A section of roof, solid from its underside: a gable's five-sided profile,
@@ -1092,6 +1204,11 @@ function roofSection(mesh, scene, r) {
 // What a porch, patio, deck, walk, bed or flight of steps is paved with.
 function paving(C, g) {
   return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck, gravel: C.gravel, mulch: C.mulch, carpet: C.carpet }[g.paving] ?? C.concrete;
+}
+
+// Whether sprinklers water a ground, as they do the lawn: a planted bed, in mulch, not one of gravel.
+function watered(g) {
+  return g.kind === "bed" && g.paving === "mulch";
 }
 
 // A roof section cut to its outline: its slope over the outline, a flat
@@ -1175,7 +1292,7 @@ function raisedGround(mesh, scene, g) {
   const sign = Math.sign(polygonArea(shape));
   const fill = g.edging ? top - 0.1 : top;
   const below = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
-  for (const triangle of triangulate(shape)) mesh.face(triangle.map(([x, y]) => [x, y, fill]), paving(C, g), id, below);
+  for (const triangle of triangulate(shape)) mesh.face(triangle.map(([x, y]) => [x, y, fill]), paving(C, g), id, below, watered(g));
   shape.forEach((a, i) => {
     const [b, c] = [shape[(i + 1) % shape.length], shape[(i + 2) % shape.length]];
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -1416,7 +1533,8 @@ function fixture(mesh, C, f) {
   }
 }
 
-function buildModel(scene, mode, view, trees = true) {
+// The scene's triangles, cut away to `mode` and seen along `view`, its trees shown or not and in a season.
+function buildModel(scene, mode, view, { trees = true, season = "summer" } = {}) {
   const mesh = modelMesh();
   const C = scene.colors;
   const shows = modelShows(scene, mode, trees);
@@ -1435,14 +1553,18 @@ function buildModel(scene, mode, view, trees = true) {
   for (const f of scene.fences) fence(mesh, scene, f);
   // Sprinkler heads, at rest, their caps just over the ground, sunk into it so they're not in its plane.
   for (const z of scene.sprinklers) {
-    for (const [x, y, top] of z.heads) round(mesh, [x, y], z.kind === "spray" ? 0.17 : 0.25, top - 0.1, top + 0.1, C.black, z.item.id, false, 10);
+    z.heads.forEach((h, k) => round(mesh, [h.x, h.y], z.kind === "spray" ? 0.17 : 0.25, h.top - 0.1, h.top + 0.1, C.black, z.headItems[k].id, false, 10));
   }
-  for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t);
+  for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t, season);
   if (mode === "outside") {
     for (const r of scene.roofs) roofSection(mesh, scene, r);
     for (const v of scene.roofVents) box(mesh, [v.x - 0.2, v.y - 0.2, v.z - 0.5], [v.x + 0.2, v.y + 0.2, v.z + 1], C.black, v.item.id);
   }
-  return new Float32Array(mesh.data);
+  // The triangles' data, ten numbers a vertex, the lawn's and planted beds' tops last, from vertex `wet` on.
+  const data = new Float32Array(mesh.data.length + mesh.wet.length);
+  data.set(mesh.data);
+  data.set(mesh.wet, mesh.data.length);
+  return { data, wet: mesh.data.length / 10 };
 }
 
 // --- WebGL
@@ -1454,25 +1576,51 @@ attribute vec3 color;
 attribute float id;
 uniform mat4 matrix;
 uniform vec3 light;
-uniform float focus;
+uniform vec2 focus; // the ids lit up, first to last
 uniform vec3 focusColor;
 uniform float picking;
+uniform vec4 coverageBox;
 varying vec3 shade;
+varying vec2 spot;
+varying float lit;
+varying float focused;
 void main() {
   gl_Position = matrix * vec4(position, 1.0);
+  spot = (position.xy - coverageBox.xy) * coverageBox.zw;
+  focused = id > focus.x - 0.5 && id < focus.y + 0.5 ? 1.0 : 0.0;
+  lit = 0.62 + 0.45 * max(dot(normal, light), 0.0);
   if (picking > 0.5) {
     shade = vec3(mod(id, 256.0), mod(floor(id / 256.0), 256.0), floor(id / 65536.0)) / 255.0;
   } else {
-    vec3 base = abs(id - focus) < 0.5 ? mix(color, focusColor, 0.55) : color;
-    shade = base * (0.62 + 0.45 * max(dot(normal, light), 0.0));
+    shade = (focused > 0.5 ? mix(color, focusColor, 0.55) : color) * lit;
   }
 }`;
 
+// With `coverage` on, a face takes its color from how many sprinkler heads reach the spot, from the grid of counts
+// in the `counts` texture, instead of its own. focusTint is focusColor again: a uniform both shaders share must
+// have one precision, and this one's may be lower than the vertex shader's.
 const MODEL_FRAGMENT = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
+uniform float coverage;
+uniform sampler2D counts;
+uniform vec3 coverageColors[4];
+uniform vec3 focusTint;
 varying vec3 shade;
+varying vec2 spot;
+varying float lit;
+varying float focused;
 void main() {
-  gl_FragColor = vec4(min(shade, vec3(1.0)), 1.0);
+  vec3 color = shade;
+  if (coverage > 0.5) {
+    float n = floor(texture2D(counts, spot).r * 255.0 + 0.5);
+    vec3 base = n < 0.5 ? coverageColors[0] : n < 1.5 ? coverageColors[1] : n < 2.5 ? coverageColors[2] : coverageColors[3];
+    color = (focused > 0.5 ? mix(base, focusTint, 0.55) : base) * lit;
+  }
+  gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
 }`;
 
 function modelGL(canvas) {
@@ -1497,9 +1645,18 @@ function modelGL(canvas) {
     gl.enableVertexAttribArray(at);
     gl.vertexAttribPointer(at, size, gl.FLOAT, false, 40, offset * 4);
   });
-  const uniforms = Object.fromEntries(["matrix", "light", "focus", "focusColor", "picking"].map((u) => [u, gl.getUniformLocation(program, u)]));
+  const names = ["matrix", "light", "focus", "focusColor", "picking", "coverage", "coverageBox", "coverageColors", "focusTint", "counts"];
+  const uniforms = Object.fromEntries(names.map((u) => [u, gl.getUniformLocation(program, u)]));
   gl.enable(gl.DEPTH_TEST);
-  return { gl, uniforms, count: 0, built: null, pick: null };
+  // The sprinklers' coverage grid, a count a cell, filled in when it's first shown.
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, new Uint8Array(1));
+  for (const [name, value] of [["MIN_FILTER", "NEAREST"], ["MAG_FILTER", "NEAREST"], ["WRAP_S", "CLAMP_TO_EDGE"], ["WRAP_T", "CLAMP_TO_EDGE"]]) {
+    gl.texParameteri(gl.TEXTURE_2D, gl[`TEXTURE_${name}`], gl[value]);
+  }
+  gl.uniform1i(uniforms.counts, 0);
+  return { gl, uniforms, count: 0, wet: 0, built: null, pick: null, counts: { texture, scene: null, key: null } };
 }
 
 // The camera for the 3D view's turn and tilt, centered on `target`: the
@@ -1534,16 +1691,81 @@ function modelCamera(scene, width, height, scale, target) {
   };
 }
 
+// Draw the scene, the parts with ids in `focus`, first to last, lit up, or its ids for picking; with the
+// sprinklers' coverage shown, the lawn and planted beds, last in the buffer, by how many heads reach each spot.
 function renderModel(m, camera, focus, picking) {
   const { gl, uniforms: u } = m;
   gl.uniformMatrix4fv(u.matrix, false, camera.matrix);
   gl.uniform3fv(u.light, camera.light);
-  gl.uniform1f(u.focus, focus ?? -1);
+  gl.uniform2fv(u.focus, focus ?? [-1, -1]);
   gl.uniform3fv(u.focusColor, m.focusColor);
+  gl.uniform3fv(u.focusTint, m.focusColor);
+  gl.uniform3fv(u.coverageColors, m.coverageColors);
   gl.uniform1f(u.picking, picking ? 1 : 0);
+  gl.uniform1f(u.coverage, 0);
+  // The grid, bound every time: never the picking buffer's texture, which a pick draws into.
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, m.counts.texture);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.drawArrays(gl.TRIANGLES, 0, m.count);
+  const plain = m.coverage && !picking ? m.wet : m.count;
+  gl.drawArrays(gl.TRIANGLES, 0, plain);
+  if (plain < m.count) {
+    gl.uniform1f(u.coverage, 1);
+    gl.drawArrays(gl.TRIANGLES, plain, m.count - plain);
+  }
+}
+
+// How many sprinkler heads reach each spot of the lot, or only those of a zone or head: a grid of counts, a cell
+// MODEL_COVERAGE_CELL ft across, or wider where the lot is too big for MODEL_COVERAGE_CELLS of them along a side,
+// each counting the heads whose throw, out to its radius and within its arc, reaches its middle.
+function modelCoverage(scene, part = null) {
+  const [x0, y0, , x1, y1] = scene.lawn.bbox;
+  const cell = Math.max(MODEL_COVERAGE_CELL, (x1 - x0) / MODEL_COVERAGE_CELLS, (y1 - y0) / MODEL_COVERAGE_CELLS);
+  const [w, h] = [Math.max(1, Math.ceil((x1 - x0) / cell)), Math.max(1, Math.ceil((y1 - y0) / cell))];
+  const counts = new Uint8Array(w * h);
+  for (const { heads } of part ? [part.water] : scene.sprinklers.map((z) => z.item.water)) {
+    for (const { x, y, radius, arc } of heads) {
+      const within = modelArc(arc);
+      // Row by row, the cells whose middles are within its throw.
+      const [j0, j1] = [Math.max(0, Math.ceil((y - radius - y0) / cell - 0.5)), Math.min(h - 1, Math.floor((y + radius - y0) / cell - 0.5))];
+      for (let j = j0; j <= j1; j++) {
+        const dy = y0 + (j + 0.5) * cell - y;
+        const half = Math.sqrt(Math.max(0, radius * radius - dy * dy));
+        const [i0, i1] = [Math.max(0, Math.ceil((x - half - x0) / cell - 0.5)), Math.min(w - 1, Math.floor((x + half - x0) / cell - 0.5))];
+        for (let i = i0; i <= i1; i++) {
+          if (within(x0 + (i + 0.5) * cell - x, dy)) counts[j * w + i] = Math.min(255, counts[j * w + i] + 1);
+        }
+      }
+    }
+  }
+  return { box: [x0, y0, 1 / (w * cell), 1 / (h * cell)], w, h, counts };
+}
+
+// Whether a spot dx, dy from a sprinkler head is within its arc, [first direction, how far round] the way the angles
+// count, from the right toward the front: past its first end and short of its last, by which side of each the spot
+// is on, or for an arc of more than half a turn, not within the rest of the way round.
+function modelArc(arc) {
+  if (!arc) return () => true;
+  const [a, b] = [arc[0], arc[0] + arc[1]].map((d) => (d * Math.PI) / 180);
+  const [sx, sy, ex, ey] = [Math.cos(a), Math.sin(a), Math.cos(b), Math.sin(b)];
+  if (arc[1] <= 180) return (dx, dy) => sx * dy - sy * dx >= 0 && dx * ey - dy * ex >= 0;
+  return (dx, dy) => !(ex * dy - ey * dx > 0 && dx * sy - dy * sx > 0);
+}
+
+// Show the coverage of every zone, or of the zone or head focused: its grid, worked out once a scene, in the texture.
+function useCoverage(m, scene, part) {
+  const key = part?.key ?? "all";
+  if (m.counts.scene === scene && m.counts.key === key) return;
+  scene.coverage ??= new Map();
+  if (!scene.coverage.has(key)) scene.coverage.set(key, modelCoverage(scene, part));
+  const { box, w, h, counts } = scene.coverage.get(key);
+  const gl = m.gl;
+  gl.bindTexture(gl.TEXTURE_2D, m.counts.texture);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // rows of one byte a cell, any width
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, counts);
+  gl.uniform4fv(m.uniforms.coverageBox, box);
+  Object.assign(m.counts, { scene, key });
 }
 
 // The id of what's drawn at a pixel, from a render of ids to a buffer of their own.
@@ -1587,6 +1809,7 @@ function drawModel(width, fill = null) {
   map.note.hidden = !note;
   map.canvas.style.display = note ? "none" : "";
   renderModelCuts(scene);
+  renderModelCoverage(scene, !note);
   if (note) return { height: 0, keys: [], anchorOf: () => null, highlight() {}, pick: () => null };
 
   const m = map.gl;
@@ -1605,15 +1828,17 @@ function drawModel(width, fill = null) {
   const camera = modelCamera(scene, width, height, scale * zoom, state.modelTarget ?? (zoom <= 1 ? scene.center : scene.houseCenter));
   map.camera = { ...camera, base: scale }; // for zooming about the pointer: its turn, size, and scale unzoomed
   // Walls are cut by which way they face, so the geometry changes only when the view turns past an axis, and the
-  // trees are only there for the whole house.
-  const trees = state.modelTrees;
-  const built = mode === "outside" ? `${mode} ${trees}` : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
+  // trees, in their season, are only there for the whole house.
+  const [trees, season] = [state.modelTrees, state.modelSeason];
+  const built = mode === "outside" ? `${mode} ${trees} ${season}` : `${mode} ${Math.sign(camera.view[0])} ${Math.sign(camera.view[1])}`;
   if (m.scene !== scene) renderModelList(scene);
   if (m.built !== built || m.scene !== scene) {
-    const data = buildModel(scene, mode, camera.view, trees);
+    const { data, wet } = buildModel(scene, mode, camera.view, { trees, season });
     m.gl.bufferData(m.gl.ARRAY_BUFFER, data, m.gl.STATIC_DRAW);
-    [m.count, m.built, m.scene, m.focusColor] = [data.length / 10, built, scene, scene.colors.focus];
+    [m.count, m.wet, m.built, m.scene, m.focusColor] = [data.length / 10, wet, built, scene, scene.colors.focus];
+    m.coverageColors = new Float32Array([0, 1, 2, 3].flatMap((n) => scene.colors[`coverage-${n}`]));
   }
+  m.coverage = modelCoverageShown(scene);
   const shows = modelShows(scene, mode, trees);
   const visible = scene.items.filter((item) => shows(item) && item !== scene.lawn);
   const byKey = new Map(scene.items.map((item) => [item.key, item]));
@@ -1621,7 +1846,16 @@ function drawModel(width, fill = null) {
     height,
     keys: visible.map((item) => item.key),
     item: (key) => byKey.get(key),
-    highlight: (key) => renderModel(m, camera, byKey.get(key)?.id ?? null, false),
+    // Focusing a sprinkler zone or head, the coverage shown is its own.
+    highlight: (key) => {
+      const item = byKey.get(key);
+      if (m.coverage) {
+        const part = item?.water ? item : null;
+        useCoverage(m, scene, part);
+        renderModelCoverageOf(part);
+      }
+      renderModel(m, camera, item ? item.ids ?? [item.id, item.id] : null, false);
+    },
     centerOf: (key) => byKey.has(key) && modelCenter(byKey.get(key), mode),
     pick: (x, y) => {
       const item = scene.items[pickModel(m, camera, x, y) - 1];
@@ -1684,29 +1918,81 @@ function panModel(dx, dy) {
   drawMapSoon();
 }
 
-// The buttons that cut the house away to a level, and the box that shows or
-// hides the trees, there only for the whole house, since cut away they're off.
+// The buttons that cut the house away to a level, and under them the box that
+// shows or hides the trees and the buttons for their season, there only for
+// the whole house, since cut away they're off. The season isn't kept, so the
+// page always opens on today's.
 function renderModelCuts(scene) {
   const levels = scene.levels ?? [];
   const options = [["outside", "Outside"], ...levels.map(([floor]) => [floor, `${floor} level`])];
   const current = options.some(([id]) => id === state.modelCut) ? state.modelCut : "outside";
-  const trees = state.map.cuts.querySelector(".trees");
-  trees.hidden = current !== "outside" || !scene.trees?.length;
-  trees.querySelector("input").checked = state.modelTrees;
-  const group = state.map.cuts.querySelector(".segmented");
-  if (group.dataset.options === options.join() && group.dataset.current === current) return;
-  [group.dataset.options, group.dataset.current] = [options.join(), current];
-  group.replaceChildren(...options.map(([id, label]) => {
-    const button = el("button", { type: "button", "aria-pressed": String(id === current) }, label);
-    button.addEventListener("click", () => {
-      state.modelCut = id;
-      try {
-        localStorage.setItem("house-monitor-model-cut", id);
-      } catch {}
-      drawMap();
-    });
-    return button;
-  }));
+  const row = state.map.cuts.querySelector(".tree-options");
+  row.hidden = current !== "outside" || !scene.trees?.length;
+  row.querySelector("input").checked = state.modelTrees;
+  const seasons = row.querySelector(".seasons");
+  seasons.hidden = !state.modelTrees || !scene.trees?.some((t) => t.kind === "deciduous");
+  const now = seasonOf(new Date());
+  renderModelButtons(seasons, MODEL_SEASONS.map((s) => [s, s[0].toUpperCase() + s.slice(1), s === now ? "The season now" : null]), state.modelSeason, (id) => {
+    state.modelSeason = id;
+    drawMap();
+  });
+  renderModelButtons(state.map.cuts.querySelector(".levels .segmented"), options, current, (id) => {
+    state.modelCut = id;
+    try {
+      localStorage.setItem("house-monitor-model-cut", id);
+    } catch {}
+    drawMap();
+  });
+}
+
+// A group of buttons, one pressed: each option its id, label and tooltip, if any, and what a click on it does.
+// Made again only when the options change, and otherwise just pressed anew, so a button keeps its focus.
+function renderModelButtons(group, options, current, pick) {
+  const key = options.map((o) => o.join("/")).join();
+  if (group.dataset.options !== key) {
+    group.dataset.options = key;
+    group.replaceChildren(...options.map(([id, label, title]) => {
+      const button = el("button", { type: "button", "data-id": id, ...(title ? { title } : {}) }, label);
+      button.addEventListener("click", () => pick(id));
+      return button;
+    }));
+  }
+  for (const button of group.children) button.setAttribute("aria-pressed", String(button.dataset.id === current));
+}
+
+// Whether the detailed view shows the sprinklers' coverage: turned on, for a house with sprinklers.
+function modelCoverageShown(scene) {
+  return state.modelCoverage && scene.sprinklers?.length > 0;
+}
+
+// The button that shows the sprinklers' coverage, for a house with them, and while it's on, its key: what each
+// color means, and whose coverage it is, every zone's or the one focused.
+function renderModelCoverage(scene, drawn) {
+  const box = state.map.coverage;
+  box.hidden = !(drawn && scene.sprinklers?.length);
+  if (box.hidden) return;
+  const on = state.modelCoverage;
+  const swatches = MODEL_COVERAGE_KEY.map((_, n) => `rgb(${scene.colors[`coverage-${n}`].map((v) => Math.round(v * 255)).join(" ")})`);
+  const current = `${on} ${swatches.join()}`;
+  if (box.dataset.current === current) return;
+  box.dataset.current = current;
+  const button = el("button", { type: "button", "aria-pressed": String(on) }, "Sprinkler coverage");
+  button.addEventListener("click", () => {
+    state.modelCoverage = !state.modelCoverage;
+    try {
+      localStorage.setItem("house-monitor-model-coverage", String(state.modelCoverage));
+    } catch {}
+    drawMap();
+  });
+  const key = el("ul", { class: "coverage-key", "aria-label": "Heads reaching each spot of the lawn and beds" },
+    ...MODEL_COVERAGE_KEY.map((label, n) => el("li", {}, el("span", { class: "swatch", style: `background: ${swatches[n]}` }), label)));
+  box.replaceChildren(button, ...(on ? [key, el("span", { class: "coverage-of" }, "All zones")] : []));
+}
+
+// Whose coverage shows, in the key: every zone's, or a zone's or head's.
+function renderModelCoverageOf(part) {
+  const of = state.map.coverage.querySelector(".coverage-of");
+  if (of) of.textContent = part ? part.water.of : "All zones";
 }
 
 // The list of everything placed, by kind, as a table: the view's text
@@ -1732,11 +2018,22 @@ function renderModelList(scene) {
   state.map.listWrap.replaceChildren(el("table", {}, el("thead", {}, head), el("tbody", {}, ...rows)));
 }
 
+// How far a head throws and over what arc, or a zone's heads, for the readout; a throw the house file doesn't give is
+// its kind's, by guess.
+function modelThrow(heads) {
+  const radii = [...new Set(heads.map((h) => h.radius))].sort((a, b) => a - b);
+  const far = radii.length === 1 ? `${radii[0]} ft` : `${radii[0]} to ${radii.at(-1)} ft`;
+  const arc = heads.length > 1 ? "" : heads[0].arc ? ` over ${Math.round(heads[0].arc[1])}°` : " all the way round";
+  const guessed = heads.every((h) => h.guessed) ? ", by guess" : heads.some((h) => h.guessed) ? ", some by guess" : "";
+  return `Throws ${far}${arc}${guessed}`;
+}
+
 // The readout for a thing in the detailed view other than a room.
 function modelReadout(item) {
   const rows = [el("div", { class: "head" }, el("strong", {}, item.name), " ", el("span", {}, item.kind))];
   if (item.place && !item.sensor) rows.push(el("div", { class: "time" }, `${item.place.floor} level, no sensor`));
   if (item.where && item.where !== "Outside" && item.where !== "Roof") rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.where)));
+  if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelThrow(item.water.heads))));
   if (!item.place && !item.known) rows.push(el("div", { class: "time" }, "Placed by guess"));
   return rows;
 }

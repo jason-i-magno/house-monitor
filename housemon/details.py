@@ -22,8 +22,12 @@ PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet")
 TREES = ("deciduous", "evergreen")
 CROWNS = ("round", "vase", "spreading", "pyramid")
 LEAVES = ("green", "light", "dark")
+FALLS = ("yellow", "orange", "red")
+FLOWERS = ("white", "pink")
+BLOOMS = ("spring", "summer")
 BARKS = ("brown", "gray", "white")
 SPRINKLERS = ("rotor", "spray")
+THROWS = {"rotor": 30, "spray": 12}  # feet a head of each kind throws, unless it or its zone says (MODEL_THROW in model.js)
 FENCES = ("wood", "chain link")
 EDGINGS = ("stone", "brick")
 CLADDINGS = ("siding", "paneling", "stone")
@@ -191,11 +195,14 @@ class Tree:
     if not where its crown's shape puts them, as for a crown down low or held up high, and lean how far its
     crown's middle stands off its trunk, along x and y, as a tree grows out away from a house. The detailed view
     keeps a crown clear of the house and sheds, standing off their walls under the eaves, so one can reach over
-    a roof without touching it. Its leaves are green, light (a yellower green) or dark. stems is how many trunks
-    rise from the ground, as a clump's do, and fork how high each splits into limbs, or 0 for a trunk running on
-    up into the crown. trunk is each stem's width at the ground, by default from the tree's spread, and bark its
-    color: brown, gray or white. ring is the radius of a bed of mulch around the trunk, if it has one: raised and
-    edged in stone or brick (edging), or flat on the lawn with no edging (None).
+    a roof without touching it. Its leaves are green, light (a yellower green) or dark, and in the fall turn
+    yellow, orange or red (fall); the detailed view shows them fresher in spring, and the tree bare in winter, its
+    branches reaching out to where its leaves would be. A flowering tree's flowers are white or pink, out over its
+    crown in the season it blooms, spring or summer. stems is how many trunks rise from the ground, as a
+    clump's do, and fork how high each splits into limbs, or 0 for a trunk running on up into the crown. trunk is
+    each stem's width at the ground, by default from the tree's spread, and bark its color: brown, gray or white.
+    ring is the radius of a bed of mulch around the trunk, if it has one: raised and edged in stone or brick
+    (edging), or flat on the lawn with no edging (None). An evergreen is the same all year.
     """
 
     name: str
@@ -210,6 +217,9 @@ class Tree:
     clearance: float | None = None
     lean: tuple[float, float] = (0.0, 0.0)
     leaves: str = "green"
+    fall: str = "yellow"
+    flowers: str | None = None
+    blooms: str = "spring"
     stems: int = 1
     fork: float = 0.0
     trunk: float | None = None
@@ -222,6 +232,12 @@ class Tree:
             _check(self.edging, EDGINGS, "an edging")
         _check(self.crown, CROWNS, "a crown")
         _check(self.leaves, LEAVES, "a tree's leaves")
+        _check(self.fall, FALLS, "a tree's fall color")
+        if self.flowers is not None:
+            _check(self.flowers, FLOWERS, "a tree's flowers")
+        _check(self.blooms, BLOOMS, "the season a tree blooms")
+        if self.flowers is None and self.blooms != "spring":
+            raise ValueError(f"{self.name} blooms in {self.blooms}, so it has flowers")
         _check(self.bark, BARKS, "a bark")
         if not isinstance(self.stems, int) or self.stems < 1:
             raise ValueError(f"{self.name} has at least one stem, as a whole number")
@@ -234,26 +250,51 @@ class Tree:
         if len(self.lean) != 2 or (self.lean[0] ** 2 + self.lean[1] ** 2) ** 0.5 >= self.spread / 4:
             raise ValueError(f"{self.name}'s crown leans off its trunk along x and y, under a quarter of its spread")
         if self.kind == "evergreen" and (
-            self.crown, self.clearance, tuple(self.lean), self.leaves, self.stems, self.fork
-        ) != ("round", None, (0, 0), "green", 1, 0):
-            raise ValueError(f"{self.name} is an evergreen, its needles in tiers on one trunk")
+            self.crown, self.clearance, tuple(self.lean), self.leaves, self.fall, self.flowers, self.stems, self.fork
+        ) != ("round", None, (0, 0), "green", "yellow", None, 1, 0):
+            raise ValueError(f"{self.name} is an evergreen, its needles in tiers on one trunk, the same all year")
+
+
+@dataclass(frozen=True)
+class Head:
+    """A sprinkler head at x and y on the plan. arc is the directions it throws between, in degrees on the plan, 0
+    to the right, 90 to the front, 180 to the left and 270 to the back, counting up from the first to the second:
+    (0, 90) is the quarter between the right and the front, and (270, 90) the half to the right. None, the default,
+    throws all the way round. radius is how far it throws, in feet, if not as far as its zone's heads do."""
+
+    x: float
+    y: float
+    arc: tuple[float, float] | None = None
+    radius: float | None = None
+
+    def __post_init__(self):
+        if self.arc is not None and (len(self.arc) != 2 or (self.arc[1] - self.arc[0]) % 360 == 0):
+            raise ValueError(f"The head at {self.x}, {self.y} throws between two directions, or all the way round (None)")
+        if self.radius is not None and self.radius <= 0:
+            raise ValueError(f"The head at {self.x}, {self.y} needs to throw some way")
 
 
 @dataclass(frozen=True)
 class Sprinklers:
-    """One zone of a sprinkler system: its heads, each at x and y on the plan, in the lawn or a bed, standing in
-    whichever they're in. kind is what they are: rotors, throwing far across a lawn, or sprays, smaller and closer
-    together. Its valve is in a valve box, a fixture, and so is the controller that runs it."""
+    """One zone of a sprinkler system: its heads, in the lawn or a bed, standing in whichever they're in, each a Head,
+    or for one throwing all the way round, its point (x, y) on the plan. kind is what they are: rotors, throwing far
+    across a lawn, or sprays, smaller and closer together. radius is how far its heads throw, in feet, but for one
+    that says, if not as far as that kind does by default (THROWS: 30 for rotors, 12 for sprays). Its valve is in a
+    valve box, a fixture, and so is the controller that runs it."""
 
     name: str
-    heads: tuple[tuple[float, float], ...]
+    heads: tuple[Head | tuple[float, float], ...]
     kind: str = "rotor"
+    radius: float | None = None
     known: bool = False
 
     def __post_init__(self):
         _check(self.kind, SPRINKLERS, "a sprinkler's kind")
         if not self.heads:
             raise ValueError(f"{self.name} needs a head or more")
+        if self.radius is not None and self.radius <= 0:
+            raise ValueError(f"{self.name}'s heads need to throw some way")
+        object.__setattr__(self, "heads", tuple(h if isinstance(h, Head) else Head(*h) for h in self.heads))
 
 
 @dataclass(frozen=True)
