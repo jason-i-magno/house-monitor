@@ -148,7 +148,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   if (!rooms.length || !rooms.every((s) => s.plan)) return { note: "The detailed view needs every room's plan." };
   const raw = [...rooms, ...areas].flatMap((q) => [q.plan].flat());
   const details = {
-    finishes: {}, colors: {}, claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], sheds: [], fences: [], steps: [], sprinklers: [],
+    finishes: {}, colors: {}, claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [],
     ...(given ?? modelFallback(raw)),
   };
   const items = [];
@@ -240,6 +240,12 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
   // Trees, like roofs, come off when the house is cut away, so they don't hide it, and can be hidden from the whole house too.
   const trees = details.trees.map((t, i) => ({ ...t, item: outside(`tree:${i}`, t, MODEL_KINDS[t.kind], "Yard", [t.x - t.spread / 2, t.y - t.spread / 2, grade, t.x + t.spread / 2, t.y + t.spread / 2, grade + t.height], { whole: true, tree: true }) }));
+  // Hedges come and go with the trees.
+  const hedges = details.hedges.map((h, i) => {
+    const [xs, ys, r] = [h.points.map((p) => p[0]), h.points.map((p) => p[1]), h.width / 2];
+    const bbox = [Math.min(...xs) - r, Math.min(...ys) - r, grade, Math.max(...xs) + r, Math.max(...ys) + r, grade + h.height];
+    return { ...h, item: outside(`hedge:${i}`, h, "Hedge", "Yard", bbox, { whole: true, tree: true }) };
+  });
   // A shed's doors and windows are the openings naming it, placed on its walls as a room's are, from the ground.
   const sheds = details.sheds.map((b, i) => {
     const item = outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, grade, b.x + b.width, b.y + b.depth, grade + b.peak]);
@@ -304,7 +310,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   const house = [...places.map((q) => q.item), ...roofs.map((r) => r.item)].map((item) => item.bbox);
   const [hx0, hy0, hz0, hx1, hy1, hz1] = [0, 1, 2, 3, 4, 5].map((k) => (k < 3 ? Math.min : Math.max)(...house.map((b) => b[k])));
   return {
-    details, places, pieces, openings, closets, fixtures, grounds, trees, sheds, fences, steps, sprinklers, roofs, roofVents, lot, lawn, cladding, items, levels, bottom, radius,
+    details, places, pieces, openings, closets, fixtures, grounds, trees, hedges, sheds, fences, steps, sprinklers, roofs, roofVents, lot, lawn, cladding, items, levels, bottom, radius,
     center: [(x0 + x1) / 2, (y0 + y1) / 2, (bottom + high) / 2],
     houseCenter: [(hx0 + hx1) / 2, (hy0 + hy1) / 2, (hz0 + hz1) / 2],
     fit: Math.max(1, radius / (1.1 * (Math.hypot(hx1 - hx0, hy1 - hy0, hz1 - hz0) / 2))),
@@ -902,8 +908,8 @@ function limb(mesh, a, b, r0, r1, color, id, n = 6) {
   mesh.solid(faces, id);
 }
 
-// The unit sphere in triangles: an icosahedron, each face split in four, and those again.
-const MODEL_BALL = (() => {
+// The unit sphere in triangles: an icosahedron, each face split in four, and those again as many times as asked.
+function icosphere(splits) {
   const g = (1 + Math.sqrt(5)) / 2;
   const unit = (v) => v.map((c) => c / Math.hypot(...v));
   const mid = (u, v) => unit(u.map((x, k) => (x + v[k]) / 2));
@@ -913,8 +919,12 @@ const MODEL_BALL = (() => {
     const [pq, qr, rp] = [mid(p, q), mid(q, r), mid(r, p)];
     return [[p, pq, rp], [pq, q, qr], [rp, qr, r], [pq, qr, rp]];
   });
-  return split(split(faces.map((face) => face.map((i) => corners[i]))));
-})();
+  let triangles = faces.map((face) => face.map((i) => corners[i]));
+  for (let i = 0; i < splits; i++) triangles = split(triangles);
+  return triangles;
+}
+const MODEL_BALL = icosphere(2); // a tree's crown
+const MODEL_SHRUB = icosphere(1); // one of a hedge's shrubs, smaller, so coarser
 
 // A deciduous tree's crown by its shape (details.CROWNS): where it starts, as a share of the tree's height; how
 // far up it it's widest; how pointed (over 1) or flat (under 1) it is below and above that; and how much
@@ -1108,20 +1118,10 @@ function tree(mesh, scene, t, season = "summer") {
     return;
   }
 
-  // In leaf, its leaves in their season, its facets a little lighter or darker in turn: fresher in spring, half a
-  // new leaf's green, and in the fall its fall color, but for a few facets not yet turned. In bloom, every third
-  // facet is paled toward its flowers' color, thick with them.
-  const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
-  const fall = C[MODEL_FALLS[t.fall]] ?? C["fall-yellow"];
+  // In leaf, its leaves in their season (leafColor), its facets a little lighter or darker in turn.
+  const color = leafColor(C, t, season);
   const flower = C[MODEL_FLOWERS[t.flowers]] ?? C["flowers-white"];
   const blooming = Boolean(t.flowers) && season === (t.blooms ?? "spring");
-  const mix = (a, b, f) => a.map((c, k) => c + f * (b[k] - c));
-  const color = (i) => {
-    const green = season === "spring" ? mix(leaves, C["leaves-spring"], 0.5) : leaves;
-    if (blooming && i % 3 === 1) return mix(green, flower, 0.35);
-    if (season === "fall") return i % 7 === 3 ? mix(fall, leaves, 0.4) : fall;
-    return green;
-  };
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
     mesh.face(triangle.map(place), color(i).map((c) => Math.min(1, c * shade)), id, center);
@@ -1140,6 +1140,65 @@ function tree(mesh, scene, t, season = "summer") {
       const q = p.map((c, k) => c - (0.35 * (c - center[k])) / Math.max(out, 1e-6)); // a little way in
       const size = 0.7 + 0.6 * random();
       round(mesh, [q[0], q[1]], 0.6 * size, q[2] - 0.2, q[2] + 0.9 * size, flower, id, true, 6);
+    }
+  }
+}
+
+// The color of facet i of a tree's crown, or a hedge's leaves, in a season: its leaves fresher in spring, half a new
+// leaf's green, and in the fall its fall color, but for a few facets not yet turned; in bloom, if it flowers, every
+// third facet paled toward its flowers' color, thick with them.
+function leafColor(C, t, season) {
+  const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
+  const fall = C[MODEL_FALLS[t.fall]] ?? C["fall-yellow"];
+  const flower = C[MODEL_FLOWERS[t.flowers]] ?? C["flowers-white"];
+  const blooming = Boolean(t.flowers) && season === (t.blooms ?? "spring");
+  const mix = (a, b, f) => a.map((c, k) => c + f * (b[k] - c));
+  return (i) => {
+    const green = season === "spring" ? mix(leaves, C["leaves-spring"], 0.5) : leaves;
+    if (blooming && i % 3 === 1) return mix(green, flower, 0.35);
+    if (season === "fall") return i % 7 === 3 ? mix(fall, leaves, 0.4) : fall;
+    return green;
+  };
+}
+
+// A hedge along its points. In leaf, a row of shrubs along each stretch of it: balls of leaves, overlapping, each as
+// wide and tall as the hedge, give or take, and lumpy, their sizes and lumps seeded from where it starts so it's
+// drawn the same every time, in its leaves' colors for the season. Bare in winter, a wall of stems: thin shoots up
+// from the ground, two a foot, leaning a little this way and that, standing from just under it.
+function hedge(mesh, scene, h, season) {
+  const [C, grade, id] = [scene.colors, scene.details.grade, h.item.id];
+  const random = seeded(h.points[0][0] * 7919 + h.points[0][1] * 104729);
+  const color = leafColor(C, h, season);
+  for (let s = 0; s + 1 < h.points.length; s++) {
+    const [[x1, y1], [x2, y2]] = [h.points[s], h.points[s + 1]];
+    const length = Math.hypot(x2 - x1, y2 - y1);
+    const [ux, uy] = [(x2 - x1) / length, (y2 - y1) / length]; // along it
+    const [vx, vy] = [-uy, ux]; // across it
+    const at = (along, across, z) => [x1 + ux * along + vx * across, y1 + uy * along + vy * across, z];
+    if (season === "winter") {
+      const count = Math.max(2, Math.round(length * 2));
+      for (let k = 0; k < count; k++) {
+        const [along, across] = [((k + random()) / count) * length, (random() - 0.5) * h.width * 0.7];
+        const [lean, drift, top] = [(random() - 0.5) * h.width * 0.6, (random() - 0.5) * 0.8, h.height * (0.7 + 0.3 * random())];
+        limb(mesh, at(along, across, grade - 0.1), at(along + drift, across + lean, grade + top), 0.07, 0.02, C.trunk, id, 3);
+      }
+      continue;
+    }
+    // Each shrub twice as long as the gap to the next, so they run together into one wall, its top uneven.
+    const count = Math.max(1, Math.round(length / h.width));
+    for (let k = 0; k < count; k++) {
+      const [a, b, c] = [(length / count) * (1 + 0.3 * random()), (h.width / 2) * (0.85 + 0.25 * random()), (h.height / 2) * (0.8 + 0.25 * random())];
+      const middle = at(((k + 0.5) / count) * length, (random() - 0.5) * h.width * 0.15, grade + c * 0.96); // its foot just under the ground
+      const [p, q] = [random() * 6, random() * 6];
+      const lump = ([px, py, pz]) => 1 + 0.18 * Math.sin(5 * px + p) * Math.sin(4 * py + q) * Math.cos(3 * pz);
+      MODEL_SHRUB.forEach((triangle, i) => {
+        const points = triangle.map((v) => {
+          const m = lump(v);
+          return [middle[0] + (ux * v[0] * a + vx * v[1] * b) * m, middle[1] + (uy * v[0] * a + vy * v[1] * b) * m, middle[2] + v[2] * c * m];
+        });
+        const shade = 0.92 + 0.16 * ((((i + k) * 37) % 11) / 10);
+        mesh.face(points, color(i + 3 * k).map((v) => Math.min(1, v * shade)), id, middle);
+      });
     }
   }
 }
@@ -1179,7 +1238,7 @@ function roofSection(mesh, scene, r) {
 
 // What a porch, patio, deck, walk, bed or flight of steps is paved with.
 function paving(C, g) {
-  return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck, gravel: C.gravel, mulch: C.mulch, carpet: C.carpet }[g.paving] ?? C.concrete;
+  return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck, gravel: C.gravel, mulch: C.mulch, carpet: C.carpet, dirt: C.dirt }[g.paving] ?? C.concrete;
 }
 
 // A roof section cut to its outline: its slope over the outline, a flat
@@ -1527,6 +1586,7 @@ function buildModel(scene, mode, view, { trees = true, season = "summer" } = {})
     for (const [x, y, top] of z.heads) round(mesh, [x, y], z.kind === "spray" ? 0.17 : 0.25, top - 0.1, top + 0.1, C.black, z.item.id, false, 10);
   }
   for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t, season);
+  for (const h of scene.hedges) if (shows(h.item)) hedge(mesh, scene, h, season);
   if (mode === "outside") {
     for (const r of scene.roofs) roofSection(mesh, scene, r);
     for (const v of scene.roofVents) box(mesh, [v.x - 0.2, v.y - 0.2, v.z - 0.5], [v.x + 0.2, v.y + 0.2, v.z + 1], C.black, v.item.id);
@@ -1782,10 +1842,10 @@ function renderModelCuts(scene) {
   const options = [["outside", "Outside"], ...levels.map(([floor]) => [floor, `${floor} level`])];
   const current = options.some(([id]) => id === state.modelCut) ? state.modelCut : "outside";
   const row = state.map.cuts.querySelector(".tree-options");
-  row.hidden = current !== "outside" || !scene.trees?.length;
+  row.hidden = current !== "outside" || !(scene.trees?.length || scene.hedges?.length);
   row.querySelector("input").checked = state.modelTrees;
   const seasons = row.querySelector(".seasons");
-  seasons.hidden = !state.modelTrees || !scene.trees?.some((t) => t.kind === "deciduous");
+  seasons.hidden = !state.modelTrees || !(scene.hedges?.length || scene.trees?.some((t) => t.kind === "deciduous"));
   const now = seasonOf(new Date());
   renderModelButtons(seasons, MODEL_SEASONS.map((s) => [s, s[0].toUpperCase() + s.slice(1), s === now ? "The season now" : null]), state.modelSeason, (id) => {
     state.modelSeason = id;

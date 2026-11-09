@@ -15,7 +15,7 @@ from pathlib import Path
 from housemon import example_house
 from housemon import house as houses
 from housemon import layout
-from housemon.details import Closet, Fence, Fixture, Ground, Opening, Roof, Sprinklers, Steps, Tree
+from housemon.details import Closet, Fence, Fixture, Ground, Hedge, Opening, Roof, Sprinklers, Steps, Tree
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
 # side where half the wall stands, and none where it stands past the side, in the place beyond (layout.py)
@@ -514,16 +514,25 @@ class YardTest(HouseTestCase):
             for (name, cover), (other, cover2) in itertools.combinations(grounds + sheds, 2):
                 self.assertFalse(cover & cover2, (name, other))
 
-    def test_trees_stand_in_the_lawn_or_a_cutout(self):
+    def test_trees_stand_in_the_lawn_bare_dirt_or_a_cutout(self):
         for h in self.each():
             for tree in h.details.trees:
                 self.assertTrue(h.in_lot(tree.x, tree.y), tree.name)
                 self.assertFalse(h.on_house(tree.x, tree.y), tree.name)
-                for thing in (*h.details.grounds, *h.details.sheds):
+                for thing in (*(g for g in h.details.grounds if g.paving != "dirt"), *h.details.sheds):
                     self.assertFalse(stands_on(tree.x, tree.y, thing), (tree.name, thing.name))
 
+    def test_hedges_run_in_the_lot_off_the_house(self):
+        for h in self.each():
+            for hedge in h.details.hedges:
+                for (x1, y1), (x2, y2) in zip(hedge.points, hedge.points[1:]):
+                    for k in range(11):
+                        x, y = x1 + (x2 - x1) * k / 10, y1 + (y2 - y1) * k / 10
+                        self.assertTrue(h.in_lot(x, y), (hedge.name, x, y))
+                        self.assertFalse(h.on_house(x, y), (hedge.name, x, y))
+
     def test_sprinklers_and_valve_boxes_are_in_the_lawn_or_a_bed(self):
-        """Not on paving, a shed or the house, and no two heads in one spot."""
+        """Not on paving but bare dirt, a shed or the house, and no two heads in one spot."""
         for h in self.each():
             d = h.details
             spots = [(z.name, x, y) for z in d.sprinklers for x, y in z.heads]
@@ -531,7 +540,7 @@ class YardTest(HouseTestCase):
             for name, x, y in spots:
                 self.assertTrue(h.in_lot(x, y), (name, x, y))
                 self.assertFalse(h.on_house(x, y), (name, x, y))
-                for thing in (*(g for g in d.grounds if g.kind != "bed"), *d.sheds):
+                for thing in (*(g for g in d.grounds if g.kind != "bed" and g.paving != "dirt"), *d.sheds):
                     self.assertFalse(stands_on(x, y, thing), (name, x, y, thing.name))
             heads = [(z.name, x, y) for z in d.sprinklers for x, y in z.heads]
             for (name, x1, y1), (other, x2, y2) in itertools.combinations(heads, 2):
@@ -705,6 +714,10 @@ class KindsTest(unittest.TestCase):
         for wrong in ({"stems": 2}, {"clearance": 10}, {"lean": (1, 0)}, {"fall": "red"}, {"flowers": "white"}):
             with self.assertRaises(ValueError, msg=wrong):
                 Tree("Spruce", "evergreen", 0, 0, height=30, spread=12, **wrong)
+        Hedge("Hedge", ((0, 0), (20, 0)), height=8, width=3, leaves="dark", fall="orange")
+        for wrong in ({"points": ((0, 0),)}, {"height": 0}, {"width": -1}, {"leaves": "red"}, {"fall": "brown"}):
+            with self.assertRaises(ValueError, msg=wrong):
+                Hedge(**{"name": "Hedge", "points": ((0, 0), (20, 0)), "height": 8, "width": 3, **wrong})
         with self.assertRaises(ValueError):
             Ground("Deck", "deck", 0, 0, 10, 10, height=1, railings=("up",))
         with self.assertRaises(ValueError):

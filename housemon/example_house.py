@@ -15,7 +15,7 @@ colors, and the garage, bathroom and outside share the gray.
 """
 
 from housemon.details import (
-    Closet, Details, Fence, Finish, Fixture, Ground, Opening, Roof, RoofVent, Shed, Sprinklers, Steps, Tree,
+    Closet, Details, Fence, Finish, Fixture, Ground, Hedge, Opening, Roof, RoofVent, Shed, Sprinklers, Steps, Tree,
 )
 from housemon.readings import Area, Plan, Sensor
 from housemon.simulator import SimulatedRoom
@@ -200,6 +200,7 @@ DETAILS = Details(
         Tree("Birch", "deciduous", 66, 8, height=26, spread=12, crown="pyramid", leaves="light", stems=3, bark="white"),
         Tree("Spruce", "evergreen", 62, -22, height=24, spread=12),
     ),
+    hedges=(Hedge("Hedge along the back fence", ((22, -43.5), (46, -43.5)), height=6, width=3, leaves="dark"),),
     sheds=(Shed("Shed", 52, -42, 10, 8),),
     fences=(
         Fence("Left fence", ((0, 20), (-20, 20), (-20, -45)), gates=((-10, 20, 4),)),
