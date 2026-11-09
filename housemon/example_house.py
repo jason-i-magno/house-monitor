@@ -191,7 +191,7 @@ DETAILS = Details(
     trees=(
         Tree(
             "Front yard tree", "deciduous", 14, 44, height=30, spread=24, ring=4, crown="vase", fork=7, fall="orange",
-            bark="gray",
+            flowers="white", bark="gray",
         ),
         Tree(
             "Backyard tree", "deciduous", 8, -30, height=28, spread=30, crown="spreading", leaves="dark", fall="red",

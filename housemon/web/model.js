@@ -29,7 +29,7 @@ const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
+  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
 ];
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
@@ -927,6 +927,7 @@ const MODEL_CROWNS = {
 };
 const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dark" };
 const MODEL_FALLS = { yellow: "fall-yellow", orange: "fall-orange", red: "fall-red" };
+const MODEL_FLOWERS = { white: "flowers-white", pink: "flowers-pink" };
 const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
 const MODEL_SEASONS = ["spring", "summer", "fall", "winter"];
 
@@ -1108,19 +1109,39 @@ function tree(mesh, scene, t, season = "summer") {
   }
 
   // In leaf, its leaves in their season, its facets a little lighter or darker in turn: fresher in spring, half a
-  // new leaf's green, and in the fall its fall color, but for a few facets not yet turned.
+  // new leaf's green, and in the fall its fall color, but for a few facets not yet turned. In bloom, every third
+  // facet is paled toward its flowers' color, thick with them.
   const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
   const fall = C[MODEL_FALLS[t.fall]] ?? C["fall-yellow"];
+  const flower = C[MODEL_FLOWERS[t.flowers]] ?? C["flowers-white"];
+  const blooming = Boolean(t.flowers) && season === (t.blooms ?? "spring");
   const mix = (a, b, f) => a.map((c, k) => c + f * (b[k] - c));
   const color = (i) => {
-    if (season === "spring") return mix(leaves, C["leaves-spring"], 0.5);
+    const green = season === "spring" ? mix(leaves, C["leaves-spring"], 0.5) : leaves;
+    if (blooming && i % 3 === 1) return mix(green, flower, 0.35);
     if (season === "fall") return i % 7 === 3 ? mix(fall, leaves, 0.4) : fall;
-    return leaves;
+    return green;
   };
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
     mesh.face(triangle.map(place), color(i).map((c) => Math.min(1, c * shade)), id, center);
   });
+
+  // And its flowers: upright clusters, squat cones of a few sizes standing out of its leaves, spread over the crown
+  // from its top to a little under its middle (a Fibonacci sphere's band, each moved a little at random, so they
+  // don't line up), more on a bigger crown.
+  if (blooming) {
+    const count = Math.min(400, Math.max(30, Math.round(R * (z1 - z0) * 0.5)));
+    for (let i = 0; i < count; i++) {
+      const vz = Math.max(-0.3, Math.min(1, 1 - (1.3 * (i + 0.2 + 0.6 * random())) / count));
+      const a = i * Math.PI * (3 - Math.sqrt(5)) + (random() - 0.5) * 1.2;
+      const p = place([Math.sqrt(1 - vz * vz) * Math.cos(a), Math.sqrt(1 - vz * vz) * Math.sin(a), vz]);
+      const out = Math.hypot(p[0] - cx, p[1] - cy, p[2] - middle);
+      const q = p.map((c, k) => c - (0.35 * (c - center[k])) / Math.max(out, 1e-6)); // a little way in
+      const size = 0.7 + 0.6 * random();
+      round(mesh, [q[0], q[1]], 0.6 * size, q[2] - 0.2, q[2] + 0.9 * size, flower, id, true, 6);
+    }
+  }
 }
 
 // A section of roof, solid from its underside: a gable's five-sided profile,

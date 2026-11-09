@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Finds faces in the map's detailed view that would flicker against each other: two in one plane, overlapping,
 // that differ in color or facing, where a ray from where they overlap gets out of the scene, so they can be seen.
-// Checks the house whole, its trees in leaf and bare in winter, and cut away to each level, from four ways round.
+// Checks the house whole, its trees in each season, and cut away to each level, from four ways round.
 //
 //   node tools/scan.mjs [house file]   # as the server picks it, if none given
 import { loadHouse, loadModel, sceneOf } from "./model.mjs";
@@ -43,8 +43,10 @@ function clipPoly(poly, clip) {
 }
 const found = new Map();
 let triangleCount = 0;
-// The whole house twice, as its trees in winter are bare branches, not crowns; each pass named as it reports.
-const passes = [["outside", "summer", "outside"], ["outside", "winter", "winter"], ...modes.slice(1).map((m) => [m, "summer", m])];
+// The whole house in each season, as its trees change, bare in winter and in flower when they bloom; each pass
+// named as it reports, summer's "outside".
+const seasons = ["summer", "spring", "fall", "winter"];
+const passes = [...seasons.map((s) => ["outside", s, s === "summer" ? "outside" : s]), ...modes.slice(1).map((m) => [m, "summer", m])];
 for (const [mode, season, pass] of passes) {
   for (const view of mode === "outside" ? [views[0]] : views) {
     const data = buildModel(scene, mode, view, { season });
