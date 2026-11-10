@@ -36,6 +36,9 @@ class SimulatedRoom:
     # The name of the ecobee sensor in the room, as the ecobee app shows it: signed in to ecobee, the room's readings
     # come from it instead (ecobee.py).
     ecobee: str | None = None
+    # For the outside, the name of an ecobee thermostat: signed in, its readings come from the weather ecobee reports
+    # where the thermostat is instead.
+    ecobee_weather: str | None = None
 
 
 def _smoothstep(x: float) -> float:
