@@ -68,16 +68,29 @@ class StoreTest(unittest.TestCase):
             CREATE TABLE readings (sensor_id TEXT NOT NULL, ts REAL NOT NULL, temperature_c REAL NOT NULL,
                 humidity REAL NOT NULL, battery INTEGER, rssi INTEGER, PRIMARY KEY (sensor_id, ts)) WITHOUT ROWID;
             CREATE INDEX readings_by_time ON readings (ts);
-            INSERT INTO readings VALUES ('a', 1000, 20.0, 35.0, 90, -70), ('a', 1100, 21.5, 36.0, 90, -70);
+            INSERT INTO readings VALUES ('a', 1000, 20.0, 35.0, 90, -70), ('a', 1100, 21.5, 36.0, 90, -70),
+                ('b', 1000, 19.0, 40.0, NULL, NULL);
         """)
         old.close()
         self.store = Store(path, min_interval=60)
-        self.assertEqual(self.store.latest()["a"], reading("a", 1100, 21.5, 36.0))
+        # Marked as the simulator's, having a battery, as only ecobee's readings came without one.
+        self.assertEqual(self.store.latest()["a"], Reading("a", 1100, 21.5, 36.0, battery=90, rssi=-70, simulated=True))
+        self.assertFalse(self.store.latest()["b"].simulated)
         self.assertFalse(self.store.add(reading("a", 1120)))  # its clock resumes too
         self.assertTrue(self.store.add(reading("a", 1200, 22.0, None)))
         self.store.close()
         self.store = Store(path, min_interval=60)  # and opens again as it is
         self.assertEqual(len(self.store.history(since=0, bucket=1)["a"]), 3)
+
+    def test_history_can_leave_the_simulators_readings_out(self):
+        self.store.add_many([
+            Reading("a", 1000, 20.0, 30.0, simulated=True),
+            Reading("a", 1100, 22.0, 40.0),  # read from a sensor, as the room's since
+            Reading("b", 1050, 18.0, 45.0, simulated=True),
+        ])
+        self.assertTrue(self.store.latest()["b"].simulated)
+        self.assertEqual(self.store.history(since=900, bucket=1000), {"a": [[1050.0, 21.0, 35.0]], "b": [[1050.0, 18.0, 45.0]]})
+        self.assertEqual(self.store.history(since=900, bucket=1000, simulated=False), {"a": [[1100.0, 22.0, 40.0]]})
 
 
 if __name__ == "__main__":

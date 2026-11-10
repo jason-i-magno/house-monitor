@@ -115,6 +115,7 @@ def reading_at(room: SimulatedRoom, t: float) -> Reading:
         humidity=round(min(max(humidity, 5.0), 95.0), 1),
         battery=room.battery,
         rssi=room.rssi + round(noise.uniform(-4, 4)),
+        simulated=True,
     )
 
 

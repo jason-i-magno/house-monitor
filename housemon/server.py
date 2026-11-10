@@ -117,7 +117,8 @@ class Handler(BaseHTTPRequestHandler):
         since = until - hours * 3600
         store = self.server.store
         bucket = max(store.min_interval, math.ceil(hours * 3600 / HISTORY_POINTS / 60) * 60)
-        self._json({"since": since, "until": until, "bucket": bucket, "series": store.history(since, bucket)})
+        simulated = query.get("simulated", ["1"])[0] != "0"  # simulated=0 leaves the simulator's readings out
+        self._json({"since": since, "until": until, "bucket": bucket, "series": store.history(since, bucket, simulated)})
 
     def _stream(self) -> None:
         self.send_response(HTTPStatus.OK)

@@ -15,12 +15,13 @@ CREATE TABLE IF NOT EXISTS readings (
     humidity REAL,
     battery INTEGER,
     rssi INTEGER,
+    simulated INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (sensor_id, ts)
 ) WITHOUT ROWID
 """
 INDEX = "CREATE INDEX IF NOT EXISTS readings_by_time ON readings (ts)"
 
-COLUMNS = "sensor_id, ts, temperature_c, humidity, battery, rssi"
+COLUMNS = "sensor_id, ts, temperature_c, humidity, battery, rssi, simulated"
 
 
 class Store:
@@ -37,9 +38,24 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute(TABLE)
         self._db.execute(INDEX)
-        if any(name == "humidity" and notnull for _, name, _, notnull, *_ in self._db.execute("PRAGMA table_info(readings)")):
+        notnull = {name: notnull for _, name, _, notnull, *_ in self._db.execute("PRAGMA table_info(readings)")}
+        if "simulated" not in notnull:
+            self._mark_simulated()
+        if notnull["humidity"]:
             self._allow_no_humidity()
         self._last_stored = dict(self._db.execute("SELECT sensor_id, MAX(ts) FROM readings GROUP BY sensor_id"))
+
+    def _mark_simulated(self) -> None:
+        """Mark which readings the simulator made, in a database from before they were marked: every one with a
+        battery, as only ecobee's came without one, all or nothing."""
+        self._db.execute("BEGIN")
+        try:
+            self._db.execute("ALTER TABLE readings ADD COLUMN simulated INTEGER NOT NULL DEFAULT 0")
+            self._db.execute("UPDATE readings SET simulated = 1 WHERE battery IS NOT NULL")
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
 
     def _allow_no_humidity(self) -> None:
         """Let a reading have no humidity, as a sensor that reads only temperature gives, in a database from before
@@ -75,9 +91,9 @@ class Store:
             self._insert(readings)
 
     def _insert(self, readings: Iterable[Reading]) -> None:
-        rows = [(r.sensor_id, r.ts, r.temperature_c, r.humidity, r.battery, r.rssi) for r in readings]
+        rows = [(r.sensor_id, r.ts, r.temperature_c, r.humidity, r.battery, r.rssi, int(r.simulated)) for r in readings]
         with self._db:
-            self._db.executemany(f"INSERT OR REPLACE INTO readings ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)", rows)
+            self._db.executemany(f"INSERT OR REPLACE INTO readings ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
         for sensor_id, ts, *_ in rows:
             self._last_stored[sensor_id] = max(ts, self._last_stored.get(sensor_id, ts))
 
@@ -92,10 +108,10 @@ class Store:
                 f"SELECT {COLUMNS} FROM readings"
                 " JOIN (SELECT sensor_id, MAX(ts) AS ts FROM readings GROUP BY sensor_id) USING (sensor_id, ts)"
             ).fetchall()
-        return {row[0]: Reading(*row) for row in rows}
+        return {row[0]: Reading(*row[:6], simulated=bool(row[6])) for row in rows}
 
-    def history(self, since: float, bucket: float) -> dict[str, list[list[float]]]:
-        """Readings since `since`, averaged into `bucket`-second buckets.
+    def history(self, since: float, bucket: float, simulated: bool = True) -> dict[str, list[list[float]]]:
+        """Readings since `since`, averaged into `bucket`-second buckets, but the simulator's unless `simulated`.
 
         Returns {sensor_id: [[ts, temperature_c, humidity], ...]} in time order,
         where ts is the mean time of the readings in the bucket, and humidity is
@@ -104,7 +120,8 @@ class Store:
         with self._lock:
             rows = self._db.execute(
                 "SELECT sensor_id, AVG(ts), AVG(temperature_c), AVG(humidity) FROM readings WHERE ts >= ?"
-                " GROUP BY sensor_id, CAST(ts / ? AS INTEGER) ORDER BY sensor_id, 2",
+                + ("" if simulated else " AND NOT simulated")
+                + " GROUP BY sensor_id, CAST(ts / ? AS INTEGER) ORDER BY sensor_id, 2",
                 (since, bucket),
             ).fetchall()
         series: dict[str, list[list[float]]] = {}

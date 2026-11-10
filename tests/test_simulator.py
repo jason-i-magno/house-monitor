@@ -35,6 +35,7 @@ class ReadingAtTest(unittest.TestCase):
         t = local_time(14.5)
         for room in EVERY_ROOM:
             self.assertEqual(reading_at(room, t), reading_at(room, t))
+            self.assertTrue(reading_at(room, t).simulated)  # and says it's made up
 
     def test_values_stay_plausible_all_day(self):
         for room in EVERY_ROOM:

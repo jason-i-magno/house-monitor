@@ -59,6 +59,7 @@ class Reading:
     humidity: float | None  # relative humidity, percent; None from a sensor that reads only temperature
     battery: int | None = None  # percent
     rssi: int | None = None  # Bluetooth signal strength, dBm
+    simulated: bool = False  # made up by the simulator, not read from a sensor
 
     def to_json(self) -> dict:
         return asdict(self)
