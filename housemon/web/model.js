@@ -23,6 +23,7 @@ const MODEL_CUT = 4; // feet above its floor where a cut-away wall stops
 const MODEL_CLOSET_HEIGHT = 8; // a closet's walls at most, under a higher ceiling
 const MODEL_CLOSET_DOOR = 6.67;
 const MODEL_ROOF_DEPTH = 0.6; // feet from a roof's eaves down to its underside, as in details.Roof
+const MODEL_TRIM = 0.45; // feet of trim along a roof's sloped edges, and down from the top of a tall side
 const MODEL_SIZE = 720; // px at most across the scene's bounding sphere
 const MODEL_PAD = 16;
 const MODEL_ZOOM_MAX = 6; // times the house's framing
@@ -1250,7 +1251,8 @@ function hedge(mesh, scene, h, season) {
 
 // A section of roof, solid from its underside: a gable's five-sided profile,
 // or a shed's four, run along its length. Its slopes in roofing, its gable
-// ends and any tall high side in siding, its fascia and soffit in trim.
+// ends and any tall side, as a high one over a lower roof, in siding, but for
+// trim along the top of the side, and its fascia and soffit in trim.
 function roofSection(mesh, scene, r) {
   const C = scene.colors;
   if (r.outline) return roofOutline(mesh, scene, r);
@@ -1268,7 +1270,13 @@ function roofSection(mesh, scene, r) {
   profile.forEach(([u, z], i) => {
     const [u2, z2] = profile[(i + 1) % profile.length];
     const upright = Math.abs(u - u2) < 1e-9;
-    const color = upright ? (Math.abs(z2 - z) > MODEL_ROOF_DEPTH + 0.05 ? C.siding : C.trim) : z === low && z2 === low ? C.trim : roofing;
+    if (upright && Math.abs(z2 - z) > MODEL_ROOF_DEPTH + 0.05) { // a tall side: siding, with trim along its top
+      const [z0, z1] = [Math.min(z, z2), Math.max(z, z2)];
+      faces.push([[at(u, z0, a), at(u, z1 - MODEL_TRIM, a), at(u, z1 - MODEL_TRIM, b), at(u, z0, b)], C.siding]);
+      faces.push([[at(u, z1 - MODEL_TRIM, a), at(u, z1, a), at(u, z1, b), at(u, z1 - MODEL_TRIM, b)], C.trim]);
+      return;
+    }
+    const color = upright ? C.trim : z === low && z2 === low ? C.trim : roofing;
     faces.push([[at(u, z, a), at(u2, z2, a), at(u2, z2, b), at(u, z, b)], color]);
   });
   mesh.solid(faces, r.item.id);
@@ -1277,7 +1285,7 @@ function roofSection(mesh, scene, r) {
   profile.forEach(([u, z], i) => {
     const [u2, z2] = profile[(i + 1) % profile.length];
     if (Math.abs(u - u2) < 1e-9 || (z === low && z2 === low)) return; // not a slope
-    for (const s of [a - 0.03, b + 0.03]) mesh.face([at(u, z, s), at(u2, z2, s), at(u2, z2 - 0.45, s), at(u, z - 0.45, s)], C.trim, r.item.id, middle);
+    for (const s of [a - 0.03, b + 0.03]) mesh.face([at(u, z, s), at(u2, z2, s), at(u2, z2 - MODEL_TRIM, s), at(u, z - MODEL_TRIM, s)], C.trim, r.item.id, middle);
   });
 }
 
@@ -1293,7 +1301,8 @@ function watered(g) {
 
 // A roof section cut to its outline: its slope over the outline, a flat
 // underside, and upright sides, with trim along the sloped edges but those
-// it shares with another section, where the two meet in a valley.
+// it shares with another section, where the two meet in a valley, and along
+// the top of a tall side that's level, as a roof section's is.
 function roofOutline(mesh, scene, r) {
   const C = scene.colors;
   const low = r.underside ?? r.eave - MODEL_ROOF_DEPTH;
@@ -1305,6 +1314,12 @@ function roofOutline(mesh, scene, r) {
   points.forEach((_, i) => {
     const j = (i + 1) % n;
     const tall = Math.max(top[i][2], top[j][2]) - low > MODEL_ROOF_DEPTH + 0.05;
+    if (tall && Math.abs(top[i][2] - top[j][2]) < 1e-6) { // level along its top: siding, with trim along it
+      const under = (p) => [p[0], p[1], p[2] - MODEL_TRIM];
+      faces.push([[bottom[i], bottom[j], under(top[j]), under(top[i])], C.siding]);
+      faces.push([[under(top[i]), under(top[j]), top[j], top[i]], C.trim]);
+      return;
+    }
     faces.push([[bottom[i], bottom[j], top[j], top[i]], tall ? C.siding : C.trim]);
   });
   mesh.solid(faces, r.item.id);
@@ -1319,7 +1334,7 @@ function roofOutline(mesh, scene, r) {
     const length = Math.hypot(ex, ey);
     const [ox, oy] = [(sign * ey * 0.03) / length, (-sign * ex * 0.03) / length]; // just outside
     const at = (q, dz) => [q[0] + ox, q[1] + oy, q[2] + dz];
-    mesh.face([at(top[i], 0), at(top[j], 0), at(top[j], -0.45), at(top[i], -0.45)], C.trim, r.item.id, middle);
+    mesh.face([at(top[i], 0), at(top[j], 0), at(top[j], -MODEL_TRIM), at(top[i], -MODEL_TRIM)], C.trim, r.item.id, middle);
   });
 }
 
