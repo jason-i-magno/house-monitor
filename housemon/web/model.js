@@ -792,8 +792,8 @@ function openingPanels(mesh, scene, o, mode, view) {
     return;
   }
   if (o.kind === "opening") return; // a doorway with no door stands open
-  if (!o.exterior) { // a door inside, closed, in white
-    if (o.kind === "door") part([s0, s1], across(0.35, 0.65), [z0, z1], C.white);
+  if (!o.exterior) { // a door inside, closed, in white unless it has a finish
+    if (o.kind === "door") doorPanel(part, C, o, [s0, s1, z0, z1], across, C[o.finish] ?? C.white);
     return;
   }
   doorOrWindow(part, C, o, [s0, s1, z0, z1], depth);
@@ -809,14 +809,16 @@ function openingPanels(mesh, scene, o, mode, view) {
 }
 
 // An outside door or window from s0 to s1 and z0 to z1, its parts at depths d(f), for f from 0 at the wall's
-// outside face to 1 at its inside: a door's panel, a garage door's with its seams, or a window's or sliding
-// door's glass in a frame, split down the middle if it's wide. The glass stops just inside the frame's edges,
-// so the two never share a face, which would flicker where it shows: atop a level cut away, or on a shed.
+// outside face to 1 at its inside: a door's panel, in its finish or else the door color, a garage door's with
+// its seams, or a window's or sliding door's glass in a frame, split down the middle if it's wide. The glass
+// stops just inside the frame's edges, so the two never share a face, which would flicker where it shows:
+// atop a level cut away, or on a shed.
 function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
   const across = (f0, f1) => [d(f0), d(f1)];
-  if (o.kind === "door" || o.kind === "garage door") {
-    part([s0, s1], across(0.35, 0.65), [z0, z1], o.kind === "door" ? C.door : C["garage-door"]);
-    for (const f of o.kind === "garage door" ? [0.25, 0.5, 0.75] : []) { // its panels' seams
+  if (o.kind === "door") return doorPanel(part, C, o, [s0, s1, z0, z1], across, C[o.finish] ?? C.door);
+  if (o.kind === "garage door") {
+    part([s0, s1], across(0.35, 0.65), [z0, z1], C["garage-door"]);
+    for (const f of [0.25, 0.5, 0.75]) { // its panels' seams
       const z = z0 + f * o.height;
       if (z + 0.04 < z1) part([s0 + 0.2, s1 - 0.2], across(0.3, 0.35), [z - 0.04, z + 0.04], C.seam);
     }
@@ -830,6 +832,30 @@ function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
   if (z1 >= o.z1 - 1e-6) part([s0, s1], frame, [z1 - bar, z1], C.sash);
   const mid = (s0 + s1) / 2;
   if (s1 - s0 > 3.5) part([mid - bar / 2, mid + bar / 2], frame, [z0, z1], C.sash);
+}
+
+// A door's panel from s0 to s1 and z0 to z1, its depths across(f0, f1) as doorOrWindow's, in color, with a
+// window high in it if it has panes, o.panes across and down: the panel around the window, set in from its sides,
+// and the glass, just inside the panel's edges, behind muntins between the panes in the panel's color.
+function doorPanel(part, C, o, [s0, s1, z0, z1], across, color) {
+  const panel = across(0.35, 0.65);
+  const [ws0, ws1, wz0, wz1] = [o.s0 + 0.15 * (o.s1 - o.s0), o.s1 - 0.15 * (o.s1 - o.s0), o.z1 - 0.27 * o.height, o.z1 - 0.08 * o.height];
+  if (!o.panes || z1 <= wz0 + 1e-6) return part([s0, s1], panel, [z0, z1], color);
+  const top = Math.min(wz1, z1); // cut away with its wall
+  part([s0, s1], panel, [z0, wz0], color);
+  part([s0, ws0], panel, [wz0, top], color);
+  part([ws1, s1], panel, [wz0, top], color);
+  if (z1 > wz1) part([s0, s1], panel, [wz1, z1], color);
+  part([ws0 + 0.01, ws1 - 0.01], across(0.45, 0.55), [wz0 + 0.01, top - 0.01], C.glass);
+  const [[cols, rows], bar, muntin] = [o.panes, 0.05, across(0.4, 0.6)];
+  for (let i = 1; i < cols; i++) {
+    const s = ws0 + (i * (ws1 - ws0)) / cols;
+    part([s - bar / 2, s + bar / 2], muntin, [wz0, top], color);
+  }
+  for (let j = 1; j < rows; j++) {
+    const z = wz0 + (j * (wz1 - wz0)) / rows;
+    if (z + bar / 2 < top) part([ws0, ws1], muntin, [z - bar / 2, z + bar / 2], color);
+  }
 }
 
 // A floor's rectangle, x0, y0, x1, y1, in cells around its stairwells: wherever a flight in a room climbs to

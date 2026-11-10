@@ -66,7 +66,10 @@ class Opening:
     an opening from wall to wall has both. sill is how high its bottom is
     above the room's floor, or the ground for a shed's. A door, window or
     opening goes through the wall to whatever is on the other side; an
-    opening has no door in it. A vent is a grille on the wall.
+    opening has no door in it. A vent is a grille on the wall. A door's
+    finish, one of FINISHES, colors its panel in place of the door color (white
+    for one inside), and panes, how many across and down, set a window of that
+    many panes high in it.
     """
 
     name: str
@@ -78,10 +81,20 @@ class Opening:
     height: float
     sill: float = 0.0
     known: bool = False
+    finish: str | None = None
+    panes: tuple[int, int] | None = None
 
     def __post_init__(self):
         _check(self.kind, OPENINGS, "an opening's kind")
         _check(self.wall, SIDES, "a wall")
+        if self.kind != "door" and (self.finish is not None or self.panes is not None):
+            raise ValueError(f"{self.name} is a {self.kind}, and only a door has a finish or panes")
+        if self.finish is not None:
+            _check(self.finish, FINISHES, "a door's finish")
+        if self.panes is not None and (
+            len(self.panes) != 2 or not all(isinstance(n, int) and n >= 1 for n in self.panes)
+        ):
+            raise ValueError(f"{self.name}'s panes are how many across and down, as (3, 2), not {self.panes!r}")
 
 
 @dataclass(frozen=True)
