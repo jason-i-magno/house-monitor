@@ -9,9 +9,13 @@
 <body>
   <header class="top">
     <h1>House</h1>
-    <p class="connection" id="connection" role="status">
-      <span class="dot" aria-hidden="true"></span><span class="label">Connecting…</span>
-    </p>
+    <div class="top-actions">
+      <button type="button" class="toggle" id="simulated" aria-pressed="false" hidden
+        title="Leave out the readings the simulator makes up: their rooms' cards, values on the map, and lines in the charts">Hide simulated</button>
+      <p class="connection" id="connection" role="status">
+        <span class="dot" aria-hidden="true"></span><span class="label">Connecting…</span>
+      </p>
+    </div>
   </header>
   <main>
     <div id="rooms"></div>

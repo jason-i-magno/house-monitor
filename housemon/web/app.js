@@ -51,7 +51,10 @@ const MAP_KEY_ZOOM = 1.25; // times the detailed view zooms in, or out, for a pr
 const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
 
 const state = {
-  sensors: [], // [{id, name, floor, plan, reading, card}], in house order; a plan is a list of pieces for an L
+  // [{id, name, floor, plan, latest, reading, card}], in house order; a plan is a list of pieces for an L. latest is
+  // the newest reading, and reading the one shown: null while it's the simulator's and those are hidden.
+  sensors: [],
+  hideSimulated: false, // the simulator's readings left out, for this viewer
   areas: [], // [{name, floor, plan}]: parts of the house with no sensor
   details: null, // the doors, windows, roof, yard and more for the detailed view (housemon/details.py), if any
   wall: null, // how thick every wall is, in feet (housemon/layout.py)
@@ -136,6 +139,36 @@ function duration(seconds) {
 
 // --- Room cards ----------------------------------------------------------
 
+// Whether a room is hidden: its newest reading made up by the simulator, while those are hidden. A room read from
+// a sensor stays, its history without what the simulator made up before.
+function hiddenRoom(sensor) {
+  return state.hideSimulated && Boolean(sensor.latest?.simulated);
+}
+
+function showReading(sensor) {
+  sensor.reading = hiddenRoom(sensor) ? null : sensor.latest ?? null;
+}
+
+// Hide or show the simulator's readings: their rooms' cards, values on the map, lines and history in the charts.
+function setHideSimulated(hide) {
+  state.hideSimulated = hide;
+  try {
+    localStorage.setItem("house-monitor-hide-simulated", String(hide));
+  } catch {}
+  renderSimulatedToggle();
+  state.sensors.forEach(showReading);
+  updateRooms();
+  state.charts.forEach(renderLegend);
+  drawMap();
+  loadHistory();
+}
+
+function renderSimulatedToggle() {
+  const button = document.getElementById("simulated");
+  button.setAttribute("aria-pressed", String(state.hideSimulated));
+  button.onclick = () => setHideSimulated(!state.hideSimulated);
+}
+
 function renderRooms() {
   const root = document.getElementById("rooms");
   root.replaceChildren();
@@ -169,6 +202,7 @@ function updateRooms() {
   for (const sensor of state.sensors) {
     const card = sensor.card;
     const reading = sensor.reading;
+    card.hidden = hiddenRoom(sensor);
     const [value, humidity, updatedAt, device, stale] = [".value", ".humidity", ".updated-at", ".device", ".stale"]
       .map((s) => card.querySelector(s));
     if (!reading) {
@@ -179,16 +213,23 @@ function updateRooms() {
     value.textContent = fahrenheit(reading.temperature_c).toFixed(1);
     humidity.textContent = reading.humidity == null ? "Reads temperature only" : `${Math.round(reading.humidity)}% humidity`;
     updatedAt.textContent = `Updated ${ago(age)}`;
-    // Each detail stays whole, so a narrow card wraps between them.
+    // Each detail stays whole, so a narrow card wraps between them. A made-up reading says so, in place of a
+    // battery and signal that are made up too.
     const details = [];
-    if (reading.battery != null) details.push(`Battery ${reading.battery}%`);
-    if (reading.rssi != null) details.push(`Signal ${String(reading.rssi).replace("-", "−")} dBm`);
+    if (reading.simulated) details.push("Simulated");
+    else if (reading.battery != null) details.push(`Battery ${reading.battery}%`);
+    if (!reading.simulated && reading.rssi != null) details.push(`Signal ${String(reading.rssi).replace("-", "−")} dBm`);
     device.replaceChildren(...details.flatMap((text, i) => [i ? " · " : "", el("span", { class: "nowrap" }, text)]));
     const isStale = age > STALE_AFTER;
     card.classList.toggle("is-stale", isStale);
     stale.hidden = !isStale;
     stale.lastElementChild.textContent = `No reading for ${duration(age)}`;
   }
+  // A level whose rooms are all hidden goes too, and the toggle shows only while there's something to hide.
+  for (const section of document.querySelectorAll("#rooms .floor")) {
+    section.hidden = [...section.querySelectorAll(".room")].every((card) => card.hidden);
+  }
+  document.getElementById("simulated").hidden = !state.sensors.some((s) => s.latest?.simulated);
 }
 
 // --- Charts --------------------------------------------------------------
@@ -219,7 +260,8 @@ function createChart({ title, metric, rooms }) {
     hidden = JSON.parse(localStorage.getItem(HIDDEN_ROOMS_KEY))?.[title] ?? [];
   } catch {}
   const chart = {
-    title, metric, rooms, figure, svg: root, plot, tooltip, legend, details, tableWrap,
+    title, metric, figure, svg: root, plot, tooltip, legend, details, tableWrap,
+    rooms: (sensor) => rooms(sensor) && !hiddenRoom(sensor), // but rooms whose made-up readings are hidden
     hidden: new Set(hidden), // the sensor ids whose lines are hidden
     layout: null,
     hoverTime: null,
@@ -320,6 +362,31 @@ function timeTicks(since, until, plotWidth) {
   return ticks;
 }
 
+// A run of points, in pixels and in time order, as a smooth curve through every one that never bends past one, so
+// a peak or dip drawn is one read: cubic Béziers with Steffen's monotone tangents, as d3's curveMonotoneX draws. Two
+// points are a straight line, and one draws nothing, as a line through it would.
+function smoothPath(points) {
+  const at = ([px, py]) => `${px.toFixed(1)},${py.toFixed(1)}`;
+  const n = points.length;
+  if (n < 3) return points.map((p, i) => (i ? "L" : "M") + at(p)).join("");
+  const h = points.slice(1).map((p, i) => p[0] - points[i][0]);
+  const slope = h.map((dx, i) => (dx ? (points[i + 1][1] - points[i][1]) / dx : 0));
+  const m = new Array(n).fill(0); // each point's tangent
+  for (let i = 1; i < n - 1; i++) {
+    const p = (slope[i - 1] * h[i] + slope[i] * h[i - 1]) / (h[i - 1] + h[i] || 1);
+    m[i] = (Math.sign(slope[i - 1]) + Math.sign(slope[i])) * Math.min(Math.abs(slope[i - 1]), Math.abs(slope[i]), 0.5 * Math.abs(p)) || 0;
+  }
+  m[0] = (3 * slope[0] - m[1]) / 2;
+  m[n - 1] = (3 * slope[n - 2] - m[n - 2]) / 2;
+  let d = "M" + at(points[0]);
+  for (let i = 0; i < n - 1; i++) {
+    const [[x0, y0], [x1, y1]] = [points[i], points[i + 1]];
+    const dx = (x1 - x0) / 3;
+    d += `C${at([x0 + dx, y0 + m[i] * dx])} ${at([x1 - dx, y1 - m[i + 1] * dx])} ${at([x1, y1])}`;
+  }
+  return d;
+}
+
 function drawChart(chart) {
   const width = chart.plot.clientWidth;
   if (!width || !state.history) return;
@@ -371,11 +438,13 @@ function drawChart(chart) {
   }
 
   for (const s of series) {
-    let d = "";
+    // Each run of points between gaps, as a smooth curve through them.
+    const runs = [];
     s.points.forEach(([t, v], i) => {
-      const move = i === 0 || t - s.points[i - 1][0] > gap;
-      d += `${move ? "M" : "L"}${x(t).toFixed(1)},${y(v).toFixed(1)}`;
+      if (i === 0 || t - s.points[i - 1][0] > gap) runs.push([]);
+      runs[runs.length - 1].push([x(t), y(v)]);
     });
+    const d = runs.map(smoothPath).join("");
     root.append(svg("path", {
       d,
       fill: "none",
@@ -1461,6 +1530,10 @@ function drawAll() {
 async function loadSensors() {
   const response = await fetch("/api/sensors");
   ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null } = await response.json());
+  for (const sensor of state.sensors) {
+    sensor.latest = sensor.reading;
+    showReading(sensor);
+  }
   state.modelScene = null; // rebuilt from these when next drawn
   renderRooms();
   state.charts.forEach(renderLegend);
@@ -1470,7 +1543,7 @@ async function loadSensors() {
 async function loadHistory() {
   const request = ++state.historyRequest;
   state.charts.forEach((c) => c.figure.classList.add("is-loading"));
-  const response = await fetch(`/api/history?hours=${state.hours}`);
+  const response = await fetch(`/api/history?hours=${state.hours}${state.hideSimulated ? "&simulated=0" : ""}`);
   const history = await response.json();
   if (request !== state.historyRequest) return; // a newer range was picked meanwhile
   state.history = history;
@@ -1485,13 +1558,16 @@ function onReading(reading) {
   const sensor = state.sensors.find((s) => s.id === reading.sensor_id);
   if (!sensor) return;
   const charted = state.charts.map((chart) => chart.rooms(sensor));
-  sensor.reading = reading;
-  // A room that starts or stops reading humidity joins or leaves the humidity chart.
+  sensor.latest = reading;
+  showReading(sensor);
+  // A room that starts or stops reading humidity joins or leaves the humidity chart, as one does that starts or
+  // stops being read by the simulator while its readings are hidden.
   state.charts.forEach((chart, i) => chart.rooms(sensor) !== charted[i] && renderLegend(chart));
+  updateRooms();
+  if (!sensor.reading) return; // hidden
   sensor.card.classList.remove("updated");
   void sensor.card.offsetWidth; // restart the arrival animation
   sensor.card.classList.add("updated");
-  updateRooms();
   drawMapSoon();
   if (state.history) {
     const points = (state.history.series[reading.sensor_id] ||= []);
@@ -1551,7 +1627,9 @@ async function main() {
     state.modelTrees = localStorage.getItem("house-monitor-model-trees") !== "false";
     state.modelCoverage = localStorage.getItem("house-monitor-model-coverage") === "true";
     state.modelCoverageBy = localStorage.getItem("house-monitor-model-coverage-by") === "water" ? "water" : "heads";
+    state.hideSimulated = localStorage.getItem("house-monitor-hide-simulated") === "true";
   } catch {}
+  renderSimulatedToggle();
   state.map = createMap();
   document.getElementById("map").append(state.map.figure);
   renderMapViews();
