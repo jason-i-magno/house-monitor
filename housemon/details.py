@@ -18,7 +18,11 @@ SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
 FIXTURES = (
     "appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller", "gas meter",
+    "attic vent",
 )
+ROOF_VENTS = ("pipe", "chimney")
+# A roof vent's width and how far it stands over the roof, unless it says (MODEL_ROOF_VENT in model.js)
+ROOF_VENT_SIZES = {"pipe": (0.4, 1.0), "chimney": (1.0, 3.0)}
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet", "dirt")
 TREES = ("deciduous", "evergreen")
@@ -35,7 +39,7 @@ EDGINGS = ("stone", "brick")
 CLADDINGS = ("siding", "paneling", "stone")
 FLOORINGS = ("carpet", "wood", "tile", "concrete", "dirt")
 WALLINGS = ("paint", "drywall", "concrete")
-FINISHES = ("white", "steel", "black", "grille", "brick", "stone", "wood")
+FINISHES = ("white", "steel", "black", "grille", "brick", "stone", "wood", "trim", "window-border")  # the last two, painted to match
 
 
 def _check(value, allowed, what):
@@ -135,7 +139,8 @@ class Fixture:
     its zones; and a controller, the box on a wall that runs them.
 
     A gas meter is outside, against the house's wall: its box `lift` over the ground, on its riser, the pipe the gas
-    comes up out of the ground through.
+    comes up out of the ground through. So is an attic vent, high on the wall, in a gable over the top floor's
+    ceiling, say: its box, its slats across it, shown only with the whole house, as the roof is.
     """
 
     name: str
@@ -158,8 +163,8 @@ class Fixture:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
         if self.kind == "valve box" and self.room is not None:
             raise ValueError(f"{self.name} is a valve box, sunk in the ground outside, so its room is None")
-        if self.kind == "gas meter" and self.room is not None:
-            raise ValueError(f"{self.name} is a gas meter, on the house's wall outside, so its room is None")
+        if self.kind in ("gas meter", "attic vent") and self.room is not None:
+            raise ValueError(f"{self.name} is a {self.kind}, on the house's wall outside, so its room is None")
         _check_against(self.name, self.against, self.room)
 
 
@@ -420,12 +425,29 @@ class Steps:
 
 @dataclass(frozen=True)
 class RoofVent:
-    """A vent pipe or cap through the roof at x, y on the plan, standing on whichever roof is there."""
+    """A vent pipe or cap, or a chimney, through the roof at x, y on the plan, standing on whichever roof is there.
+
+    kind is a pipe, black unless it has a finish, or a chimney: a square flue under a wider cap with two slots
+    round it, in its finish, steel unless given. width is how wide it is and height how far it stands over the
+    roof, unless given as ROOF_VENT_SIZES has them for its kind.
+    """
 
     name: str
     x: float
     y: float
     known: bool = False
+    kind: str = "pipe"
+    width: float | None = None
+    height: float | None = None
+    finish: str | None = None
+
+    def __post_init__(self):
+        _check(self.kind, ROOF_VENTS, "a roof vent's kind")
+        if self.finish is not None:
+            _check(self.finish, FINISHES, "a roof vent's finish")
+        for what in ("width", "height"):
+            if getattr(self, what) is not None and getattr(self, what) <= 0:
+                raise ValueError(f"{self.name}'s {what} is more than 0, not {getattr(self, what)}")
 
 
 @dataclass(frozen=True)
