@@ -131,6 +131,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(len(history["series"]["sim-office"]), 30)
         self.assertEqual(json.loads(self.get("/api/history?hours=720")[2])["bucket"], 87 * 60)  # 500 points
 
+    def test_history_can_leave_simulated_readings_out(self):
+        now = time.time()
+        self.store.add_many(Reading("sim-office", now - 60 * i, 18.0, 40.0, simulated=i >= 10) for i in range(30))
+        self.assertEqual(len(json.loads(self.get("/api/history?hours=6")[2])["series"]["sim-office"]), 30)
+        self.assertEqual(len(json.loads(self.get("/api/history?hours=6&simulated=0")[2])["series"]["sim-office"]), 10)
+
     def test_history_rejects_bad_ranges(self):
         for hours in ["0", "-1", "nan", "inf", "lots", str(24 * 400)]:
             self.assertEqual(self.get(f"/api/history?hours={hours}")[0], 400, hours)
