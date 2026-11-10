@@ -7,7 +7,10 @@ It asks only to read. It keeps the refresh token sign-in gives, in a file of its
 own (data/ecobee.json unless told otherwise), never the password, and polls the
 thermostat at most every three minutes. Each sensor reports its temperature in
 tenths of a degree Fahrenheit; the thermostat reports humidity too, a SmartSensor
-none. A room names the sensor that reads it by the name the ecobee app shows.
+none. A room names the sensor that reads it by the name the ecobee app shows,
+and the outside can name a thermostat, to read the weather ecobee's weather
+service reports where it is: the temperature and humidity now, in the same
+units.
 """
 
 import base64
@@ -194,6 +197,19 @@ def sensor_readings(thermostats: list[dict]) -> Iterator[SensorReading]:
             yield SensorReading(sensor.get("name", ""), thermostat.get("name", ""), round((tenths / 10 - 32) * 5 / 9, 2), humidity)
 
 
+def weather_reports(thermostats: list[dict]) -> Iterator[SensorReading]:
+    """Each thermostat's weather, its area's from ecobee's weather service, as the thermostat endpoint gives it with
+    includeWeather: the first forecast, which is the conditions now, named for the thermostat. Not a sensor at the
+    house, so it can differ a little from what's outside it."""
+    for thermostat in thermostats:
+        forecasts = thermostat.get("weather", {}).get("forecasts") or []
+        tenths = _number(forecasts[0].get("temperature")) if forecasts else None
+        if tenths is None:
+            continue
+        name = thermostat.get("name", "")
+        yield SensorReading(name, name, round((tenths / 10 - 32) * 5 / 9, 2), _number(forecasts[0].get("relativeHumidity")))
+
+
 class Account:
     """A signed-in ecobee account: its tokens, kept in a file, refreshed as they expire."""
 
@@ -241,7 +257,9 @@ class Account:
         if "access_token" not in tokens or tokens.get("expires_at", 0) < time.time() + 60:
             tokens = self._refresh()
         for attempt in (1, 2):
-            selection = {"selection": {"selectionType": "registered", "selectionMatch": "", "includeSensors": True, "includeRuntime": True}}
+            selection = {"selection": {
+                "selectionType": "registered", "selectionMatch": "", "includeSensors": True, "includeRuntime": True, "includeWeather": True,
+            }}
             request = Request(
                 f"{API}?{urlencode({'json': json.dumps(selection)})}",
                 headers={"Authorization": f"Bearer {tokens['access_token']}", "Content-Type": "application/json;charset=UTF-8"},
@@ -266,38 +284,54 @@ class Account:
 
 class EcobeeSource:
     """Readings for the rooms ecobee sensors read, polled every `interval` seconds. rooms() maps each ecobee sensor's
-    name, as the ecobee app shows it, to the sensor id of the room it reads, looked up each poll, so a changed house
-    file takes effect; a name matches whatever its case. A name the account has no sensor by is warned about, with
-    the names it has, once until it's matched again."""
+    name, as the ecobee app shows it, to the sensor id of the room it reads, and weather() each thermostat's name to
+    the sensor id of the place its weather reads, as the outside; both are looked up each poll, so a changed house
+    file takes effect, and a name matches whatever its case. A name the account has no sensor or thermostat by is
+    warned about, with the names it has, once until it's matched again."""
 
-    def __init__(self, account: Account, rooms: Callable[[], dict[str, str]], interval: float = POLL, warn: Callable[[str], None] | None = None):
+    def __init__(
+        self,
+        account: Account,
+        rooms: Callable[[], dict[str, str]],
+        interval: float = POLL,
+        warn: Callable[[str], None] | None = None,
+        weather: Callable[[], dict[str, str]] = dict,
+    ):
         self.account = account
         self.rooms = rooms
+        self.weather = weather
         self.interval = interval
         self.warn = warn or (lambda message: print(f"ecobee: {message}", file=sys.stderr, flush=True))
-        self.unmatched: set[str] = set()  # the names warned about, casefolded
+        self.unmatched: set[tuple[str, str]] = set()  # the names warned about: ("sensor" or "thermostat", casefolded)
 
     def poll(self, now: float) -> list[Reading]:
-        names = self.rooms()
-        rooms = {name.casefold(): sensor_id for name, sensor_id in names.items()}
-        if not rooms:
+        sensors, weather = self.rooms(), self.weather()
+        if not sensors and not weather:
             return []
         thermostats = self.account.thermostats()
-        readings = []
-        for sensor in sensor_readings(thermostats):
-            sensor_id = rooms.get(sensor.name.casefold())
-            if sensor_id:
-                readings.append(Reading(sensor_id, now, sensor.temperature_c, sensor.humidity))
-        # Every sensor's name, a sensor with no reading for now, as when it's offline, included, so it isn't taken for
-        # a name that's wrong.
-        has = [sensor.get("name", "") for thermostat in thermostats for sensor in thermostat.get("remoteSensors", [])]
-        unmatched = sorted((name for name in names if name.casefold() not in {n.casefold() for n in has}), key=str.casefold)
-        new = [name for name in unmatched if name.casefold() not in self.unmatched]
+        readings = self._read(now, sensors, sensor_readings(thermostats)) + self._read(now, weather, weather_reports(thermostats))
+        # Every sensor's and thermostat's name, one with no reading for now, as when it's offline, included, so it isn't
+        # taken for a name that's wrong.
+        unmatched: set[tuple[str, str]] = set()
+        self._check("sensor", sensors, [s.get("name", "") for t in thermostats for s in t.get("remoteSensors", [])], unmatched)
+        self._check("thermostat", weather, [t.get("name", "") for t in thermostats], unmatched)
+        self.unmatched = unmatched
+        return readings
+
+    @staticmethod
+    def _read(now: float, names: dict[str, str], values: Iterator[SensorReading]) -> list[Reading]:
+        rooms = {name.casefold(): sensor_id for name, sensor_id in names.items()}
+        return [Reading(rooms[v.name.casefold()], now, v.temperature_c, v.humidity) for v in values if v.name.casefold() in rooms]
+
+    def _check(self, kind: str, names: dict[str, str], has: list[str], unmatched: set[tuple[str, str]]) -> None:
+        """Warn of the names the account has no `kind` by, but those warned of already, and note them in unmatched."""
+        known = {name.casefold() for name in has}
+        missing = sorted((name for name in names if name.casefold() not in known), key=str.casefold)
+        new = [name for name in missing if (kind, name.casefold()) not in self.unmatched]
         if new:
             listed = ", ".join(repr(name) for name in has) or "none"
-            self.warn(f"no sensor named {', '.join(repr(name) for name in new)}, as the house file has; the account has {listed}")
-        self.unmatched = {name.casefold() for name in unmatched}
-        return readings
+            self.warn(f"no {kind} named {', '.join(repr(name) for name in new)}, as the house file has; the account has {listed}")
+        unmatched.update((kind, name.casefold()) for name in missing)
 
     def run(self, publish: Callable[[Reading], None], stop: threading.Event) -> None:
         """Call publish(reading) for each room's reading every poll until stop is set. A failed poll is reported and
@@ -328,7 +362,12 @@ def sign_in_interactively(path: Path, ask: Callable[[str], str] = input, ask_sec
     account = Account(path)
     account.save(tokens)
     print(f"Signed in; saved to {path}, readable only by you. Its sensors:")
-    for sensor in sensor_readings(account.thermostats()):
+    thermostats = account.thermostats()
+    for sensor in sensor_readings(thermostats):
         humidity = "" if sensor.humidity is None else f", {sensor.humidity:.0f}% humidity"
         print(f"  {sensor.name!r} on {sensor.thermostat!r}: {sensor.temperature_c * 9 / 5 + 32:.1f}°F{humidity}")
-    print('Give a room in the house file ecobee="<name>" for its readings to come from that sensor.')
+    for report in weather_reports(thermostats):
+        humidity = "" if report.humidity is None else f", {report.humidity:.0f}% humidity"
+        print(f"  the weather where {report.name!r} is: {report.temperature_c * 9 / 5 + 32:.1f}°F{humidity}")
+    print('Give a room in the house file ecobee="<sensor>" for its readings to come from that sensor, and the outside')
+    print('ecobee_weather="<thermostat>" for its readings to come from that thermostat\'s weather.')

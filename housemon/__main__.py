@@ -38,7 +38,8 @@ def main(argv: list[str] | None = None) -> None:
         "--ecobee",
         type=Path,
         default=Path("data") / "ecobee.json",
-        help="the saved ecobee sign-in: with it, rooms the house file gives an ecobee sensor read from that sensor (default: %(default)s)",
+        help="the saved ecobee sign-in: with it, rooms the house file gives an ecobee sensor read from that sensor, and an"
+        " outside it gives a thermostat's weather from that (default: %(default)s)",
     )
     parser.add_argument(
         "--ecobee-sign-in", action="store_true", help="sign in to ecobee, save the sign-in to --ecobee, list its sensors, and exit"
@@ -59,13 +60,20 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(house_json(source.sensors, source.areas, source.details)))
         return
 
-    # Signed in to ecobee, the rooms that name an ecobee sensor read from it, and the simulator leaves them be.
+    # Signed in to ecobee, the rooms that name an ecobee sensor read from it, and an outside that names a thermostat
+    # from its weather, and the simulator leaves them be.
     def ecobee_rooms() -> dict[str, str]:
         return {room.ecobee: room.sensor.id for room in source.rooms if getattr(room, "ecobee", None)}
 
+    def ecobee_weather() -> dict[str, str]:
+        return {room.ecobee_weather: room.sensor.id for room in source.rooms if getattr(room, "ecobee_weather", None)}
+
+    def ecobee_read() -> set[str]:
+        return set(ecobee_rooms().values()) | set(ecobee_weather().values())
+
     signed_in = args.ecobee.exists()
     if signed_in:
-        source.skip = set(ecobee_rooms().values())
+        source.skip = ecobee_read()
 
     db = args.db or Path("data") / f"{args.source}.sqlite3"
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +90,7 @@ def main(argv: list[str] | None = None) -> None:
         if changed:
             source.rooms = changed.HOUSE
             if signed_in:
-                source.skip = set(ecobee_rooms().values())
+                source.skip = ecobee_read()
             source.areas = list(getattr(changed, "AREAS", ()))
             source.details = getattr(changed, "DETAILS", None)
             server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
@@ -93,7 +101,7 @@ def main(argv: list[str] | None = None) -> None:
     stop = threading.Event()
     collectors = [threading.Thread(target=source.run, args=(hub.publish, stop), name="collector", daemon=True)]
     if signed_in:
-        poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms)
+        poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms, weather=ecobee_weather)
         collectors.append(threading.Thread(target=poller.run, args=(hub.publish, stop), name="ecobee", daemon=True))
     for collector in collectors:
         collector.start()
@@ -103,6 +111,8 @@ def main(argv: list[str] | None = None) -> None:
     if signed_in:
         names = ", ".join(sorted(ecobee_rooms())) or "no room names one yet"
         sources += f", ecobee sensors ({names})"
+        if ecobee_weather():
+            sources += f", weather where {', '.join(sorted(ecobee_weather()))} is"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
     try:
         server.serve_forever()

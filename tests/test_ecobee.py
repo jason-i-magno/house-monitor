@@ -105,8 +105,15 @@ THERMOSTATS = [
             {"name": "Bedroom", "type": "ecobee3_remote_sensor", "capability": [{"type": "temperature", "value": "unknown"}]},
             {"name": "Den", "type": "ecobee3_remote_sensor", "capability": [{"type": "temperature", "value": -5002}]},
         ],
+        # The weather where it is: the conditions now, then forecasts.
+        "weather": {"timestamp": "2030-01-01 18:00:00", "forecasts": [{"temperature": 612, "relativeHumidity": 37}, {"temperature": 590, "relativeHumidity": 40}]},
     },
-    {"name": "Offline", "runtime": {"connected": False}, "remoteSensors": [{"name": "Garage", "capability": [{"type": "temperature", "value": "500"}]}]},
+    {
+        "name": "Offline",
+        "runtime": {"connected": False},
+        "remoteSensors": [{"name": "Garage", "capability": [{"type": "temperature", "value": "500"}]}],
+        "weather": {"forecasts": [{"temperature": -5002, "relativeHumidity": -5002}]},  # none to give
+    },
 ]
 
 
@@ -143,6 +150,10 @@ class SensorReadingsTest(unittest.TestCase):
             ecobee.SensorReading("Dining Room", "Hallway", 20.39, None),  # a SmartSensor reads no humidity
         ])  # but not one with no temperature yet, nor an offline thermostat's
 
+    def test_reads_the_weather_now_where_each_thermostat_is(self):
+        # The first forecast, the conditions now, 61.2 °F; not a thermostat whose weather has none.
+        self.assertEqual(list(ecobee.weather_reports(THERMOSTATS)), [ecobee.SensorReading("Hallway", "Hallway", 16.22, 37.0)])
+
 
 class AccountTest(unittest.TestCase):
     def setUp(self):
@@ -171,7 +182,7 @@ class AccountTest(unittest.TestCase):
         self.assertEqual((saved["access_token"], saved["refresh_token"]), ("A2", "R2"))
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)  # readable only by its owner
         selection = json.loads(parse_qs(urlparse(self.fake.calls[-1][1]).query)["json"][0])["selection"]
-        self.assertTrue(selection["includeSensors"])
+        self.assertTrue(selection["includeSensors"] and selection["includeWeather"])
 
     def test_refreshes_when_ecobee_says_the_token_expired(self):
         answers = iter([("error", 500, {"status": {"code": 14}}), ("json", {"thermostatList": THERMOSTATS})])
@@ -215,6 +226,14 @@ class EcobeeSourceTest(unittest.TestCase):
         names["ATTIC"] = "attic"
         source.poll(1540.0)
         self.assertEqual(len(warnings), 2)  # and again once it's put back after being fixed
+
+    def test_reads_the_outside_from_a_thermostats_weather(self):
+        account = unittest.mock.Mock(thermostats=lambda: THERMOSTATS)
+        warnings = []
+        source = ecobee.EcobeeSource(account, dict, weather=lambda: {"HALLWAY": "outside", "Upstairs": "porch"}, warn=warnings.append)
+        self.assertEqual(source.poll(1000.0), [Reading("outside", 1000.0, 16.22, 37.0)])
+        # A thermostat name the account doesn't have, by its thermostats' names, not its sensors'.
+        self.assertEqual(warnings, ["no thermostat named 'Upstairs', as the house file has; the account has 'Hallway', 'Offline'"])
 
 
 if __name__ == "__main__":
