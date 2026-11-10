@@ -789,6 +789,14 @@ class KindsTest(unittest.TestCase):
             Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", count=0)
         with self.assertRaises(ValueError):
             Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", banisters=("front",))  # across the climb
+        Opening("Back door", "door", "Office", "back", 2, 3, 6.67, finish="white", panes=(3, 2))
+        for wrong in (
+            {"kind": "window", "finish": "white"}, {"kind": "window", "panes": (3, 2)}, {"finish": "red"},
+            {"panes": (3,)}, {"panes": (0, 2)}, {"panes": (1.5, 2)},
+        ):
+            with self.assertRaises(ValueError, msg=wrong):
+                Opening(**{"name": "Back door", "kind": "door", "room": "Office", "wall": "back", "offset": 2,
+                           "width": 3, "height": 6.67, **wrong})
         lot = ((0, 0), (10, 0), (10, 10), (0, 10))
         Details(lot=lot, grade=-1, window_border=0.5)
         with self.assertRaises(ValueError):
