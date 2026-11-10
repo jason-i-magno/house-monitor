@@ -15,7 +15,8 @@ colors, and the garage, bathroom and outside share the gray.
 """
 
 from housemon.details import (
-    Closet, Details, Fence, Finish, Fixture, Ground, Head, Hedge, Opening, Roof, RoofVent, Shed, Sprinklers, Steps, Tree,
+    Closet, Details, Fence, Finish, Fixture, Ground, Head, Hedge, Opening, Roof, RoofVent, Shed, Slope, Sprinklers, Steps,
+    Tree,
 )
 from housemon.readings import Area, Plan, Sensor
 from housemon.simulator import SimulatedRoom
@@ -70,6 +71,7 @@ AREAS = (
 DETAILS = Details(
     lot=((-20, -45), (75, -45), (75, 60), (-20, 60)),
     grade=-1,
+    slopes=(Slope("Front yard", "front", (36, 60), fall=1.5),),  # from the porch steps' foot down to the street
     example=True,
     finishes={
         "Upstairs bedroom": Finish("carpet"),

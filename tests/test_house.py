@@ -15,7 +15,9 @@ from pathlib import Path
 from housemon import example_house
 from housemon import house as houses
 from housemon import layout
-from housemon.details import THROWS, Closet, Fence, Fixture, Ground, Head, Hedge, Opening, Roof, Sprinklers, Steps, Tree
+from housemon.details import (
+    THROWS, Closet, Details, Fence, Fixture, Ground, Head, Hedge, Opening, Roof, Slope, Sprinklers, Steps, Tree,
+)
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
 # side where half the wall stands, and none where it stands past the side, in the place beyond (layout.py)
@@ -632,6 +634,19 @@ class YardTest(HouseTestCase):
                         self.assertTrue(h.in_lot(x, y, slack=0.5), (fence.name, x, y))
                         self.assertFalse(h.on_house(x, y), (fence.name, x, y))
 
+    def test_the_house_stands_on_level_ground_before_each_slope(self):
+        # Before its top, its walls and all: behind a slope falling to the front, in front of one falling to the back.
+        for h in self.each():
+            for slope in h.details.slopes:
+                top, foot = slope.between if slope.down in ("front", "right") else slope.between[::-1]
+                for place, p in h.pieces:
+                    x, y, width, depth = rect(p)
+                    lo, hi = (y, y + depth) if slope.down in ("back", "front") else (x, x + width)
+                    if top < foot:
+                        self.assertLessEqual(hi + layout.WALL, top, (slope.name, place.name))
+                    else:
+                        self.assertGreaterEqual(lo - layout.WALL, top, (slope.name, place.name))
+
     def test_the_lowest_floor_is_below_the_ground_and_the_main_floor_above_it(self):
         for h in self.each():
             lowest = min(p.elevation for _, p in h.pieces)
@@ -644,7 +659,10 @@ class StepsTest(HouseTestCase):
             for steps in (s for s in h.details.steps if not s.room):
                 self.assertTrue(all(h.in_lot(x, y) for x, y in corners(rect(steps))), steps.name)
                 self.assertFalse(squares(rect(steps)) & h.footprint, steps.name)
-                self.assertEqual(steps.bottom, h.details.grade, steps.name)
+                # From the ground at the middle of their foot, where it slopes too.
+                x, y, width, depth = rect(steps)
+                foot = {"back": (x + width / 2, y + depth), "front": (x + width / 2, y), "left": (x + width, y + depth / 2), "right": (x, y + depth / 2)}
+                self.assertAlmostEqual(steps.bottom, h.details.ground(*foot[steps.up]), places=2, msg=steps.name)
 
     def test_steps_in_a_room_are_in_a_piece_of_it_and_start_on_its_floor(self):
         for h in self.each():
@@ -770,11 +788,32 @@ class KindsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", banisters=("front",))  # across the climb
 
+    def test_a_slope_falls_some_way_toward_a_side_between_two_lines(self):
+        Slope("Yard", "back", (-10, 20), fall=2)
+        for wrong in ({"down": "up"}, {"between": (20, -10)}, {"between": (5,)}, {"fall": 0}):
+            with self.assertRaises(ValueError, msg=wrong):
+                Slope(**{"name": "Yard", "down": "front", "between": (-10, 20), "fall": 2, **wrong})
+
     def test_a_roof_needs_a_ridge_or_a_drop(self):
         with self.assertRaises(ValueError):
             Roof("Flat", 0, 0, 10, 10, eave=9, peak=9)
         with self.assertRaises(ValueError):
             Roof("Both", 0, 0, 10, 10, eave=9, peak=12, ridge="x", drop="left")
+
+
+class GroundTest(unittest.TestCase):
+    def test_the_ground_falls_evenly_down_a_slope_and_stays_level_before_and_past_it(self):
+        lot = ((0, 0), (40, 0), (40, 60), (0, 60))
+        front = Details(lot=lot, grade=-1, slopes=(Slope("Front yard", "front", (30, 50), fall=2),))
+        self.assertEqual([front.ground(10, y) for y in (0, 30, 40, 50, 60)], [-1, -1, -2, -3, -3])
+        self.assertEqual(front.ground(0, 40), front.ground(40, 40))  # level across it
+        back = Details(lot=lot, grade=-1, slopes=(Slope("Back yard", "back", (0, 20), fall=1),))
+        self.assertEqual([back.ground(10, y) for y in (0, 10, 20, 60)], [-2, -1.5, -1, -1])
+        # Slopes add up: one down to the front and one down to the right.
+        both = Details(lot=lot, grade=-1, slopes=(*front.slopes, Slope("Side", "right", (20, 40), fall=1)))
+        self.assertEqual(both.ground(40, 60), -4)
+        self.assertEqual(both.ground(30, 40), -2.5)
+        self.assertEqual(Details(lot=lot, grade=-1).ground(10, 10), -1)
 
 
 class LoadTest(unittest.TestCase):
