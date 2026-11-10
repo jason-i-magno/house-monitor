@@ -29,6 +29,10 @@ const MODEL_SIZE = 720; // px at most across the scene's bounding sphere
 const MODEL_PAD = 16;
 const MODEL_ZOOM_MAX = 6; // times the house's framing
 const MODEL_THROW = { rotor: 30, spray: 12 }; // feet a sprinkler head throws, unless it or its zone says, as details.THROWS
+// A roof vent's width and how far it stands over the roof, unless it says, as details.ROOF_VENT_SIZES; and a
+// chimney's cap, standing out this far round its flue and this tall
+const MODEL_ROOF_VENT = { pipe: [0.4, 1], chimney: [1, 3] };
+const MODEL_CHIMNEY_CAP = [0.25, 1];
 const MODEL_COVERAGE_CELL = 0.1; // feet across a cell of the sprinklers' coverage grid, at the finest
 const MODEL_COVERAGE_CELLS = 1024; // cells at most along a side of the lot
 // How much water the heads put down, for the map of it: every rotor turns at the same speed and puts out the same
@@ -59,6 +63,7 @@ const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
   deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller", "gas meter": "Gas meter",
+  "attic vent": "Attic vent", pipe: "Roof vent", chimney: "Chimney",
 };
 const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard", "Sprinklers"];
 // Each side of a plan as a line: the axis it runs along, where it is across
@@ -309,7 +314,8 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", "attic vent": "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
+  for (const f of fixtures) if (f.kind === "attic vent") f.item.whole = true; // high on the wall, shown with the roof
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   // Each standing on the ground where it is: a raised one level, its top its height over the highest ground under it,
   // and its sides down to the lowest (low).
@@ -394,7 +400,10 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     const under = roofs.filter((r) => onRoof(r, v.x, v.y));
     if (!under.length) return [];
     const z = Math.max(...under.map((r) => roofTop(r, v.x, v.y)));
-    return [{ ...v, z, item: add({ key: `vent:${i}`, name: v.name, kind: "Roof vent", group: "Roof", where: "Roof", known: v.known, level: null, whole: true, bbox: [v.x - 0.2, v.y - 0.2, z, v.x + 0.2, v.y + 0.2, z + 1] }) }];
+    const kind = v.kind ?? "pipe";
+    const [width, height] = [v.width ?? MODEL_ROOF_VENT[kind][0], v.height ?? MODEL_ROOF_VENT[kind][1]];
+    const r = width / 2 + (kind === "chimney" ? MODEL_CHIMNEY_CAP[0] : 0); // out to its cap's edge
+    return [{ ...v, kind, width, height, z, item: add({ key: `vent:${i}`, name: v.name, kind: MODEL_KINDS[kind], group: "Roof", where: "Roof", known: v.known, level: null, whole: true, bbox: [v.x - r, v.y - r, z, v.x + r, v.y + r, z + height] }) }];
   });
   const lot = details.lot;
   const [lx0, ly0, lx1, ly1] = [Math.min(...lot.map((p) => p[0])), Math.min(...lot.map((p) => p[1])), Math.max(...lot.map((p) => p[0])), Math.max(...lot.map((p) => p[1]))];
@@ -1733,7 +1742,7 @@ function backflow(mesh, C, f) {
 // from the wall it's against, across its middle and from low on it to a little over halfway up. A backflow
 // preventer is pipes, and a valve box is sunk in the ground, its lid just over it. A gas meter is its box on its
 // riser, a pipe up out of the ground under its middle, its foot sunk so it's not in the ground's plane, and its top
-// inside the box.
+// inside the box. An attic vent is its box with its slats (atticVent).
 // A register set in the corner of its floor and the wall it stands against, its grille sloping from the floor out
 // in the room up to the wall, as high as its height.
 function cornerRegister(mesh, C, f) {
@@ -1753,7 +1762,41 @@ function cornerRegister(mesh, C, f) {
   ], f.item.id);
 }
 
+// A roof vent from just under the roof up to its height over it: a pipe, or a chimney, its flue under its cap,
+// wider by MODEL_CHIMNEY_CAP, with two dark slots standing just proud all round it.
+function roofVent(mesh, C, v) {
+  const [x, y, w, top, id] = [v.x, v.y, v.width / 2, v.z + v.height, v.item.id];
+  if (v.kind !== "chimney") {
+    box(mesh, [x - w, y - w, v.z - 0.5], [x + w, y + w, top], C[v.finish] ?? C.black, id);
+    return;
+  }
+  const [color, [out, tall]] = [C[v.finish] ?? C.steel, MODEL_CHIMNEY_CAP];
+  const [cap, base] = [w + out, Math.max(v.z, top - tall)];
+  box(mesh, [x - w, y - w, v.z - 0.5], [x + w, y + w, base], color, id);
+  box(mesh, [x - cap, y - cap, base], [x + cap, y + cap, top], color, id);
+  for (const f of [0.18, 0.51]) {
+    const z = top - f * (top - base);
+    box(mesh, [x - cap - 0.02, y - cap - 0.02, z - 0.04], [x + cap + 0.02, y + cap + 0.02, z + 0.04], C.black, id);
+  }
+}
+
+// An attic vent: its box, against the house's wall, and its slats across it, every 0.2 ft up it, standing just out
+// from its faces along the wall (the one against the wall hidden in it).
+function atticVent(mesh, C, f) {
+  const color = C[f.finish] ?? C.white;
+  box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], color, f.item.id);
+  const along = f.x1 - f.x0 >= f.y1 - f.y0; // its slats run along x
+  for (let z = f.z0 + 0.15; z + 0.1 < f.z1; z += 0.2) {
+    const [lo, hi] = along ? [[f.x0 + 0.05, f.y0 - 0.03], [f.x1 - 0.05, f.y1 + 0.03]] : [[f.x0 - 0.03, f.y0 + 0.05], [f.x1 + 0.03, f.y1 - 0.05]];
+    box(mesh, [...lo, z], [...hi, z + 0.04], color, f.item.id);
+  }
+}
+
 function fixture(mesh, C, f) {
+  if (f.kind === "attic vent") {
+    atticVent(mesh, C, f);
+    return;
+  }
   if (f.kind === "backflow") {
     backflow(mesh, C, f);
     return;
@@ -1829,7 +1872,7 @@ function buildModel(scene, mode, view, { trees = true, season = "summer" } = {})
   for (const h of scene.hedges) if (shows(h.item)) hedge(mesh, scene, h, season);
   if (mode === "outside") {
     for (const r of scene.roofs) roofSection(mesh, scene, r);
-    for (const v of scene.roofVents) box(mesh, [v.x - 0.2, v.y - 0.2, v.z - 0.5], [v.x + 0.2, v.y + 0.2, v.z + 1], C.black, v.item.id);
+    for (const v of scene.roofVents) roofVent(mesh, C, v);
   }
   // The triangles' data, ten numbers a vertex, the lawn's and planted beds' tops last, from vertex `wet` on.
   const data = new Float32Array(mesh.data.length + mesh.wet.length);

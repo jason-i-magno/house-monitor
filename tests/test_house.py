@@ -16,7 +16,8 @@ from housemon import example_house
 from housemon import house as houses
 from housemon import layout
 from housemon.details import (
-    THROWS, Closet, Details, Fence, Fixture, Ground, Head, Hedge, Opening, Roof, Slope, Sprinklers, Steps, Tree,
+    THROWS, Closet, Details, Fence, Fixture, Ground, Head, Hedge, Opening, Roof, RoofVent, Slope, Sprinklers, Steps,
+    Tree,
 )
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
@@ -738,6 +739,13 @@ class KindsTest(unittest.TestCase):
             Fixture("Valve box", "valve box", "Garage", 0, 0, 1.4, 1, 0.05)  # sunk in the ground outside
         with self.assertRaises(ValueError):
             Fixture("Gas meter", "gas meter", "Garage", 0, 0, 0.8, 1, 1.3)  # on the house's wall outside
+        with self.assertRaises(ValueError):
+            Fixture("Attic vent", "attic vent", "Office", 0, 0, 1, 0.1, 1.5)  # so is an attic vent
+        Fixture("Attic vent", "attic vent", None, 0, 0, 1, 0.1, 1.5, lift=15, finish="trim")
+        RoofVent("Chimney", 0, 0, kind="chimney", width=1.1, height=2.8, finish="window-border")
+        for wrong in ({"kind": "flue"}, {"finish": "red"}, {"width": 0}, {"height": -1}):
+            with self.assertRaises(ValueError, msg=wrong):
+                RoofVent("Chimney", 0, 0, **wrong)
         with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ((0, 0),), kind="drip")
         with self.assertRaises(ValueError):
