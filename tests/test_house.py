@@ -732,6 +732,8 @@ class KindsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Closet("Closet", "Office", 0, 0, 2, 2, door="up")
         with self.assertRaises(ValueError):
+            Closet("Closet", "Office", 0, 0, 2, 2, door="left", finish="glass")
+        with self.assertRaises(ValueError):
             Fixture("Fire pit", "fireplace", None, 0, 0, 3, 3, 1)
         with self.assertRaises(ValueError):
             Fixture("Garden wall", "half wall", None, 0, 0, 6, 0.5, 3)

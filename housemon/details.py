@@ -39,7 +39,7 @@ EDGINGS = ("stone", "brick")
 CLADDINGS = ("siding", "paneling", "stone")
 FLOORINGS = ("carpet", "wood", "tile", "concrete", "dirt")
 WALLINGS = ("paint", "drywall", "concrete")
-FINISHES = ("white", "steel", "black", "grille", "brick", "stone", "wood", "trim", "window-border")  # the last two, painted to match
+FINISHES = ("white", "steel", "black", "grille", "brick", "stone", "wood", "mirror", "trim", "window-border")  # the last two, painted to match
 
 
 def _check(value, allowed, what):
@@ -104,7 +104,8 @@ class Opening:
 @dataclass(frozen=True)
 class Closet:
     """A closet in a room, walled to the room's ceiling, at most 8 ft, with its doors on one side: into its room,
-    or, set into the room's wall on that side, through a door in that wall into the room beyond."""
+    or, set into the room's wall on that side, through a door in that wall into the room beyond. Its doors are
+    white, or in its finish, one of FINISHES: mirrors, say; set into the wall, the door drawn as its doors is too."""
 
     name: str
     room: str
@@ -114,9 +115,12 @@ class Closet:
     depth: float
     door: str
     known: bool = False
+    finish: str | None = None
 
     def __post_init__(self):
         _check(self.door, SIDES, "a closet's door side")
+        if self.finish is not None:
+            _check(self.finish, FINISHES, "a closet's doors' finish")
 
 
 @dataclass(frozen=True)

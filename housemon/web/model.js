@@ -43,7 +43,7 @@ const MODEL_ROTOR_FLOW = 3;
 const MODEL_SPRAY_RATE = 1.5;
 const MODEL_INCHES_AN_HOUR = 96.25; // inches an hour that a gallon a minute puts on a square foot: 231 in³ × 60 / 144 in²
 const MODEL_TOKENS = [
-  "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
+  "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "mirror", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
   "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "window-border", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
   "coverage-0", "coverage-1", "coverage-2", "coverage-3", "water-1", "water-2", "water-3", "water-4", "water-5",
@@ -311,7 +311,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     if (Math.abs(edge[0] - edge[1]) > 1e-6) continue;
     const [lo, hi] = c.door === "back" || c.door === "front" ? [c.x0, c.x1] : [c.y0, c.y1];
     for (const o of openings) {
-      if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
+      if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = c;
     }
   }
   const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", "attic vent": "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
@@ -795,8 +795,8 @@ function openingPanels(mesh, scene, o, mode, view) {
     part([s0, s1], [d0 - 0.04, d0], [z0, z1], C.grille);
     return;
   }
-  if (o.closet) { // a closet's doors, set into the wall, meeting in the middle
-    part([s0, s1], across(0.35, 0.65), [z0, z1], C.white);
+  if (o.closet) { // a closet's doors, set into the wall, meeting in the middle, white or in its finish or the closet's
+    part([s0, s1], across(0.35, 0.65), [z0, z1], C[o.finish ?? o.closet.finish] ?? C.white);
     part([(s0 + s1) / 2 - 0.03, (s0 + s1) / 2 + 0.03], across(0.3, 0.7), [z0, z1 - 0.01], C.seam); // just under their tops
     return;
   }
@@ -887,8 +887,8 @@ function stairwells(scene, p, [x0, y0, x1, y1]) {
   return cells;
 }
 
-// A closet's walls, but where it's against its room's, with doors across one side. It can stand across its room's
-// pieces, against the walls of any of them.
+// A closet's walls, but where it's against its room's, with doors across one side, white or in its finish. It can
+// stand across its room's pieces, against the walls of any of them.
 function closetWalls(mesh, scene, c, mode) {
   const C = scene.colors;
   const [p, t] = [c.piece, MODEL_CLOSET_WALL];
@@ -921,7 +921,7 @@ function closetWalls(mesh, scene, c, mode) {
     }
     if (hung) {
       const z1 = Math.min(doors.z1, cap);
-      slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C.white, c.item.id);
+      slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C[c.finish] ?? C.white, c.item.id);
       const mid = (doors.s0 + doors.s1) / 2; // where the two doors meet
       slab(mesh, w, [mid - 0.03, mid + 0.03], [0.25 * t, 0.75 * t], doors.z0, [z1 - 0.01, z1 - 0.01], C.seam, c.item.id); // just under their tops
     }
