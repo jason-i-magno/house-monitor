@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller")
+FIXTURES = (
+    "appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller", "gas meter",
+)
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet", "dirt")
 TREES = ("deciduous", "evergreen")
@@ -102,8 +104,8 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance, vent, plumbing (a tub, toilet, sink or spigot), fireplace, half wall or railing, or a part of a
-    sprinkler system, drawn as a box: in a room, or outside (room None) at x and y on the plan.
+    """An appliance, vent, plumbing (a tub, toilet, sink or spigot), fireplace, half wall or railing, a part of a
+    sprinkler system, or a gas meter, drawn as a box: in a room, or outside (room None) at x and y on the plan.
 
     lift is how high its bottom is above the floor, or outside above the ground, or the top of a raised ground
     it's in, as a bed's. against lists the sides of its room it stands flush against the walls of, wherever their
@@ -118,6 +120,9 @@ class Fixture:
     through, past a valve on either side, and goes back down, along the fixture's longer side and as high as its
     height; a valve box, outside, sunk in the ground with its lid `height` above it, holding the valves of some of
     its zones; and a controller, the box on a wall that runs them.
+
+    A gas meter is outside, against the house's wall: its box `lift` over the ground, on its riser, the pipe the gas
+    comes up out of the ground through.
     """
 
     name: str
@@ -140,6 +145,8 @@ class Fixture:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
         if self.kind == "valve box" and self.room is not None:
             raise ValueError(f"{self.name} is a valve box, sunk in the ground outside, so its room is None")
+        if self.kind == "gas meter" and self.room is not None:
+            raise ValueError(f"{self.name} is a gas meter, on the house's wall outside, so its room is None")
         _check_against(self.name, self.against, self.room)
 
 
@@ -458,6 +465,36 @@ class Roof:
 
 
 @dataclass(frozen=True)
+class Slope:
+    """Where the ground slopes, as a front yard does down to the street: across the whole lot, between two lines
+    across the plan at `between`, the y's (for down "back" or "front") or x's (for "left" or "right") they're at,
+    falling evenly by `fall` ft from the one to the other, toward the side `down`. Before it the ground is as high as at
+    its top, and past it as low as at its foot. Slopes add up, so a yard can fall two ways. The house stands on level
+    ground, at the grade, so it's before each slope's top; what stands outside stands on the ground where it is, a raised
+    ground (a porch, or a bed) and a shed level, up from the highest ground under them."""
+
+    name: str
+    down: str
+    between: tuple[float, float]
+    fall: float
+    known: bool = False
+
+    def __post_init__(self):
+        _check(self.down, SIDES, "the way a slope falls")
+        if len(self.between) != 2 or not self.between[0] < self.between[1]:
+            raise ValueError(f"{self.name} is between two lines, the lower first")
+        if self.fall <= 0:
+            raise ValueError(f"{self.name} falls some way")
+
+    def share(self, x, y):
+        """How far down it the ground at x, y on the plan is, from 0 at its top to 1 at its foot."""
+        a, b = self.between
+        v = y if self.down in ("back", "front") else x
+        f = min(max((v - a) / (b - a), 0.0), 1.0)
+        return f if self.down in ("front", "right") else 1 - f
+
+
+@dataclass(frozen=True)
 class Finish:
     """What a room's floor and walls are made of, for their colors."""
 
@@ -475,7 +512,7 @@ class Details:
 
     The yard fills lot, the corners of its outline in order, with lawn
     wherever nothing else is, and grade is the ground's height above the main
-    floor. finishes is by room name; a room without one gets wood floors and
+    floor, but where slopes fall from it. finishes is by room name; a room without one gets wood floors and
     painted walls. colors replaces the detailed view's colors, the --model-*
     tokens in style.css, by name, each as light and dark: the house's siding
     and roof, say. example marks a made-up house, with nothing in it to check,
@@ -485,6 +522,7 @@ class Details:
 
     lot: tuple[tuple[float, float], ...]
     grade: float
+    slopes: tuple[Slope, ...] = ()
     example: bool = False
     finishes: dict[str, Finish] = field(default_factory=dict)
     colors: dict[str, tuple[str, str]] = field(default_factory=dict)
@@ -501,3 +539,8 @@ class Details:
     fences: tuple[Fence, ...] = ()
     steps: tuple[Steps, ...] = ()
     sprinklers: tuple[Sprinklers, ...] = ()
+
+    def ground(self, x, y):
+        """How high the ground is at x, y on the plan, above the main floor: the grade, less what the slopes fall by
+        there (groundAt in model.js)."""
+        return self.grade - sum(s.fall * s.share(x, y) for s in self.slopes)

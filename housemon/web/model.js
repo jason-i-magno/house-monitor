@@ -57,7 +57,7 @@ const MODEL_COVERAGE_TOKENS = {
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
-  deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller",
+  deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller", "gas meter": "Gas meter",
 };
 const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard", "Sprinklers"];
 // Each side of a plan as a line: the axis it runs along, where it is across
@@ -145,11 +145,62 @@ function onRoof(r, x, y) {
   return r.x < x && x < r.x + r.width && r.y < y && y < r.y + r.depth && (!r.outline || inPolygon([x, y], r.outline));
 }
 
-// How high the ground is at x, y on the plan: the top of a raised ground there, as a bed's, its paving's where it's
-// edged, else the grade.
-function groundTop(details, x, y) {
-  const g = details.grounds.find((g) => g.height > 0 && g.x < x && x < g.x + g.width && g.y < y && y < g.y + g.depth && (!g.outline || inPolygon([x, y], g.outline)));
-  return details.grade + (g ? g.height - (g.edging ? 0.1 : 0) : 0);
+// A rectangle on the plan as a polygon, and a ground's shape: its outline, or its rectangle.
+function rectShape(x, y, w, d) {
+  return [[x, y], [x + w, y], [x + w, y + d], [x, y + d]];
+}
+function groundShape(g) {
+  return g.outline ?? rectShape(g.x, g.y, g.width, g.depth);
+}
+
+// How far down a slope the ground at x, y on the plan is, from 0 at its top to 1 at its foot (details.Slope.share).
+function slopeShare(s, x, y) {
+  const [a, b] = s.between;
+  const f = Math.min(Math.max(((s.down === "back" || s.down === "front" ? y : x) - a) / (b - a), 0), 1);
+  return s.down === "front" || s.down === "right" ? f : 1 - f;
+}
+
+// How high the ground is at x, y on the plan: the grade, less what the slopes fall by there (details.Details.ground).
+function groundAt(details, x, y) {
+  return details.slopes.reduce((z, s) => z - s.fall * slopeShare(s, x, y), details.grade);
+}
+
+// The lines across the lot the ground bends along, where the slopes start and end: the x's and the y's they're at.
+function groundBends(details) {
+  const along = (x) => details.slopes.filter((s) => (s.down === "left" || s.down === "right") === x).flatMap((s) => s.between);
+  return { xs: along(true), ys: along(false) };
+}
+
+// The points on the plan from a to b where the ground under the line between them bends, with a and b: between each
+// two, it runs straight.
+function bendsAlong(details, a, b) {
+  const { xs, ys } = groundBends(details);
+  const ts = [[0, xs], [1, ys]].flatMap(([k, lines]) => lines.map((v) => (v - a[k]) / (b[k] - a[k])).filter((t) => t > 1e-9 && t < 1 - 1e-9));
+  return [0, ...[...new Set(ts)].sort((u, v) => u - v), 1].map((t) => [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+}
+
+// The lowest and highest the ground is under a polygon on the plan: at its corners, where its edges cross the lines it
+// bends along, or where those cross inside it.
+function groundRange(details, shape) {
+  const { xs, ys } = groundBends(details);
+  const spots = shape.flatMap((a, i) => bendsAlong(details, a, shape[(i + 1) % shape.length]));
+  for (const x of xs) for (const y of ys) if (inPolygon([x, y], shape)) spots.push([x, y]);
+  const zs = spots.map(([x, y]) => groundAt(details, x, y));
+  return [Math.min(...zs), Math.max(...zs)];
+}
+
+// A raised ground's top: level, its height over the highest the ground is under it.
+function raisedTop(details, g) {
+  return groundRange(details, groundShape(g))[1] + g.height;
+}
+
+// How high the ground is under a thing over x, y, w wide and d deep on the plan: the top of a raised ground at its
+// middle, as a bed's, its paving's where it's edged, else the highest the ground is under it, where it slopes.
+function groundTop(details, x, y, w = 0, d = 0) {
+  const [cx, cy] = [x + w / 2, y + d / 2];
+  const g = details.grounds.find((g) => g.height > 0 && g.x < cx && cx < g.x + g.width && g.y < cy && cy < g.y + g.depth && (!g.outline || inPolygon([cx, cy], g.outline)));
+  if (g) return raisedTop(details, g) - (g.edging ? 0.1 : 0);
+  return groundRange(details, rectShape(x, y, w, d))[1];
 }
 
 // The height of a roof section's top at x, y on the plan.
@@ -171,7 +222,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   if (!rooms.length || !rooms.every((s) => s.plan)) return { note: "The detailed view needs every room's plan." };
   const raw = [...rooms, ...areas].flatMap((q) => [q.plan].flat());
   const details = {
-    finishes: {}, colors: {}, claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [],
+    finishes: {}, colors: {}, slopes: [], claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [],
     ...(given ?? modelFallback(raw)),
   };
   const items = [];
@@ -240,7 +291,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     const within = (o) => o.x - 1e-6 <= x && x + thing.width <= o.x + o.width + 1e-6 && o.y - 1e-6 <= y && y + thing.depth <= o.y + o.depth + 1e-6;
     const across = (o) => planOverlap(o, { x, y, width: thing.width, depth: thing.depth });
     const p = q ? q.pieces.find(within) ?? q.pieces.find(across) ?? first : null;
-    const z = p ? p.elevation : groundTop(details, x + (thing.width ?? 0) / 2, y + (thing.depth ?? 0) / 2);
+    const z = p ? p.elevation : groundTop(details, x, y, thing.width ?? 0, thing.depth ?? 0);
     const resolved = { ...thing, place: q, piece: p, x0: x, y0: y, x1: x + thing.width, y1: y + thing.depth, z0: z + (thing.lift ?? 0) };
     resolved.z1 = resolved.z0 + (thing.height ?? MODEL_CLOSET_HEIGHT);
     resolved.item = add({ key: `${prefix}:${i}`, name: thing.name, kind, group, where: q ? q.name : "Outside", known: thing.known, level: p ? p.elevation : null, bbox: [x, y, resolved.z0, resolved.x1, resolved.y1, resolved.z1] });
@@ -257,38 +308,51 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
-  const grade = details.grade;
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
-  const grounds = details.grounds.map((g, i) => ({ ...g, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, grade, g.x + g.width, g.y + g.depth, grade + g.height]) }));
+  // Each standing on the ground where it is: a raised one level, its top its height over the highest ground under it,
+  // and its sides down to the lowest (low).
+  const grounds = details.grounds.map((g, i) => {
+    const [low, high] = groundRange(details, groundShape(g));
+    const top = high + g.height;
+    return { ...g, low, top, item: outside(`ground:${i}`, g, MODEL_KINDS[g.kind], "Yard", [g.x, g.y, low, g.x + g.width, g.y + g.depth, top]) };
+  });
   // Trees, like roofs, come off when the house is cut away, so they don't hide it, and can be hidden from the whole house too.
-  const trees = details.trees.map((t, i) => ({ ...t, item: outside(`tree:${i}`, t, MODEL_KINDS[t.kind], "Yard", [t.x - t.spread / 2, t.y - t.spread / 2, grade, t.x + t.spread / 2, t.y + t.spread / 2, grade + t.height], { whole: true, tree: true }) }));
+  const trees = details.trees.map((t, i) => {
+    const ground = groundAt(details, t.x, t.y);
+    return { ...t, ground, item: outside(`tree:${i}`, t, MODEL_KINDS[t.kind], "Yard", [t.x - t.spread / 2, t.y - t.spread / 2, ground, t.x + t.spread / 2, t.y + t.spread / 2, ground + t.height], { whole: true, tree: true }) };
+  });
   // Hedges come and go with the trees.
   const hedges = details.hedges.map((h, i) => {
     const [xs, ys, r] = [h.points.map((p) => p[0]), h.points.map((p) => p[1]), h.width / 2];
-    const bbox = [Math.min(...xs) - r, Math.min(...ys) - r, grade, Math.max(...xs) + r, Math.max(...ys) + r, grade + h.height];
+    const [low, high] = groundRange(details, h.points);
+    const bbox = [Math.min(...xs) - r, Math.min(...ys) - r, low, Math.max(...xs) + r, Math.max(...ys) + r, high + h.height];
     return { ...h, item: outside(`hedge:${i}`, h, "Hedge", "Yard", bbox, { whole: true, tree: true }) };
   });
-  // A shed's doors and windows are the openings naming it, placed on its walls as a room's are, from the ground.
+  // A shed's doors and windows are the openings naming it, placed on its walls as a room's are, from the ground. It
+  // stands level, its floor (base) on the highest ground under it, and its walls down to the lowest (low).
   const sheds = details.sheds.map((b, i) => {
-    const item = outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, grade, b.x + b.width, b.y + b.depth, grade + b.peak]);
+    const [low, base] = groundRange(details, rectShape(b.x, b.y, b.width, b.depth));
+    const item = outside(`shed:${i}`, b, "Shed", "Yard", [b.x, b.y, low, b.x + b.width, b.y + b.depth, base + b.peak]);
     const openings = details.openings.flatMap((o, k) => {
       if (o.room !== b.name || named(o.room)) return [];
       const side = SIDE_LINES[o.wall](b);
-      const [s0, z0] = [side.a + o.offset, grade + o.sill];
+      const [s0, z0] = [side.a + o.offset, base + o.sill];
       const [p, q] = [linePoint(side, s0, 0), linePoint(side, s0 + o.width, 0)];
       const bbox = [Math.min(p[0], q[0]), Math.min(p[1], q[1]), z0, Math.max(p[0], q[0]), Math.max(p[1], q[1]), z0 + o.height];
       const more = { group: o.kind === "vent" ? "Vents" : "Doors and windows", where: `${b.name}, ${o.wall} wall` };
       return [{ ...o, ...side, s0, s1: s0 + o.width, z0, z1: z0 + o.height, item: outside(`opening:${k}`, o, MODEL_KINDS[o.kind], null, bbox, more) }];
     });
-    return { ...b, item, openings };
+    return { ...b, low, base, item, openings };
   });
   const fences = details.fences.map((f, i) => {
     const [xs, ys] = [f.points.map((p) => p[0]), f.points.map((p) => p[1])];
-    const item = outside(`fence:${i}`, f, f.kind === "chain link" ? "Chain-link fence" : "Fence", "Yard", [Math.min(...xs), Math.min(...ys), grade, Math.max(...xs), Math.max(...ys), grade + f.height]);
+    const [low, high] = groundRange(details, f.points);
+    const item = outside(`fence:${i}`, f, f.kind === "chain link" ? "Chain-link fence" : "Fence", "Yard", [Math.min(...xs), Math.min(...ys), low, Math.max(...xs), Math.max(...ys), high + f.height]);
     const gates = (f.gates ?? []).map(([x, y, width], k) => {
       const gate = { name: `Gate in the ${f.name.toLowerCase()}`, known: f.known };
-      return { x, y, width, item: outside(`gate:${i}:${k}`, gate, "Gate", "Yard", [x - width / 2, y - width / 2, grade, x + width / 2, y + width / 2, grade + f.height]) };
+      const ground = groundAt(details, x, y);
+      return { x, y, width, item: outside(`gate:${i}:${k}`, gate, "Gate", "Yard", [x - width / 2, y - width / 2, ground, x + width / 2, y + width / 2, ground + f.height]) };
     });
     return { ...f, item, gates };
   });
@@ -311,14 +375,14 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     }
     const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
     const [xs, ys, zs] = ["x", "y", "top"].map((k) => heads.map((h) => h[k]));
-    const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, grade, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
+    const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, Math.min(...zs) - 0.1, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
     const [mx, my] = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2];
     const middle = heads.reduce((a, b) => (Math.hypot(b.x - mx, b.y - my) < Math.hypot(a.x - mx, a.y - my) ? b : a));
     const item = outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [middle.x, middle.y, middle.top + 0.1], water: { heads, of: z.name } });
     const headItems = heads.map((h, k) => {
       const head = { name: `Head ${k + 1}`, known: z.known };
       const water = { heads: [h], of: `${head.name} of ${z.name}` };
-      const box = [h.x - 0.3, h.y - 0.3, grade, h.x + 0.3, h.y + 0.3, h.top + 0.2];
+      const box = [h.x - 0.3, h.y - 0.3, h.top - 0.1, h.x + 0.3, h.y + 0.3, h.top + 0.2];
       return outside(`sprinkler:${i}:${k}`, head, z.kind === "spray" ? "Spray head" : "Rotor", "Sprinklers", box, { where: z.name, center: [h.x, h.y, h.top + 0.1], water });
     });
     item.ids = [headItems[0].id, headItems.at(-1).id];
@@ -333,7 +397,15 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   });
   const lot = details.lot;
   const [lx0, ly0, lx1, ly1] = [Math.min(...lot.map((p) => p[0])), Math.min(...lot.map((p) => p[1])), Math.max(...lot.map((p) => p[0])), Math.max(...lot.map((p) => p[1]))];
-  const lawn = add({ key: "lawn", name: "Lawn", kind: "Yard", where: "Outside", level: null, bbox: [lx0, ly0, grade, lx1, ly1, grade] });
+  const [lowest, highest] = groundRange(details, lot);
+  const lawn = add({ key: "lawn", name: "Lawn", kind: "Yard", where: "Outside", level: null, bbox: [lx0, ly0, lowest, lx1, ly1, highest] });
+  // Each slope a part too, the lawn on it its faces, so it can be picked and say how far it falls.
+  const slopes = details.slopes.map((s, i) => {
+    const [a, b] = s.between;
+    const box = s.down === "back" || s.down === "front" ? [lx0, Math.max(a, ly0), lx1, Math.min(b, ly1)] : [Math.max(a, lx0), ly0, Math.min(b, lx1), ly1];
+    const falls = `Falls ${+s.fall.toFixed(2)} ft toward the ${s.down}`;
+    return { ...s, item: outside(`slope:${i}`, s, "Slope", "Yard", [box[0], box[1], details.grade - s.fall, box[2], box[3], details.grade], { falls }) };
+  });
   const cladding = Object.fromEntries(details.claddings.map((c) => [`${c.room}|${c.wall}`, c.finish]));
 
   const steps = details.steps.flatMap((t, i) => {
@@ -346,7 +418,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   // The levels, highest first, each at its highest floor's elevation: a garage a step down is on the main floor's.
   const levels = [...places.reduce((m, q) => m.set(q.floor, Math.max(m.get(q.floor) ?? -Infinity, q.pieces[0].elevation)), new Map())]
     .sort((a, b) => b[1] - a[1]);
-  const bottom = Math.min(...pieces.map(([, p]) => p.base)) - 1.5;
+  const bottom = Math.min(lowest, ...pieces.map(([, p]) => p.base)) - 1.5;
   const high = Math.max(...items.map((item) => item.bbox[5]));
   const [x0, y0, x1, y1] = [Math.min(lx0, ...items.map((i) => i.bbox[0])), Math.min(ly0, ...items.map((i) => i.bbox[1])), Math.max(lx1, ...items.map((i) => i.bbox[3])), Math.max(ly1, ...items.map((i) => i.bbox[4]))];
   const radius = Math.hypot(x1 - x0, y1 - y0, high - bottom) / 2;
@@ -354,7 +426,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   const house = [...places.map((q) => q.item), ...roofs.map((r) => r.item)].map((item) => item.bbox);
   const [hx0, hy0, hz0, hx1, hy1, hz1] = [0, 1, 2, 3, 4, 5].map((k) => (k < 3 ? Math.min : Math.max)(...house.map((b) => b[k])));
   return {
-    details, places, pieces, openings, closets, fixtures, grounds, trees, hedges, sheds, fences, steps, sprinklers, roofs, roofVents, lot, lawn, cladding, items, levels, bottom, radius,
+    details, places, pieces, openings, closets, fixtures, grounds, trees, hedges, sheds, fences, steps, sprinklers, roofs, roofVents, lot, lawn, slopes, cladding, items, levels, bottom, radius,
     center: [(x0 + x1) / 2, (y0 + y1) / 2, (bottom + high) / 2],
     houseCenter: [(hx0 + hx1) / 2, (hy0 + hy1) / 2, (hz0 + hz1) / 2],
     fit: Math.max(1, radius / (1.1 * (Math.hypot(hx1 - hx0, hy1 - hy0, hz1 - hz0) / 2))),
@@ -868,59 +940,100 @@ function triangulate(points) {
 // where the house, porches and paving are, stepping down under the house to
 // its lowest walls. Where a level is cut away with nothing under it, its
 // footprint shows as slab. Paving that runs past the lot stops at its edge.
+// Its top is cut where it bends too, where slopes start and end, so each
+// cell lies flat on it, and the lawn on a slope is the slope's.
 function earth(mesh, scene, shows) {
   const C = scene.colors;
-  const [{ grade }, lot, b] = [scene.details, scene.lot, scene.bottom];
+  const [details, lot, b] = [scene.details, scene.lot, scene.bottom];
+  const ground = (x, y) => groundAt(details, x, y);
+  const bends = groundBends(details);
   const [lx0, ly0, , lx1, ly1] = scene.lawn.bbox;
   const rects = [...scene.pieces.map(([, p]) => p), ...scene.grounds.filter((g) => !g.outline)];
   const breaks = (lo, hi, edges) => [...new Set([lo, hi, ...edges.map((v) => Math.min(Math.max(v, lo), hi))])].sort((u, v) => u - v);
   const cutouts = scene.grounds.flatMap((g) => g.cutouts ?? []);
-  const xs = breaks(lx0, lx1, [...rects.flatMap((r) => [r.x, r.x + r.width]), ...cutouts.flatMap(([x, , w]) => [x, x + w]), ...lot.map((p) => p[0])]);
-  const ys = breaks(ly0, ly1, [...rects.flatMap((r) => [r.y, r.y + r.depth]), ...cutouts.flatMap(([, y, , d]) => [y, y + d]), ...lot.map((p) => p[1])]);
+  const xs = breaks(lx0, lx1, [...rects.flatMap((r) => [r.x, r.x + r.width]), ...cutouts.flatMap(([x, , w]) => [x, x + w]), ...lot.map((p) => p[0]), ...bends.xs]);
+  const ys = breaks(ly0, ly1, [...rects.flatMap((r) => [r.y, r.y + r.depth]), ...cutouts.flatMap(([, y, , d]) => [y, y + d]), ...lot.map((p) => p[1]), ...bends.ys]);
   const inside = (r, x, y) => r.x < x && x < r.x + r.width && r.y < y && y < r.y + r.depth;
+  const onSlope = (x, y) => scene.slopes.find((s) => {
+    const [a, b] = s.between;
+    const v = s.down === "back" || s.down === "front" ? y : x;
+    return a < v && v < b;
+  });
   const cells = xs.slice(0, -1).map((_, i) => ys.slice(0, -1).map((_, j) => {
     const shape = clipToRect(lot, xs[i], ys[j], xs[i + 1], ys[j + 1]);
     if (shape.length < 3 || Math.abs(polygonArea(shape)) < 1e-4) return null; // outside the lot
     const [x, y] = [(xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2];
     const covering = scene.pieces.filter(([, p]) => inside(p, x, y));
     const shown = covering.filter(([q]) => shows(q.item));
-    const cell = { shape, top: grade, color: C.lawn, id: scene.lawn.id, wet: true };
-    if (shown.length) return { ...cell, top: Math.min(grade, ...shown.map(([, p]) => p.base)), color: C.soil, id: shown[0][0].item.id, wet: false };
+    // Each cell's top, its height at x, y: the ground's, or under the house, level, down to its lowest walls.
+    const cell = { shape, top: ground, color: C.lawn, id: onSlope(x, y)?.item.id ?? scene.lawn.id, wet: true };
+    if (shown.length) {
+      const top = Math.min(ground(x, y), ...shown.map(([, p]) => p.base));
+      return { ...cell, top: () => top, color: C.soil, id: shown[0][0].item.id, wet: false };
+    }
     if (covering.length) return { ...cell, color: C.slab, id: covering[0][0].item.id, wet: false };
-    const ground = scene.grounds.find((g) => !g.outline && inside(g, x, y));
-    if (!ground) return cell;
-    const cut = (ground.cutouts ?? []).some(([cx, cy, w, d]) => inside({ x: cx, y: cy, width: w, depth: d }, x, y));
-    return { ...cell, color: cut ? C.dirt : paving(C, ground), id: ground.item.id, wet: !cut && watered(ground) };
+    const paved = scene.grounds.find((g) => !g.outline && inside(g, x, y));
+    if (!paved) return cell;
+    const cut = (paved.cutouts ?? []).some(([cx, cy, w, d]) => inside({ x: cx, y: cy, width: w, depth: d }, x, y));
+    return { ...cell, color: cut ? C.dirt : paving(C, paved), id: paved.item.id, wet: !cut && watered(paved) };
   }));
   cells.forEach((column, i) => column.forEach((cell, j) => {
     if (!cell) return;
     const [x0, x1, y0, y1, z] = [xs[i], xs[i + 1], ys[j], ys[j + 1], cell.top];
-    const center = [(x0 + x1) / 2, (y0 + y1) / 2, z - 1];
-    for (const triangle of triangulate(cell.shape)) mesh.face(triangle.map(([x, y]) => [x, y, z]), cell.color, cell.id, center, cell.wet);
+    const center = [(x0 + x1) / 2, (y0 + y1) / 2, z((x0 + x1) / 2, (y0 + y1) / 2) - 1];
+    for (const triangle of triangulate(cell.shape)) mesh.face(triangle.map(([x, y]) => [x, y, z(x, y)]), cell.color, cell.id, center, cell.wet);
     // Steps down to lower neighbors, under the house, a hair inside this cell, so a wall on the edge covers them.
     const [a0, a1, b0, b1] = [x0 + 0.005, x1 - 0.005, y0 + 0.005, y1 - 0.005];
     const neighbors = [[i - 1, j, [[a0, y0], [a0, y1]]], [i + 1, j, [[a1, y0], [a1, y1]]], [i, j - 1, [[x0, b0], [x1, b0]]], [i, j + 1, [[x0, b1], [x1, b1]]]];
     for (const [ni, nj, [[ax, ay], [bx, by]]] of neighbors) {
       const low = cells[ni]?.[nj]?.top;
-      if (low != null && low < z - 1e-6) mesh.face([[ax, ay, low], [bx, by, low], [bx, by, z], [ax, ay, z]], C.soil, scene.lawn.id, center);
+      if (!low) continue;
+      const [la, lb, ha, hb] = [low(ax, ay), low(bx, by), z(ax, ay), z(bx, by)];
+      if (Math.max(ha - la, hb - lb) > 1e-6) mesh.face([[ax, ay, la], [bx, by, lb], [bx, by, hb], [ax, ay, ha]], C.soil, scene.lawn.id, center);
     }
   }));
   // A flat ground cut to an outline lies just over the lawn.
-  for (const g of scene.grounds.filter((g) => g.outline && !(g.height > 0))) {
-    const center = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
-    for (const triangle of triangulate(g.outline)) mesh.face(triangle.map(([x, y]) => [x, y, grade + 0.03]), paving(C, g), g.item.id, center, watered(g));
-  }
+  for (const g of scene.grounds.filter((g) => g.outline && !(g.height > 0))) drape(mesh, details, g.outline, [null, 0.03], paving(C, g), g.item.id, watered(g));
   // The lot's sides, down to its bottom.
   const sign = Math.sign(polygonArea(lot));
   lot.forEach(([ax, ay], i) => {
     const [bx, by] = lot[(i + 1) % lot.length];
     const length = Math.hypot(bx - ax, by - ay);
     const [ix, iy] = [(-sign * (by - ay)) / length, (sign * (bx - ax)) / length]; // inward
-    const center = [(ax + bx) / 2 + ix, (ay + by) / 2 + iy, (grade + b) / 2];
-    mesh.face([[ax, ay, b], [bx, by, b], [bx, by, grade], [ax, ay, grade]], C.soil, scene.lawn.id, center);
+    const along = bendsAlong(details, [ax, ay], [bx, by]);
+    along.slice(1).forEach(([qx, qy], k) => {
+      const [px, py] = along[k];
+      const center = [(px + qx) / 2 + ix, (py + qy) / 2 + iy, (ground(px, py) + b) / 2];
+      mesh.face([[px, py, b], [qx, qy, b], [qx, qy, ground(qx, qy)], [px, py, ground(px, py)]], C.soil, scene.lawn.id, center);
+    });
   });
   const middle = [(lx0 + lx1) / 2, (ly0 + ly1) / 2, b + 1];
   for (const triangle of triangulate(lot)) mesh.face(triangle.map(([x, y]) => [x, y, b]), C.soil, scene.lawn.id, middle);
+}
+
+// A flat polygon laid on the ground, `lift` over it, cut where the ground bends so each piece lies flat on it: a flat
+// ground cut to an outline, or a flat ring of mulch. With `sink`, it has sides, down to that far under the ground.
+function drape(mesh, details, shape, [sink, lift], color, id, wet = false) {
+  const { xs, ys } = groundBends(details);
+  const [x0, y0, x1, y1] = [Math.min(...shape.map((p) => p[0])), Math.min(...shape.map((p) => p[1])), Math.max(...shape.map((p) => p[0])), Math.max(...shape.map((p) => p[1]))];
+  const cut = (lo, hi, lines) => [lo, ...[...new Set(lines)].filter((v) => lo < v && v < hi).sort((u, v) => u - v), hi];
+  const [cx, cy] = [cut(x0, x1, xs), cut(y0, y1, ys)];
+  const z = (x, y, dz) => groundAt(details, x, y) + dz;
+  for (let i = 0; i + 1 < cx.length; i++) for (let j = 0; j + 1 < cy.length; j++) {
+    const piece = cx.length === 2 && cy.length === 2 ? shape : clipToRect(shape, cx[i], cy[j], cx[i + 1], cy[j + 1]);
+    if (piece.length < 3 || Math.abs(polygonArea(piece)) < 1e-6) continue;
+    const [mx, my] = [(cx[i] + cx[i + 1]) / 2, (cy[j] + cy[j + 1]) / 2];
+    for (const triangle of triangulate(piece)) mesh.face(triangle.map(([x, y]) => [x, y, z(x, y, lift)]), color, id, [mx, my, z(mx, my, -1)], wet);
+  }
+  if (sink == null) return;
+  const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
+  shape.forEach((a, k) => {
+    const along = bendsAlong(details, a, shape[(k + 1) % shape.length]);
+    along.slice(1).forEach((q, n) => {
+      const p = along[n];
+      mesh.face([[...p, z(...p, -sink)], [...q, z(...q, -sink)], [...q, z(...q, lift)], [...p, z(...p, lift)]], color, id, [mx, my, z(mx, my, lift)]);
+    });
+  });
 }
 
 // A vertical prism around x, y: n sides, radius r, from z0 to z1; a cone if `point`.
@@ -1014,11 +1127,10 @@ function seeded(seed) {
 // or over their roofs, so a crown can stand off a wall under the eaves and reach over the roof above them. A
 // point with a clear way to it stays put, as does one at a height where x, y itself isn't clear.
 function clearOfBuildings(scene, [cx, cy], reach, gap) {
-  const grade = scene.details.grade;
   const solids = [
     ...scene.pieces.map(([, p]) => ({ x0: p.x - scene.wall, y0: p.y - scene.wall, x1: p.x + p.width + scene.wall, y1: p.y + p.depth + scene.wall, top: p.top })),
     ...scene.roofs.map((r) => ({ x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.depth, top: (x, y) => (onRoof(r, x, y) ? roofTop(r, x, y) : -Infinity) })),
-    ...scene.sheds.map((b) => ({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.depth, top: () => grade + b.peak })),
+    ...scene.sheds.map((b) => ({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.depth, top: () => b.base + b.peak })),
   ].filter((s) => s.x0 - gap < cx + reach && cx - reach < s.x1 + gap && s.y0 - gap < cy + reach && cy - reach < s.y1 + gap);
   const within = (v, a, b) => Math.min(Math.max(v, a + 1e-6), b - 1e-6);
   // Within gap of one: over it or beside it, and under its top at its nearest point, plus gap.
@@ -1039,21 +1151,26 @@ function clearOfBuildings(scene, [cx, cy], reach, gap) {
 }
 
 // A tree as it is in a season: a deciduous one in leaf, or in winter bare; an evergreen the same all year.
+// Its heights are from the ground at its trunk (ground), where it slopes.
 function tree(mesh, scene, t, season = "summer") {
-  const [C, grade, id] = [scene.colors, scene.details.grade, t.item.id];
+  const [C, details, ground, id] = [scene.colors, scene.details, t.ground, t.item.id];
   const bark = C[MODEL_BARKS[t.bark]] ?? C.trunk;
   const [R, H, stems, fork] = [t.spread / 2, t.height, t.stems ?? 1, t.fork ?? 0];
   const stem = (t.trunk ?? Math.max(stems > 1 ? 0.4 : 0.7, (t.spread * 0.06) / Math.sqrt(stems))) / 2; // each one's radius
-  if (t.ring > 0 && t.edging) { // a raised ring of stone or brick, filled with mulch
-    round(mesh, [t.x, t.y], t.ring, grade, grade + 0.9, C[t.edging] ?? C.stone, id, false, 16);
-    round(mesh, [t.x, t.y], t.ring - 0.4, grade + 0.9, grade + 0.95, C.mulch, id, false, 16);
+  const ring = (r) => Array.from({ length: 16 }, (_, i) => [t.x + r * Math.cos((Math.PI * i) / 8), t.y + r * Math.sin((Math.PI * i) / 8)]);
+  if (t.ring > 0 && t.edging) { // a raised ring of stone or brick, filled with mulch, level from the lowest ground under it
+    const [low, high] = groundRange(details, ring(t.ring));
+    round(mesh, [t.x, t.y], t.ring, low, high + 0.9, C[t.edging] ?? C.stone, id, false, 16);
+    round(mesh, [t.x, t.y], t.ring - 0.4, high + 0.9, high + 0.95, C.mulch, id, false, 16);
   } else if (t.ring > 0) { // a flat one, through the lawn's plane rather than in it
-    round(mesh, [t.x, t.y], t.ring, grade - 0.05, grade + 0.05, C.mulch, id, false, 16);
+    drape(mesh, details, ring(t.ring), [0.05, 0.05], C.mulch, id);
   }
+  // Its stems' feet sunk, not in the lawn's plane, under the lowest of the ground around them.
+  const foot = groundRange(details, rectShape(t.x - 2 * stem, t.y - 2 * stem, 4 * stem, 4 * stem))[0] - 0.1;
   if (t.kind === "evergreen") {
-    round(mesh, [t.x, t.y], stem, grade - 0.1, grade + H * 0.6, bark, id); // its foot sunk, not in the lawn's plane
+    round(mesh, [t.x, t.y], stem, foot, ground + H * 0.6, bark, id);
     for (const [from, to, width] of [[0.18, 0.62, 1], [0.4, 0.82, 0.74], [0.6, 1, 0.48]]) {
-      round(mesh, [t.x, t.y], R * width, grade + H * from, grade + H * to, C.needles, id, true, 10);
+      round(mesh, [t.x, t.y], R * width, ground + H * from, ground + H * to, C.needles, id, true, 10);
     }
     return;
   }
@@ -1061,8 +1178,8 @@ function tree(mesh, scene, t, season = "summer") {
   // The crown: a ball stretched to its shape, from z0 up to the tree's top, lumpy where it's nearest some of a
   // few directions, one of them straight up, so it reaches the top.
   const shape = MODEL_CROWNS[t.crown] ?? MODEL_CROWNS.round;
-  const z0 = grade + (t.clearance ?? Math.max(H * shape.base, fork + 0.12 * H));
-  const z1 = grade + H;
+  const z0 = ground + (t.clearance ?? Math.max(H * shape.base, fork + 0.12 * H));
+  const z1 = ground + H;
   const middle = z0 + shape.widest * (z1 - z0);
   const random = seeded(t.x * 7919 + t.y * 104729);
   const bumps = Array.from({ length: 9 }, () => {
@@ -1108,14 +1225,14 @@ function tree(mesh, scene, t, season = "summer") {
   const ends = []; // where a bare tree's branches can start, and how thick it is there: [point, radius]
   const clearer = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP + 1.5);
   const turn = random() * 2 * Math.PI;
-  const top = fork > 0 ? grade + fork : z0 + 0.4 * (z1 - z0);
+  const top = fork > 0 ? ground + fork : z0 + 0.4 * (z1 - z0);
   for (let k = 0; k < stems; k++) {
     const angle = turn + (2 * Math.PI * k) / stems + (random() - 0.5) * 0.6;
     const out = (r, a = angle) => [t.x + r * Math.cos(a), t.y + r * Math.sin(a)];
     const under = (r, a = angle) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
     const splay = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
     const head = [...(fork > 0 ? out : under)(splay), top];
-    limb(mesh, [...out(stems > 1 ? stem * 0.8 : 0), grade - 0.1 - 0.01 * k], head, stem, stem * (fork > 0 ? 0.8 : 0.45), bark, id, 8);
+    limb(mesh, [...out(stems > 1 ? stem * 0.8 : 0), foot - 0.01 * k], head, stem, stem * (fork > 0 ? 0.8 : 0.45), bark, id, 8);
     if (!(fork > 0)) {
       if (!bare) continue;
       const lead = clearer([...under(splay * 0.5), middle + 0.45 * (z1 - middle)]);
@@ -1212,7 +1329,8 @@ function leafColor(C, t, season) {
 // drawn the same every time, in its leaves' colors for the season. Bare in winter, a wall of stems: thin shoots up
 // from the ground, two a foot, leaning a little this way and that, standing from just under it.
 function hedge(mesh, scene, h, season) {
-  const [C, grade, id] = [scene.colors, scene.details.grade, h.item.id];
+  const [C, details, id] = [scene.colors, scene.details, h.item.id];
+  const ground = (p) => groundAt(details, p[0], p[1]);
   const random = seeded(h.points[0][0] * 7919 + h.points[0][1] * 104729);
   const color = leafColor(C, h, season);
   for (let s = 0; s + 1 < h.points.length; s++) {
@@ -1226,7 +1344,8 @@ function hedge(mesh, scene, h, season) {
       for (let k = 0; k < count; k++) {
         const [along, across] = [((k + random()) / count) * length, (random() - 0.5) * h.width * 0.7];
         const [lean, drift, top] = [(random() - 0.5) * h.width * 0.6, (random() - 0.5) * 0.8, h.height * (0.7 + 0.3 * random())];
-        limb(mesh, at(along, across, grade - 0.1), at(along + drift, across + lean, grade + top), 0.07, 0.02, C.trunk, id, 3);
+        const z = ground(at(along, across, 0));
+        limb(mesh, at(along, across, z - 0.1), at(along + drift, across + lean, z + top), 0.07, 0.02, C.trunk, id, 3);
       }
       continue;
     }
@@ -1234,7 +1353,11 @@ function hedge(mesh, scene, h, season) {
     const count = Math.max(1, Math.round(length / h.width));
     for (let k = 0; k < count; k++) {
       const [a, b, c] = [(length / count) * (1 + 0.3 * random()), (h.width / 2) * (0.85 + 0.25 * random()), (h.height / 2) * (0.8 + 0.25 * random())];
-      const middle = at(((k + 0.5) / count) * length, (random() - 0.5) * h.width * 0.15, grade + c * 0.96); // its foot just under the ground
+      const [along, across] = [((k + 0.5) / count) * length, (random() - 0.5) * h.width * 0.15];
+      const [mx, my] = at(along, across, 0);
+      const reach = Math.max(a, b);
+      const low = groundRange(details, rectShape(mx - reach, my - reach, 2 * reach, 2 * reach))[0]; // the lowest under it
+      const middle = at(along, across, low + c * 0.96); // its foot just under the ground
       const [p, q] = [random() * 6, random() * 6];
       const lump = ([px, py, pz]) => 1 + 0.18 * Math.sin(5 * px + p) * Math.sin(4 * py + q) * Math.cos(3 * pz);
       MODEL_SHRUB.forEach((triangle, i) => {
@@ -1380,13 +1503,13 @@ function stepsFlight(mesh, scene, t, cap = Infinity) {
 // A raised ground: a block of its paving up to its top, over its rectangle or cut to its outline. With
 // edging, its sides are a low wall of stone or brick 0.4 ft thick instead, with its paving filled in a
 // little below the wall's top.
+// Where the ground slopes, it's level, from the lowest ground under it.
 function raisedGround(mesh, scene, g) {
-  const [C, grade, id] = [scene.colors, scene.details.grade, g.item.id];
-  const top = grade + g.height;
-  const shape = g.outline ?? [[g.x, g.y], [g.x + g.width, g.y], [g.x + g.width, g.y + g.depth], [g.x, g.y + g.depth]];
+  const [C, low, top, id] = [scene.colors, g.low, g.top, g.item.id];
+  const shape = groundShape(g);
   const sign = Math.sign(polygonArea(shape));
   const fill = g.edging ? top - 0.1 : top;
-  const below = [g.x + g.width / 2, g.y + g.depth / 2, grade - 1];
+  const below = [g.x + g.width / 2, g.y + g.depth / 2, low - 1];
   for (const triangle of triangulate(shape)) mesh.face(triangle.map(([x, y]) => [x, y, fill]), paving(C, g), id, below, watered(g));
   shape.forEach((a, i) => {
     const [b, c] = [shape[(i + 1) % shape.length], shape[(i + 2) % shape.length]];
@@ -1396,14 +1519,14 @@ function raisedGround(mesh, scene, g) {
     const [ix, iy] = [-sign * dy, sign * dx]; // inward
     const at = (s, d, z) => [a[0] + dx * s + ix * d, a[1] + dy * s + iy * d, z];
     if (!g.edging) {
-      mesh.face([at(0, 0, grade), at(length, 0, grade), at(length, 0, top), at(0, 0, top)], paving(C, g), id, at(length / 2, 1, grade));
+      mesh.face([at(0, 0, low), at(length, 0, low), at(length, 0, top), at(0, 0, top)], paving(C, g), id, at(length / 2, 1, low));
       return;
     }
     // At a corner turning in, the wall runs on its thickness past it, to close the corner inside.
     const turnsIn = sign * ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) < -1e-9;
     const [end, t] = [length + (turnsIn ? 0.4 : 0), 0.4];
     const corners = (z) => [at(0, 0, z), at(end, 0, z), at(end, t, z), at(0, t, z)];
-    hexa(mesh, corners(grade), corners(top), C[g.edging] ?? C.stone, id);
+    hexa(mesh, corners(low), corners(top), C[g.edging] ?? C.stone, id);
   });
 }
 
@@ -1411,7 +1534,7 @@ function raisedGround(mesh, scene, g) {
 // top and a bottom rail, and balusters between them.
 function railings(mesh, scene, g) {
   const color = paving(scene.colors, g);
-  const [z0, z1] = [scene.details.grade + g.height, scene.details.grade + g.height + 3];
+  const [z0, z1] = [g.top, g.top + 3];
   for (const side of g.railings ?? []) {
     const across = side === "back" || side === "front"; // runs along x
     const [a0, a1] = across ? [g.x, g.x + g.width] : [g.y, g.y + g.depth];
@@ -1429,11 +1552,12 @@ function railings(mesh, scene, g) {
 }
 
 // A shed: walls in siding under a gable roof, its eaves a little past them, and its doors and windows.
+// Where the ground slopes, it's level, its floor at the highest ground under it, its walls down to the lowest.
 function shed(mesh, scene, b) {
-  const [C, grade, over] = [scene.colors, scene.details.grade, 0.5];
-  box(mesh, [b.x, b.y, grade], [b.x + b.width, b.y + b.depth, grade + b.wall], C.siding, b.item.id);
+  const [C, base, over] = [scene.colors, b.base, 0.5];
+  box(mesh, [b.x, b.y, b.low], [b.x + b.width, b.y + b.depth, base + b.wall], C.siding, b.item.id);
   const span = b.ridge === "x" ? { x: b.x, y: b.y - over, width: b.width, depth: b.depth + 2 * over } : { x: b.x - over, y: b.y, width: b.width + 2 * over, depth: b.depth };
-  roofSection(mesh, scene, { ...span, ridge: b.ridge, eave: grade + b.wall + MODEL_ROOF_DEPTH, peak: grade + b.peak, item: b.item, color: C["shed-roof"] });
+  roofSection(mesh, scene, { ...span, ridge: b.ridge, eave: base + b.wall + MODEL_ROOF_DEPTH, peak: base + b.peak, item: b.item, color: C["shed-roof"] });
   // Its doors and windows, standing just out from its walls.
   for (const o of b.openings) {
     const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
@@ -1446,9 +1570,10 @@ function shed(mesh, scene, b) {
 // A board fence along each run between its points, with posts about every 8
 // ft and either side of each gate, and its gates a shade darker.
 // A fence: wood boards between posts, or chain link, steel posts with a top rail and its mesh, a diamond
-// lattice of wires, between them. Each gate is a panel of the same between posts of its own.
+// lattice of wires, between them. Each gate is a panel of the same between posts of its own. Its heights are over
+// the ground, so where that slopes, it does too, each post standing level.
 function fence(mesh, scene, f) {
-  const [C, grade, id] = [scene.colors, scene.details.grade, f.item.id];
+  const [C, details, id] = [scene.colors, scene.details, f.item.id];
   const chain = f.kind === "chain link";
   const color = chain ? C.steel : C.fence;
   const [post, gateColor] = [color.map((c) => c * 0.8), color.map((c) => c * 0.88)];
@@ -1458,10 +1583,15 @@ function fence(mesh, scene, f) {
     const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
     if (length < 1e-6) return;
     const [dx, dy] = [(q[0] - p[0]) / length, (q[1] - p[1]) / length];
-    const at = (t, side, z) => [p[0] + dx * t - dy * half * side, p[1] + dy * t + dx * half * side, z]; // side: -1 or 1, across
+    const ground = (t) => groundAt(details, p[0] + dx * t, p[1] + dy * t);
+    const at = (t, side, z) => [p[0] + dx * t - dy * half * side, p[1] + dy * t + dx * half * side, ground(t) + z]; // side: -1 or 1, across
+    const bends = bendsAlong(details, p, q).slice(1, -1).map(([x, y]) => Math.hypot(x - p[0], y - p[1])); // where the ground under it bends
     const run = (t0, t1, z0, z1, color, itemId) => {
-      const corners = (z) => [at(t0, -1, z), at(t1, -1, z), at(t1, 1, z), at(t0, 1, z)];
-      hexa(mesh, corners(z0), corners(z1), color, itemId);
+      const cuts = [t0, ...bends.filter((t) => t0 < t && t < t1), t1];
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const corners = (z) => [at(cuts[k], -1, z), at(cuts[k + 1], -1, z), at(cuts[k + 1], 1, z), at(cuts[k], 1, z)];
+        hexa(mesh, corners(z0), corners(z1), color, itemId);
+      }
     };
     // A wire slanting up from ta at za to tb at zb, its ends square to it, so where two wires meet, their ends
     // cross rather than lying in one plane.
@@ -1495,18 +1625,19 @@ function fence(mesh, scene, f) {
     }).sort((a, b) => a.t0 - b.t0);
     let t = 0;
     for (const g of gates) {
-      if (g.t0 > t) panel(t, g.t0, grade, grade + f.height, color, id);
-      panel(g.t0 + 0.2, g.t1 - 0.2, grade + 0.25, grade + f.height - 0.15, gateColor, g.item.id, true);
+      if (g.t0 > t) panel(t, g.t0, 0, f.height, color, id);
+      panel(g.t0 + 0.2, g.t1 - 0.2, 0.25, f.height - 0.15, gateColor, g.item.id, true);
       t = g.t1;
     }
-    if (t < length) panel(t, length, grade, grade + f.height, color, id);
+    if (t < length) panel(t, length, 0, f.height, color, id);
     const posts = Math.max(1, Math.round(length / (chain ? 10 : 8)));
     const spots = Array.from({ length: posts + 1 }, (_, k) => (length * k) / posts).filter((s) => !gates.some((g) => g.t0 < s && s < g.t1));
     for (const s of [...spots, ...gates.flatMap((g) => [g.t0, g.t1])]) {
       const [x, y] = [p[0] + dx * s, p[1] + dy * s];
-      // Its bottom a hair over the ground, a chain-link post's another, so it meets no panel's or other post's.
-      const foot = grade + (chain ? 0.04 : 0.02);
-      box(mesh, [x - postHalf, y - postHalf, foot], [x + postHalf, y + postHalf, grade + f.height + postTop], post, id);
+      // Its bottom a hair over the lowest ground under it, a chain-link post's another, so it meets no panel's or
+      // other post's.
+      const foot = groundRange(details, rectShape(x - postHalf, y - postHalf, 2 * postHalf, 2 * postHalf))[0] + (chain ? 0.04 : 0.02);
+      box(mesh, [x - postHalf, y - postHalf, foot], [x + postHalf, y + postHalf, ground(s) + f.height + postTop], post, id);
     }
   });
 }
@@ -1564,7 +1695,9 @@ function backflow(mesh, C, f) {
 // A fixture: a box in its finish. A railing runs along its longer side, in its finish. A half wall is in its
 // room's wall color, with a cap in its finish. A fireplace's firebox is dark, a little proud of the side away
 // from the wall it's against, across its middle and from low on it to a little over halfway up. A backflow
-// preventer is pipes, and a valve box is sunk in the ground, its lid just over it.
+// preventer is pipes, and a valve box is sunk in the ground, its lid just over it. A gas meter is its box on its
+// riser, a pipe up out of the ground under its middle, its foot sunk so it's not in the ground's plane, and its top
+// inside the box.
 // A register set in the corner of its floor and the wall it stands against, its grille sloping from the floor out
 // in the room up to the wall, as high as its height.
 function cornerRegister(mesh, C, f) {
@@ -1591,6 +1724,12 @@ function fixture(mesh, C, f) {
   }
   if (f.kind === "valve box") {
     box(mesh, [f.x0, f.y0, f.z0 - 0.3], [f.x1, f.y1, f.z1], C[f.finish] ?? C.black, f.item.id);
+    return;
+  }
+  if (f.kind === "gas meter") {
+    const color = C[f.finish] ?? C.steel;
+    round(mesh, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2], 0.07, f.z0 - (f.lift ?? 0) - 0.15, f.z0 + 0.1, color, f.item.id);
+    box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], color, f.item.id);
     return;
   }
   if (f.kind === "railing") {
@@ -2174,6 +2313,7 @@ function modelReadout(item) {
   if (item.where && item.where !== "Outside" && item.where !== "Roof") rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.where)));
   if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelThrow(item.water.heads))));
   if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelRate(item.water.heads))));
+  if (item.falls) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.falls)));
   if (!item.place && !item.known) rows.push(el("div", { class: "time" }, "Placed by guess"));
   return rows;
 }
