@@ -56,7 +56,7 @@ const MODEL_COVERAGE_TOKENS = {
 const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
-  deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller",
+  deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller", "gas meter": "Gas meter",
 };
 const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard", "Sprinklers"];
 // Each side of a plan as a line: the axis it runs along, where it is across
@@ -307,7 +307,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = true;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   // Each standing on the ground where it is: a raised one level, its top its height over the highest ground under it,
   // and its sides down to the lowest (low).
@@ -1680,7 +1680,9 @@ function backflow(mesh, C, f) {
 // A fixture: a box in its finish. A railing runs along its longer side, in its finish. A half wall is in its
 // room's wall color, with a cap in its finish. A fireplace's firebox is dark, a little proud of the side away
 // from the wall it's against, across its middle and from low on it to a little over halfway up. A backflow
-// preventer is pipes, and a valve box is sunk in the ground, its lid just over it.
+// preventer is pipes, and a valve box is sunk in the ground, its lid just over it. A gas meter is its box on its
+// riser, a pipe up out of the ground under its middle, its foot sunk so it's not in the ground's plane, and its top
+// inside the box.
 // A register set in the corner of its floor and the wall it stands against, its grille sloping from the floor out
 // in the room up to the wall, as high as its height.
 function cornerRegister(mesh, C, f) {
@@ -1707,6 +1709,12 @@ function fixture(mesh, C, f) {
   }
   if (f.kind === "valve box") {
     box(mesh, [f.x0, f.y0, f.z0 - 0.3], [f.x1, f.y1, f.z1], C[f.finish] ?? C.black, f.item.id);
+    return;
+  }
+  if (f.kind === "gas meter") {
+    const color = C[f.finish] ?? C.steel;
+    round(mesh, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2], 0.07, f.z0 - (f.lift ?? 0) - 0.15, f.z0 + 0.1, color, f.item.id);
+    box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], color, f.item.id);
     return;
   }
   if (f.kind === "railing") {

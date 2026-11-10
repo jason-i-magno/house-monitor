@@ -737,6 +737,8 @@ class KindsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Fixture("Valve box", "valve box", "Garage", 0, 0, 1.4, 1, 0.05)  # sunk in the ground outside
         with self.assertRaises(ValueError):
+            Fixture("Gas meter", "gas meter", "Garage", 0, 0, 0.8, 1, 1.3)  # on the house's wall outside
+        with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ((0, 0),), kind="drip")
         with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ())

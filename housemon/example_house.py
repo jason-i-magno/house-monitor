@@ -162,6 +162,7 @@ DETAILS = Details(
         Fixture("Family room half wall", "half wall", "Family room", 14.7, 4, 5, 0.4, 3.5, finish="wood", against=("right",)),  # out from the office's wall
         Fixture("Fireplace", "fireplace", "Living room", 15, 12.8, 5, 1.75, 4.5, finish="brick", against=("front",)),  # beside the window
         Fixture("Air conditioner", "appliance", None, -4, 15, 2.75, 2.75, 2.8, lift=0.2, finish="steel"),
+        Fixture("Gas meter", "gas meter", None, -0.8, 11, 0.8, 1, 1.3, lift=1.8, finish="steel"),  # on the left wall
         # Supply registers in the floors, and the bathroom's ceiling fan
         Fixture("Upstairs bedroom register", "vent", "Upstairs bedroom", 7, 0.6, 1, 0.33, 0.05, finish="grille"),
         Fixture("Front bedroom register", "vent", "Front bedroom", 7, 13.1, 1, 0.33, 0.05, finish="grille"),

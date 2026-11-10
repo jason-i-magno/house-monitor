@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 
 SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
-FIXTURES = ("appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller")
+FIXTURES = (
+    "appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller", "gas meter",
+)
 GROUNDS = ("porch", "patio", "deck", "driveway", "walk", "bed")
 PAVINGS = ("concrete", "flagstone", "wood", "gravel", "mulch", "carpet", "dirt")
 TREES = ("deciduous", "evergreen")
@@ -102,8 +104,8 @@ class Closet:
 
 @dataclass(frozen=True)
 class Fixture:
-    """An appliance, vent, plumbing (a tub, toilet, sink or spigot), fireplace, half wall or railing, or a part of a
-    sprinkler system, drawn as a box: in a room, or outside (room None) at x and y on the plan.
+    """An appliance, vent, plumbing (a tub, toilet, sink or spigot), fireplace, half wall or railing, a part of a
+    sprinkler system, or a gas meter, drawn as a box: in a room, or outside (room None) at x and y on the plan.
 
     lift is how high its bottom is above the floor, or outside above the ground, or the top of a raised ground
     it's in, as a bed's. against lists the sides of its room it stands flush against the walls of, wherever their
@@ -118,6 +120,9 @@ class Fixture:
     through, past a valve on either side, and goes back down, along the fixture's longer side and as high as its
     height; a valve box, outside, sunk in the ground with its lid `height` above it, holding the valves of some of
     its zones; and a controller, the box on a wall that runs them.
+
+    A gas meter is outside, against the house's wall: its box `lift` over the ground, on its riser, the pipe the gas
+    comes up out of the ground through.
     """
 
     name: str
@@ -140,6 +145,8 @@ class Fixture:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
         if self.kind == "valve box" and self.room is not None:
             raise ValueError(f"{self.name} is a valve box, sunk in the ground outside, so its room is None")
+        if self.kind == "gas meter" and self.room is not None:
+            raise ValueError(f"{self.name} is a gas meter, on the house's wall outside, so its room is None")
         _check_against(self.name, self.against, self.room)
 
 
