@@ -458,6 +458,36 @@ class Roof:
 
 
 @dataclass(frozen=True)
+class Slope:
+    """Where the ground slopes, as a front yard does down to the street: across the whole lot, between two lines
+    across the plan at `between`, the y's (for down "back" or "front") or x's (for "left" or "right") they're at,
+    falling evenly by `fall` ft from the one to the other, toward the side `down`. Before it the ground is as high as at
+    its top, and past it as low as at its foot. Slopes add up, so a yard can fall two ways. The house stands on level
+    ground, at the grade, so it's before each slope's top; what stands outside stands on the ground where it is, a raised
+    ground (a porch, or a bed) and a shed level, up from the highest ground under them."""
+
+    name: str
+    down: str
+    between: tuple[float, float]
+    fall: float
+    known: bool = False
+
+    def __post_init__(self):
+        _check(self.down, SIDES, "the way a slope falls")
+        if len(self.between) != 2 or not self.between[0] < self.between[1]:
+            raise ValueError(f"{self.name} is between two lines, the lower first")
+        if self.fall <= 0:
+            raise ValueError(f"{self.name} falls some way")
+
+    def share(self, x, y):
+        """How far down it the ground at x, y on the plan is, from 0 at its top to 1 at its foot."""
+        a, b = self.between
+        v = y if self.down in ("back", "front") else x
+        f = min(max((v - a) / (b - a), 0.0), 1.0)
+        return f if self.down in ("front", "right") else 1 - f
+
+
+@dataclass(frozen=True)
 class Finish:
     """What a room's floor and walls are made of, for their colors."""
 
@@ -475,7 +505,7 @@ class Details:
 
     The yard fills lot, the corners of its outline in order, with lawn
     wherever nothing else is, and grade is the ground's height above the main
-    floor. finishes is by room name; a room without one gets wood floors and
+    floor, but where slopes fall from it. finishes is by room name; a room without one gets wood floors and
     painted walls. colors replaces the detailed view's colors, the --model-*
     tokens in style.css, by name, each as light and dark: the house's siding
     and roof, say. example marks a made-up house, with nothing in it to check,
@@ -485,6 +515,7 @@ class Details:
 
     lot: tuple[tuple[float, float], ...]
     grade: float
+    slopes: tuple[Slope, ...] = ()
     example: bool = False
     finishes: dict[str, Finish] = field(default_factory=dict)
     colors: dict[str, tuple[str, str]] = field(default_factory=dict)
@@ -501,3 +532,8 @@ class Details:
     fences: tuple[Fence, ...] = ()
     steps: tuple[Steps, ...] = ()
     sprinklers: tuple[Sprinklers, ...] = ()
+
+    def ground(self, x, y):
+        """How high the ground is at x, y on the plan, above the main floor: the grade, less what the slopes fall by
+        there (groundAt in model.js)."""
+        return self.grade - sum(s.fall * s.share(x, y) for s in self.slopes)

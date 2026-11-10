@@ -19,7 +19,7 @@ const dirs = [];
 for (const x of [-2, -1, 0, 1, 2]) for (const y of [-2, -1, 0, 1, 2]) for (const z of [-2, -1, 0, 1, 2]) {
   if (Math.max(Math.abs(x), Math.abs(y), Math.abs(z)) === 2 || (x && y && z)) { const l = Math.hypot(x, y, z); dirs.push([x / l + 1e-7, y / l + 2e-7, z / l + 3e-7]); }
 }
-const treeIds = new Set(scene.trees.map((t) => t.item.id));
+const treeIds = new Map(scene.trees.map((t) => [t.item.id, t.ground])); // each tree's ground
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -78,7 +78,7 @@ for (const [mode, season, pass] of passes) {
     const grid = new Map();
     const cellOf = (v, k) => Math.min(dims[k] - 1, Math.max(0, Math.floor((v - lo[k]) / CELL)));
     tris.forEach((t, i) => {
-      if (treeIds.has(t.id) && Math.min(t.p[0][2], t.p[1][2], t.p[2][2]) > scene.details.grade + 1.5) return; // you can turn the view around a tree's canopy
+      if (treeIds.has(t.id) && Math.min(t.p[0][2], t.p[1][2], t.p[2][2]) > treeIds.get(t.id) + 1.5) return; // you can turn the view around a tree's canopy
       const [a, b] = [0, 1, 2].map((k) => [cellOf(Math.min(t.p[0][k], t.p[1][k], t.p[2][k]), k), cellOf(Math.max(t.p[0][k], t.p[1][k], t.p[2][k]), k)]).reduce(([m, n], [c0, c1]) => [[...m, c0], [...n, c1]], [[], []]);
       for (let x = a[0]; x <= b[0]; x++) for (let y = a[1]; y <= b[1]; y++) for (let z = a[2]; z <= b[2]; z++) {
         const key = (x * dims[1] + y) * dims[2] + z;
