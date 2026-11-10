@@ -72,6 +72,7 @@
   --model-needles: #3f6c4a;
   --model-focus: #2a6fdb;
   --model-sash: #f3f1eb;
+  --model-window-border: #d8ccb2;
   --model-paneling: #4f4034;
   --model-flagstone: #b48a72;
   --model-stone: #a39b8e;
@@ -159,6 +160,7 @@
     --model-needles: #2b4a34;
     --model-focus: #5b9bf0;
     --model-sash: #a9a69e;
+    --model-window-border: #8f8672;
     --model-paneling: #34291f;
     --model-flagstone: #7a5d4d;
     --model-stone: #6e685f;

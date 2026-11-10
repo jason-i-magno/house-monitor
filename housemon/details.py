@@ -517,7 +517,9 @@ class Details:
     tokens in style.css, by name, each as light and dark: the house's siding
     and roof, say. example marks a made-up house, with nothing in it to check,
     so the view calls none of it a guess. sprinklers are the sprinkler
-    system's zones.
+    system's zones. window_border is how wide a raised border, as of stucco,
+    stands round each window on the outside of the house, in the
+    window-border color, or 0 for none.
     """
 
     lot: tuple[tuple[float, float], ...]
@@ -539,6 +541,11 @@ class Details:
     fences: tuple[Fence, ...] = ()
     steps: tuple[Steps, ...] = ()
     sprinklers: tuple[Sprinklers, ...] = ()
+    window_border: float = 0.0
+
+    def __post_init__(self):
+        if self.window_border < 0:
+            raise ValueError(f"a window border can't be {self.window_border} ft wide")
 
     def ground(self, x, y):
         """How high the ground is at x, y on the plan, above the main floor: the grade, less what the slopes fall by
