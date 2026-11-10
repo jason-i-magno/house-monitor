@@ -362,6 +362,31 @@ function timeTicks(since, until, plotWidth) {
   return ticks;
 }
 
+// A run of points, in pixels and in time order, as a smooth curve through every one that never bends past one, so
+// a peak or dip drawn is one read: cubic Béziers with Steffen's monotone tangents, as d3's curveMonotoneX draws. Two
+// points are a straight line, and one draws nothing, as a line through it would.
+function smoothPath(points) {
+  const at = ([px, py]) => `${px.toFixed(1)},${py.toFixed(1)}`;
+  const n = points.length;
+  if (n < 3) return points.map((p, i) => (i ? "L" : "M") + at(p)).join("");
+  const h = points.slice(1).map((p, i) => p[0] - points[i][0]);
+  const slope = h.map((dx, i) => (dx ? (points[i + 1][1] - points[i][1]) / dx : 0));
+  const m = new Array(n).fill(0); // each point's tangent
+  for (let i = 1; i < n - 1; i++) {
+    const p = (slope[i - 1] * h[i] + slope[i] * h[i - 1]) / (h[i - 1] + h[i] || 1);
+    m[i] = (Math.sign(slope[i - 1]) + Math.sign(slope[i])) * Math.min(Math.abs(slope[i - 1]), Math.abs(slope[i]), 0.5 * Math.abs(p)) || 0;
+  }
+  m[0] = (3 * slope[0] - m[1]) / 2;
+  m[n - 1] = (3 * slope[n - 2] - m[n - 2]) / 2;
+  let d = "M" + at(points[0]);
+  for (let i = 0; i < n - 1; i++) {
+    const [[x0, y0], [x1, y1]] = [points[i], points[i + 1]];
+    const dx = (x1 - x0) / 3;
+    d += `C${at([x0 + dx, y0 + m[i] * dx])} ${at([x1 - dx, y1 - m[i + 1] * dx])} ${at([x1, y1])}`;
+  }
+  return d;
+}
+
 function drawChart(chart) {
   const width = chart.plot.clientWidth;
   if (!width || !state.history) return;
@@ -413,11 +438,13 @@ function drawChart(chart) {
   }
 
   for (const s of series) {
-    let d = "";
+    // Each run of points between gaps, as a smooth curve through them.
+    const runs = [];
     s.points.forEach(([t, v], i) => {
-      const move = i === 0 || t - s.points[i - 1][0] > gap;
-      d += `${move ? "M" : "L"}${x(t).toFixed(1)},${y(v).toFixed(1)}`;
+      if (i === 0 || t - s.points[i - 1][0] > gap) runs.push([]);
+      runs[runs.length - 1].push([x(t), y(v)]);
     });
+    const d = runs.map(smoothPath).join("");
     root.append(svg("path", {
       d,
       fill: "none",
