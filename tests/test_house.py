@@ -789,6 +789,10 @@ class KindsTest(unittest.TestCase):
             Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", count=0)
         with self.assertRaises(ValueError):
             Steps("Steps", 0, 0, 3, 3, bottom=0, top=1, up="back", banisters=("front",))  # across the climb
+        lot = ((0, 0), (10, 0), (10, 10), (0, 10))
+        Details(lot=lot, grade=-1, window_border=0.5)
+        with self.assertRaises(ValueError):
+            Details(lot=lot, grade=-1, window_border=-0.5)
 
     def test_a_slope_falls_some_way_toward_a_side_between_two_lines(self):
         Slope("Yard", "back", (-10, 20), fall=2)

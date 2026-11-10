@@ -23,6 +23,7 @@ const MODEL_CUT = 4; // feet above its floor where a cut-away wall stops
 const MODEL_CLOSET_HEIGHT = 8; // a closet's walls at most, under a higher ceiling
 const MODEL_CLOSET_DOOR = 6.67;
 const MODEL_ROOF_DEPTH = 0.6; // feet from a roof's eaves down to its underside, as in details.Roof
+const MODEL_BORDER_RAISE = 0.12; // feet a window's raised border stands out from its wall, as details.window_border
 const MODEL_SIZE = 720; // px at most across the scene's bounding sphere
 const MODEL_PAD = 16;
 const MODEL_ZOOM_MAX = 6; // times the house's framing
@@ -39,7 +40,7 @@ const MODEL_INCHES_AN_HOUR = 96.25; // inches an hour that a gallon a minute put
 const MODEL_TOKENS = [
   "lawn", "soil", "concrete", "slab", "foundation", "siding", "trim", "roof", "glass", "door", "garage-door", "seam",
   "paint", "drywall", "cut", "carpet", "wood", "tile", "dirt", "white", "steel", "black", "grille", "trunk",
-  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
+  "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "window-border", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
   "coverage-0", "coverage-1", "coverage-2", "coverage-3", "water-1", "water-2", "water-3", "water-4", "water-5",
 ];
 // The sprinklers' coverage: how many heads reach a spot, dry for none, up to 3 or more.
@@ -221,7 +222,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   if (!rooms.length || !rooms.every((s) => s.plan)) return { note: "The detailed view needs every room's plan." };
   const raw = [...rooms, ...areas].flatMap((q) => [q.plan].flat());
   const details = {
-    finishes: {}, colors: {}, slopes: [], claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [],
+    finishes: {}, colors: {}, slopes: [], claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [], window_border: 0,
     ...(given ?? modelFallback(raw)),
   };
   const items = [];
@@ -795,6 +796,15 @@ function openingPanels(mesh, scene, o, mode, view) {
     return;
   }
   doorOrWindow(part, C, o, [s0, s1, z0, z1], depth);
+  // A window's raised border, the house's window_border wide all round it, standing out from the wall's outside
+  // face, cut away with it.
+  const w = scene.details.window_border;
+  if (o.kind !== "window" || !(w > 0)) return;
+  const [out, top, color] = [[d0 - MODEL_BORDER_RAISE, d0], Math.min(o.z1 + w, cap), C["window-border"]];
+  part([s0 - w, s0], out, [z0 - w, top], color);
+  part([s1, s1 + w], out, [z0 - w, top], color);
+  part([s0, s1], out, [z0 - w, z0], color);
+  if (o.z1 < cap) part([s0, s1], out, [o.z1, top], color);
 }
 
 // An outside door or window from s0 to s1 and z0 to z1, its parts at depths d(f), for f from 0 at the wall's
