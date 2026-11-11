@@ -747,6 +747,13 @@ class KindsTest(unittest.TestCase):
         Fixture("Attic vent", "attic vent", None, 0, 0, 1, 0.1, 1.5, lift=15, finish="trim")
         with self.assertRaises(ValueError):
             Fixture("Washer", "appliance", "Office", 0, 0, 2, 2, 3, whisker="Litter-Robot")  # only a litter box is one
+        Fixture("Litter box", "litter box", "Office", 0, 0, 2.25, 3.75, 2.9, finish="wood", faces="right", cabinet="left")
+        for wrong in ({"faces": "up"}, {"cabinet": "front"}):
+            with self.assertRaises(ValueError, msg=wrong):
+                Fixture("Litter box", "litter box", "Office", 0, 0, 2.25, 3.75, 2.9, **wrong)
+        for field in ({"faces": "left"}, {"cabinet": "right"}):  # only a litter box faces one way or sits in a cabinet
+            with self.assertRaises(ValueError, msg=field):
+                Fixture("Dryer", "appliance", "Office", 0, 0, 2, 2, 3, **field)
         box = Fixture("Litter box", "litter box", "Office", 0, 0, 2, 2.25, 2.5, whisker="Litter-Robot")
         for other in (box, dataclasses.replace(box, name="Upstairs litter box", whisker="LITTER-ROBOT")):
             with self.assertRaises(ValueError):  # one name, or one robot, for two

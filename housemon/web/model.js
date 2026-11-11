@@ -1807,14 +1807,19 @@ function nearestWall(f) {
 }
 
 // A litter box, as a Litter-Robot is: its base, the lower third, and its globe sitting in it, a drum lying across
-// the way its entry faces, away from the wall nearest it (nearestWall; toward the front out in the yard), as wide as the box
-// across and up to its top, with its entry a dark disc standing just out from the drum's end, its back inside it.
+// the way its entry faces, its own `faces` or away from the wall nearest it (nearestWall; toward the front out in
+// the yard), as wide as the box across and up to its top, with its entry a dark disc standing just out from the
+// drum's end, its back inside it. One in a cabinet is the cabinet (litterCabinet).
 function litterBox(mesh, C, f) {
   const color = C[f.finish] ?? C.white;
   const id = f.item.id;
+  const faces = f.faces ?? (f.piece ? { left: "right", right: "left", back: "front", front: "back" }[nearestWall(f)] : "front");
+  if (f.cabinet) {
+    litterCabinet(mesh, C, f, faces);
+    return;
+  }
   const base = f.z0 + (f.z1 - f.z0) / 3;
   box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, base], color, id);
-  const faces = f.piece ? { left: "right", right: "left", back: "front", front: "back" }[nearestWall(f)] : "front";
   const across = faces === "left" || faces === "right" ? f.y1 - f.y0 : f.x1 - f.x0;
   const r = Math.min(across, f.z1 - base + 0.1) / 2;
   const z = f.z1 - r;
@@ -1826,6 +1831,38 @@ function litterBox(mesh, C, f) {
   };
   limb(mesh, at(0.03), at(1, -0.05), r, r, color, id, 12);
   limb(mesh, at(1, -0.08), at(1, -0.02), 0.6 * r, 0.6 * r, C.black, id, 12); // clear of the base's face below it
+}
+
+// A litter box's cabinet, made to look like furniture: its body in its finish, and on the side it faces, over a
+// toe kick, two doors, panels standing just out from it with a dark slit between them and a knob each by it, and at
+// the end of that side `cabinet` says, as you face it, a column of two open shelves, dark, the cat's way in.
+function litterCabinet(mesh, C, f, faces) {
+  const color = C[f.finish] ?? C.wood;
+  const id = f.item.id;
+  box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], color, id);
+  // A point on its front, s of the way across it from its left end as you face it, at height z, out from it.
+  const point = (s, z, out) => ({
+    right: [f.x1 + out, f.y1 - s * (f.y1 - f.y0), z],
+    left: [f.x0 - out, f.y0 + s * (f.y1 - f.y0), z],
+    front: [f.x0 + s * (f.x1 - f.x0), f.y1 + out, z],
+    back: [f.x1 - s * (f.x1 - f.x0), f.y0 - out, z],
+  })[faces];
+  const panel = ([s0, s1], [z0, z1], [out0, out1], panelColor) => {
+    const [a, b] = [point(s0, z0, out0), point(s1, z1, out1)];
+    box(mesh, a.map((v, k) => Math.min(v, b[k])), a.map((v, k) => Math.max(v, b[k])), panelColor, id);
+  };
+  const wide = faces === "left" || faces === "right" ? f.y1 - f.y0 : f.x1 - f.x0;
+  const [m, kick, top] = [0.06 / wide, f.z0 + 0.25, f.z1 - 0.12]; // its frame, as a share of its width, and heights
+  const shelves = f.cabinet === "right" ? [2 / 3, 1] : [0, 1 / 3];
+  const doors = f.cabinet === "right" ? [m, 2 / 3 - m] : [1 / 3 + m, 1 - m];
+  const split = (doors[0] + doors[1]) / 2;
+  const [gap, slit, knob] = [0.025 / wide, 0.015 / wide, 0.12 / wide];
+  const middle = (kick + top) / 2;
+  panel([doors[0], split - gap], [kick, top], [-0.01, 0.03], color);
+  panel([split + gap, doors[1]], [kick, top], [-0.01, 0.03], color);
+  panel([split - slit, split + slit], [kick, top], [-0.01, 0.02], C.black);
+  for (const s of [split - knob, split + knob]) panel([s - 0.03 / wide, s + 0.03 / wide], [middle - 0.03, middle + 0.03], [0.02, 0.08], C.black);
+  for (const [z0, z1] of [[kick, middle - 0.04], [middle + 0.04, top]]) panel([shelves[0] + m, shelves[1] - m], [z0, z1], [-0.01, 0.015], C.black);
 }
 
 function fixture(mesh, C, f) {
