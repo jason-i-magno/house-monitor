@@ -1,9 +1,10 @@
-"""Fans each new reading out to the store and to every live client, and each litter box's new state out to them."""
+"""Fans each new reading out to the store and to every live client, and each litter box's state and what each
+robot vacuum is doing out to the clients."""
 
 import queue
 import threading
 
-from .readings import LitterBox, Reading
+from .readings import LitterBox, Reading, Vacuum
 from .store import Store
 
 
@@ -13,6 +14,7 @@ class Hub:
         self._lock = threading.Lock()
         self._latest = store.latest()
         self._boxes: dict[str, LitterBox] = {}
+        self._vacuums: dict[str, Vacuum] = {}
         self._clients: set[queue.Queue] = set()
 
     def publish(self, item: Reading | LitterBox) -> None:
@@ -25,6 +27,17 @@ class Hub:
             else:
                 self._boxes[item.name] = item
             clients = list(self._clients)
+        self._send(clients, item)
+
+    def publish_vacuum(self, vacuum: Vacuum) -> None:
+        """What a robot vacuum is doing now, kept only as the latest, not stored."""
+        with self._lock:
+            self._vacuums[vacuum.id] = vacuum
+            clients = list(self._clients)
+        self._send(clients, vacuum)
+
+    @staticmethod
+    def _send(clients: list[queue.Queue], item: Reading | LitterBox | Vacuum) -> None:
         for client in clients:
             try:
                 client.put_nowait(item)
@@ -40,6 +53,11 @@ class Hub:
         """Each litter box's latest state, by its name."""
         with self._lock:
             return dict(self._boxes)
+
+    def vacuums(self) -> list[Vacuum]:
+        """What each robot vacuum was last doing, in the order they first reported."""
+        with self._lock:
+            return list(self._vacuums.values())
 
     def subscribe(self, maxsize: int = 1000) -> queue.Queue:
         client: queue.Queue = queue.Queue(maxsize)

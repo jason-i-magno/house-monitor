@@ -308,6 +308,7 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 }
 
 .stale .icon { margin-right: 4px; color: var(--status-warning); }
+.doing .icon { margin-right: 4px; color: var(--status-warning); }
 
 /* A litter box's card: its status, a warning sign beside one that needs seeing to, and its drawer's gauge. */
 .litter-box .status { margin-top: 6px; font-size: 1.125rem; font-weight: 600; line-height: 1.3; }

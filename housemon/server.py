@@ -1,4 +1,5 @@
-"""The web app: static files, a JSON API, and a Server-Sent Events stream of live readings and litter boxes' states."""
+"""The web app: static files, a JSON API, and a Server-Sent Events stream of live readings, litter boxes' states
+and vacuums."""
 
 import json
 import math
@@ -13,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 from .details import Details
 from .hub import Hub
 from .layout import WALL, house_layout
-from .readings import Area, LitterBox, Reading, Sensor
+from .readings import Area, LitterBox, Reading, Sensor, Vacuum
 from .store import Store
 
 STATIC = {
@@ -110,7 +111,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.refresh:
             self.server.refresh()
         hub = self.server.hub
-        return house_json(self.server.sensors, self.server.areas, self.server.details, hub.latest(), hub.litter_boxes())
+        house = house_json(self.server.sensors, self.server.areas, self.server.details, hub.latest(), hub.litter_boxes())
+        return {**house, "vacuums": [vacuum.to_json() for vacuum in hub.vacuums()]}
 
     def _history(self, query: dict[str, list[str]]) -> None:
         try:
@@ -139,9 +141,9 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 try:
                     item = client.get(timeout=KEEPALIVE)
-                    # A litter box's state is an event of its own, so a reading is the stream's plain message.
-                    event = "event: litter-box\n" if isinstance(item, LitterBox) else ""
-                    message = f"{event}data: {json.dumps(item.to_json())}\n\n"
+                    # A reading is the stream's own kind of message, and a litter box's state and a vacuum each one of its own.
+                    kind = "event: litter-box\n" if isinstance(item, LitterBox) else "event: vacuum\n" if isinstance(item, Vacuum) else ""
+                    message = f"{kind}data: {json.dumps(item.to_json())}\n\n"
                 except queue.Empty:
                     message = ": keepalive\n\n"
                 self.wfile.write(message.encode())

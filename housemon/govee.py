@@ -19,6 +19,7 @@ from .readings import Reading
 COMPANY = 0xEC88  # Govee's company id, under which the H5075 broadcasts its reading
 INTERVAL = 10.0  # seconds between each room's readings, at most
 MISSING = 300.0  # seconds without a broadcast from a sensor the house file names before it's warned of
+BACKUP = 120.0  # seconds without a broadcast from a room's sensor before another source for the room fills in
 RETRY = 60.0  # seconds before scanning again after it fails, as with no Bluetooth adapter
 SCAN = 15.0  # seconds --govee-scan listens
 
@@ -120,6 +121,12 @@ class GoveeSource:
         with self._lock:
             self._heard[name.casefold()] = broadcast
 
+    def hears(self, sensor_id: str, now: float, within: float = BACKUP) -> bool:
+        """Whether the sensor of the room with this sensor id has been heard from in the last `within` seconds."""
+        names = [name.casefold() for name, room in self.rooms().items() if room == sensor_id]
+        with self._lock:
+            return any((b := self._heard.get(name)) is not None and now - b.at <= within for name in names)
+
     def heard_from(self) -> list[Broadcast]:
         """The newest broadcast from each sensor heard, by name."""
         with self._lock:
@@ -178,6 +185,17 @@ class GoveeSource:
                 publish(reading)
         if listener:
             listener.join()
+
+
+def unless_heard(publish: Callable[[Reading], None], source: GoveeSource, within: float = BACKUP) -> Callable[[Reading], None]:
+    """publish, but for the readings of a room whose Govee sensor source has heard from in the `within` seconds before
+    each, so another source for the room, as its ecobee sensor, fills in only while the Govee is quiet."""
+
+    def publish_unless_heard(reading: Reading) -> None:
+        if not source.hears(reading.sensor_id, reading.ts, within):
+            publish(reading)
+
+    return publish_unless_heard
 
 
 def scan_interactively(

@@ -1,4 +1,4 @@
-"""The records every sensor source produces."""
+"""The records every sensor source produces, a litter box's state, and what a robot vacuum is doing."""
 
 from dataclasses import asdict, dataclass
 
@@ -111,3 +111,18 @@ class LitterBox:
         """Its state, with what its status says and whether it needs seeing to."""
         text, attention = LITTER_STATUSES.get(self.status, (f"Unknown status {self.status or '(none)'}", True))
         return {**asdict(self), "text": text, "attention": attention}
+
+
+@dataclass(frozen=True)
+class Vacuum:
+    """What a robot vacuum is doing, as its maker's cloud last said: not a reading of a room, so not stored."""
+
+    id: str
+    name: str  # as its app shows it
+    state: str  # what it's doing, as "Charging"; "Offline" when its cloud can't reach it
+    battery: int | None  # percent
+    ts: float  # Unix time, seconds
+    error: bool = False  # stopped by a problem, which its app says more about
+
+    def to_json(self) -> dict:
+        return asdict(self)

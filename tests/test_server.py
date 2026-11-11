@@ -11,7 +11,7 @@ from pathlib import Path
 from housemon.details import Details, Finish, Fixture, Opening, Roof
 from housemon.hub import Hub
 from housemon.layout import house_layout
-from housemon.readings import Area, LitterBox, Plan, Reading
+from housemon.readings import Area, LitterBox, Plan, Reading, Vacuum
 from housemon.server import HouseServer, house_json
 from housemon.example_house import HOUSE
 from housemon.store import Store
@@ -166,6 +166,20 @@ class ServerTest(unittest.TestCase):
         lines = [response.readline() for _ in range(3)]
         self.assertEqual(lines[1:], [b"event: litter-box\n", b"data: " + json.dumps(state.to_json()).encode() + b"\n"])
         conn.close()
+
+    def test_vacuums_come_with_the_house_and_down_the_stream(self):
+        self.assertEqual(json.loads(self.get("/api/sensors")[2])["vacuums"], [])
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        conn.request("GET", "/api/stream")
+        response = conn.getresponse()
+        self.assertEqual(response.readline(), b"retry: 3000\n")
+        vacuum = Vacuum("mova-1", "P10 Pro Ultra", "Charging", 87, time.time())
+        self.hub.publish_vacuum(vacuum)
+        lines = [response.readline() for _ in range(3)]
+        self.assertEqual(lines[1:], [b"event: vacuum\n", b"data: " + json.dumps(vacuum.to_json()).encode() + b"\n"])
+        conn.close()
+        self.hub.publish_vacuum(Vacuum("mova-1", "P10 Pro Ultra", "Vacuuming", 80, time.time()))
+        self.assertEqual([(v["name"], v["state"]) for v in json.loads(self.get("/api/sensors")[2])["vacuums"]], [("P10 Pro Ultra", "Vacuuming")])
 
 
 class HubTest(unittest.TestCase):

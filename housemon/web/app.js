@@ -58,6 +58,7 @@ const state = {
   // [{name, where, latest, card}]: the litter boxes that name a Litter-Robot, in house order, where each is, and its
   // latest state, or null before the first
   litterBoxes: [],
+  vacuums: [], // [{id, name, state, battery, ts, error, card}]: what each robot vacuum is doing, if the server has any
   areas: [], // [{name, floor, plan}]: parts of the house with no sensor
   details: null, // the doors, windows, roof, yard and more for the detailed view (housemon/details.py), if any
   wall: null, // how thick every wall is, in feet (housemon/layout.py)
@@ -187,7 +188,57 @@ function renderRooms() {
     const grid = el("div", { class: "room-grid" }, ...state.litterBoxes.map(litterBoxCard));
     root.append(el("section", { class: "floor" }, el("h2", {}, state.litterBoxes.length > 1 ? "Litter boxes" : "Litter box"), grid));
   }
+  if (state.vacuums.length) {
+    const grid = el("div", { class: "room-grid" }, ...state.vacuums.map(vacuumCard));
+    root.append(el("section", { class: "floor" }, el("h2", {}, state.vacuums.length > 1 ? "Vacuums" : "Vacuum"), grid));
+  }
   updateRooms();
+}
+
+// A robot vacuum's card: its battery, what it's doing, and when the server last heard. Not a room, so no line key.
+function vacuumCard(vacuum) {
+  vacuum.card = el(
+    "article",
+    { class: "room vacuum" },
+    el("h3", {}, vacuum.name),
+    el("p", { class: "temp" }, el("span", { class: "value" }, "–"), el("span", { class: "unit" }, "% battery")),
+    el("p", { class: "humidity doing" }),
+    el("p", { class: "meta updated-at" }),
+    el("p", { class: "stale", hidden: "" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), el("span")),
+  );
+  return vacuum.card;
+}
+
+function updateVacuums(now) {
+  for (const vacuum of state.vacuums) {
+    const [value, unit, doing, updatedAt, stale] = [".value", ".unit", ".doing", ".updated-at", ".stale"]
+      .map((s) => vacuum.card.querySelector(s));
+    value.textContent = vacuum.battery ?? "–";
+    unit.hidden = vacuum.battery == null;
+    // An error says so in words, with the warning icon beside them.
+    doing.replaceChildren(...(vacuum.error ? [el("span", { class: "icon", "aria-hidden": "true" }, "⚠")] : []), vacuum.state);
+    const age = now - vacuum.ts;
+    updatedAt.textContent = `Updated ${ago(age)}`;
+    const isStale = age > STALE_AFTER;
+    vacuum.card.classList.toggle("is-stale", isStale);
+    stale.hidden = !isStale;
+    stale.lastElementChild.textContent = `No update for ${duration(age)}`;
+  }
+}
+
+function onVacuum(vacuum) {
+  const known = state.vacuums.find((v) => v.id === vacuum.id);
+  if (!known) {
+    state.vacuums.push(vacuum);
+    renderRooms();
+    return;
+  }
+  if (known.name !== vacuum.name) known.card.querySelector("h3").textContent = vacuum.name;
+  Object.assign(known, vacuum);
+  updateRooms();
+  known.card.classList.remove("updated");
+  void known.card.offsetWidth; // restart the arrival animation
+  known.card.classList.add("updated");
 }
 
 function roomCard(sensor, i) {
@@ -233,6 +284,7 @@ function updateRooms() {
     stale.lastElementChild.textContent = `No reading for ${duration(age)}`;
   }
   updateLitterBoxes(now);
+  updateVacuums(now);
   // A level whose rooms are all hidden goes too, and the toggle shows only while there's something to hide.
   for (const section of document.querySelectorAll("#rooms .floor")) {
     section.hidden = [...section.querySelectorAll(".room")].every((card) => card.hidden);
@@ -1624,7 +1676,10 @@ function drawAll() {
 async function loadSensors() {
   const response = await fetch("/api/sensors");
   const house = await response.json();
-  ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null } = house);
+  ({
+    sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null,
+    vacuums: state.vacuums = [],
+  } = house);
   state.litterBoxes = Object.entries(house.litter_boxes ?? {}).map(([name, latest]) => {
     return { name, where: state.details?.fixtures.find((f) => f.name === name)?.room ?? null, latest };
   });
@@ -1698,6 +1753,7 @@ function connect() {
   };
   stream.onmessage = (event) => onReading(JSON.parse(event.data));
   stream.addEventListener("litter-box", (event) => onLitterBox(JSON.parse(event.data)));
+  stream.addEventListener("vacuum", (event) => onVacuum(JSON.parse(event.data)));
 }
 
 function renderRanges() {
