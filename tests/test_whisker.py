@@ -9,6 +9,7 @@ import stat
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -245,6 +246,35 @@ class WhiskerSourceTest(unittest.TestCase):
     def test_an_unknown_status_says_so_and_needs_seeing_to(self):
         state = LitterBox("Litter box", 1000.0, "XYZ", 3, 10.0).to_json()
         self.assertEqual((state["text"], state["attention"]), ("Unknown status XYZ", True))
+
+
+class WhiskerRunTest(unittest.TestCase):
+    def test_a_lapsed_sign_in_is_left_alone_and_a_failure_backs_off(self):
+        calls, waits, err = [], [], io.StringIO()
+        answers = iter([whisker.WhiskerError("Whisker's API answered 503"), whisker.SignInNeeded("Whisker no longer takes the saved sign-in")])
+
+        class Account:
+            path = Path("/nonexistent/whisker.json")
+
+            def robots(self):
+                calls.append(1)
+                raise next(answers)
+
+        class Stop:  # waits for nothing, and stops after four
+            def is_set(self):
+                return len(waits) >= 4
+
+            def wait(self, seconds):
+                waits.append(seconds)
+                return self.is_set()
+
+        source = whisker.WhiskerSource(Account(), lambda: {"Lucky": "Litter box"})
+        with unittest.mock.patch("sys.stderr", err):
+            source.run(lambda state: None, Stop())
+        self.assertEqual(len(calls), 2)  # none while the sign-in has lapsed
+        self.assertEqual(waits, [120.0] + [10.0] * 3)  # backing off, then looking for a new sign-in
+        self.assertIn("whisker: Whisker's API answered 503; trying again in 2 min", err.getvalue())
+        self.assertIn("sign in again with python3 -m housemon --whisker-sign-in, and until then it's left alone", err.getvalue())
 
 
 if __name__ == "__main__":

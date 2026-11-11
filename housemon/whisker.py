@@ -29,6 +29,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import OpenerDirector, Request, build_opener
 
+from .polling import poll_gently
 from .readings import LitterBox
 
 # Whisker's app's, as pylitterbot has them
@@ -373,19 +374,16 @@ class WhiskerSource:
         return states
 
     def run(self, publish: Callable[[LitterBox], None], stop: threading.Event) -> None:
-        """Call publish(state) for each litter box every poll until stop is set. A failed poll is reported and tried
-        again next time, so a network outage or a lapsed sign-in doesn't stop the rest of the house."""
-        while not stop.is_set():
-            try:
-                for state in self.poll(time.time()):
-                    publish(state)
-            except SignInNeeded as e:
-                print(f"whisker: {e}; sign in again with python3 -m housemon --whisker-sign-in", file=sys.stderr, flush=True)
-            except WhiskerError as e:
-                print(f"whisker: {e}", file=sys.stderr, flush=True)
-            except (URLError, OSError, ValueError) as e:
-                print(f"whisker: couldn't get its robots: {e}", file=sys.stderr, flush=True)
-            stop.wait(self.interval)
+        """Call publish(state) for each litter box every poll until stop is set, gently (polling.py): backing off
+        while polls fail, as in a network outage, and waiting while the sign-in has lapsed until it's signed in again,
+        so neither stops the rest of the house."""
+        poll_gently(
+            self.poll, publish, stop, self.interval,
+            sign_in=self.account.path, lapsed=SignInNeeded, failed=(WhiskerError, URLError, OSError, ValueError),
+            sign_in_again="python3 -m housemon --whisker-sign-in",
+            log=lambda message: print(f"whisker: {message}", file=sys.stderr, flush=True),
+            describe=lambda e: str(e) if isinstance(e, WhiskerError) else f"couldn't get its robots: {e}",
+        )
 
 
 def sign_in_interactively(path: Path, ask: Callable[[str], str] = input, ask_secret: Callable[[str], str] | None = None) -> None:
