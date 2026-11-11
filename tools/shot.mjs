@@ -5,6 +5,7 @@
 //   node tools/shot.mjs [options] [out.png]   # out.png in the temp folder, if not given
 //     --url URL         the page (default http://127.0.0.1:8000/)
 //     --hide-simulated  with the simulator's readings hidden
+//     --range NAME      the charts' range, as its button names it: 6 h, 24 h, 7 d or 30 d (default: as it loads)
 //     --view NAME       the map's view: plan, 3d or detailed (default: the page as it loads, all of it)
 //     --level NAME      in the detailed view, cut away to a level by its floor's name, as Upper or Main; or outside
 //     --no-trees        in the detailed view, the whole house with its trees hidden
@@ -35,6 +36,7 @@ const { values: opt, positionals } = parseArgs({
   options: {
     url: { type: "string", default: "http://127.0.0.1:8000/" },
     "hide-simulated": { type: "boolean" },
+    range: { type: "string" },
     view: { type: "string" },
     level: { type: "string" },
     "no-trees": { type: "boolean" },
@@ -119,6 +121,8 @@ try {
   const click = (selector, text) => `{ const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((b) => b.textContent === ${JSON.stringify(text)}); if (!b) throw new Error("No button " + ${JSON.stringify(text)}); b.click(); await new Promise((r) => setTimeout(r, 700)); }`;
   // Pressed only if it isn't already, as this viewer may have left it; then the history without them loads.
   if (opt["hide-simulated"]) steps.push(`if (!state.hideSimulated) ${click("#simulated", "Hide simulated")} await new Promise((r) => setTimeout(r, 800));`);
+  // Then its history loads.
+  if (opt.range) steps.push(`${click("#ranges button", opt.range.replace(/^(\d+)\s*([hd])$/i, "$1 $2").toLowerCase())} await new Promise((r) => setTimeout(r, 800));`);
   if (view) steps.push(click(".map figcaption button", view));
   if (opt.level) steps.push(click(".cuts button", /^outside$/i.test(opt.level) ? "Outside" : `${opt.level} level`));
   if (opt.season) steps.push(click(".cuts .seasons button", opt.season[0].toUpperCase() + opt.season.slice(1).toLowerCase()));
