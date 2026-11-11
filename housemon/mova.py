@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from .polling import poll_gently
-from .readings import Vacuum, VacuumPart
+from .readings import Vacuum, VacuumClean, VacuumPart
 
 REGIONS = ("us", "eu", "cn", "sg", "ru", "in")  # MOVA's clouds, each with accounts of its own
 PORT = 13267
@@ -39,7 +39,7 @@ POLL = 60.0  # seconds between polls
 DEVICES_EVERY = 3600.0  # seconds between listings of the account's vacuums, to take up one added or renamed
 EXPIRES_SOON = 600.0  # seconds: an access token this close to expiring is refreshed first, as the app does
 # The properties asked for, as (service, property) in the vacuum's spec, all in one request, as it takes up to 15.
-STATE, ERROR, BATTERY = (2, 1), (2, 2), (3, 1)
+STATE, ERROR, BATTERY, TASK = (2, 1), (2, 2), (3, 1), (4, 7)
 # The parts it counts down, the percent of each one's life left: those to replace when they run out, and to clean.
 PARTS = {
     (9, 2): ("main brush", True), (10, 2): ("side brush", True), (11, 1): ("filter", True), (18, 1): ("mop pads", True),
@@ -52,7 +52,13 @@ DOCK = {
     (27, 3): {1: "Dust bag is out", 2: "Check the dust bag"},
     (27, 4): {2: "Detergent is low"},
 }
-WANTED = [STATE, ERROR, BATTERY, *PARTS, *DOCK]
+WANTED = [STATE, ERROR, BATTERY, TASK, *PARTS, *DOCK]
+# Its task: a clean underway, from its start to its end, paused or gone back to its dock partway, mid-clean, as to wash
+# its mop, by the number its task property gives; 0 is none, and 20 and over are other tasks, as patrolling.
+CLEANING = set(range(1, 19)) | {24}
+# How far along a clean is, asked for in a second request only while one is underway: percent done, minutes it's
+# been cleaning, square meters cleaned.
+PROGRESS, MINUTES, AREA = (4, 63), (4, 2), (4, 3)
 # What a vacuum is doing, by the number its state property gives.
 STATES = {
     1: "Vacuuming", 2: "Idle", 3: "Paused", 4: "Error", 5: "Returning to its dock", 6: "Charging", 7: "Mopping",
@@ -66,6 +72,7 @@ STATES = {
     96: "Finding the pet", 97: "Running a shortcut", 98: "Monitoring",
 }
 ERRORS = {4}  # the states that are a problem
+SQUARE_FEET = 10.7639  # in a square meter
 # What each error code means, in the words of the integration's English, from the app's. 0 is none.
 ERROR_TEXT = {
     1: "Wheels are suspended", 2: "Cliff sensor error", 3: "Collision sensor is stuck", 4: "Robot is tilted",
@@ -434,7 +441,8 @@ class Account:
         return {}
 
     def status(self, device: dict, now: float) -> Vacuum:
-        """What the vacuum is doing, its battery, any error or warning, what's wrong at its dock, and its parts."""
+        """What the vacuum is doing, its battery, any error or warning, what's wrong at its dock, its parts, and how
+        far along its clean is, if it's cleaning."""
         name, key = vacuum_name(device), f"mova-{device['did']}"
         values = {} if device.get("online") is False else self.properties(device, WANTED)
         if STATE not in values:
@@ -447,7 +455,13 @@ class Account:
             VacuumPart(part, values[prop], replace) for prop, (part, replace) in PARTS.items() if isinstance(values.get(prop), int)
         )
         error = state in ERRORS or (problem is not None and code not in WARNINGS)
-        return Vacuum(key, name, label, battery if isinstance(battery, int) else None, now, error, problem, dock, parts)
+        clean = None
+        if values.get(TASK) in CLEANING:
+            going = self.properties(device, [PROGRESS, MINUTES, AREA])
+            number = lambda prop: going.get(prop) if isinstance(going.get(prop), (int, float)) and not isinstance(going.get(prop), bool) else None
+            clean = VacuumClean(number(PROGRESS), number(MINUTES), number(AREA))
+        battery = battery if isinstance(battery, int) else None
+        return Vacuum(key, name, label, battery, now, error, problem, dock, parts, clean)
 
 
 class MovaSource:
@@ -504,6 +518,11 @@ def sign_in_interactively(path: Path, ask: Callable[[str], str] = input, ask_sec
         print(f"  {vacuum.name!r} ({device.get('model')}): {vacuum.state}{battery}")
         for note in ([vacuum.problem] if vacuum.problem else []) + list(vacuum.dock):
             print(f"    {note}")
+        if vacuum.clean:
+            done = [f"{vacuum.clean.progress}% done"] if vacuum.clean.progress is not None else []
+            done += [f"{vacuum.clean.minutes} min"] if vacuum.clean.minutes is not None else []
+            done += [f"{vacuum.clean.area * SQUARE_FEET:.0f} sq ft"] if vacuum.clean.area is not None else []
+            print(f"    cleaning: {', '.join(done) or 'underway'}")
         if vacuum.parts:
             print(f"    life left: {', '.join(f'{part.name} {part.left}%' for part in vacuum.parts)}")
     if not devices:

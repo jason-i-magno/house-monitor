@@ -123,6 +123,15 @@ class VacuumPart:
 
 
 @dataclass(frozen=True)
+class VacuumClean:
+    """How far along a robot vacuum's clean is, as far as it reports."""
+
+    progress: int | None  # percent done
+    minutes: int | None  # it's been cleaning
+    area: float | None  # square meters cleaned
+
+
+@dataclass(frozen=True)
 class Vacuum:
     """What a robot vacuum is doing, as its maker's cloud last said: not a reading of a room, so not stored."""
 
@@ -135,6 +144,7 @@ class Vacuum:
     problem: str | None = None  # the problem, or a warning, in words, as "Wheels are suspended"
     dock: tuple[str, ...] = ()  # what's wrong at its dock, in words, as "Clean water tank is low"
     parts: tuple[VacuumPart, ...] = ()  # the parts it counts down, those it reports
+    clean: VacuumClean | None = None  # its clean underway, if there is one, paused or not
 
     def to_json(self) -> dict:
         return asdict(self)
