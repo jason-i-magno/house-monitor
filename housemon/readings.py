@@ -1,4 +1,4 @@
-"""The records every sensor source produces."""
+"""The records every sensor source produces, and what a robot vacuum is doing."""
 
 from dataclasses import asdict, dataclass
 
@@ -60,6 +60,21 @@ class Reading:
     battery: int | None = None  # percent
     rssi: int | None = None  # Bluetooth signal strength, dBm
     simulated: bool = False  # made up by the simulator, not read from a sensor
+
+    def to_json(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Vacuum:
+    """What a robot vacuum is doing, as its maker's cloud last said: not a reading of a room, so not stored."""
+
+    id: str
+    name: str  # as its app shows it
+    state: str  # what it's doing, as "Charging"; "Offline" when its cloud can't reach it
+    battery: int | None  # percent
+    ts: float  # Unix time, seconds
+    error: bool = False  # stopped by a problem, which its app says more about
 
     def to_json(self) -> dict:
         return asdict(self)

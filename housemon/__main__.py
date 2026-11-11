@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import ecobee, govee
+from . import ecobee, govee, mova
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -46,6 +46,16 @@ def main(argv: list[str] | None = None) -> None:
         "--ecobee-sign-in", action="store_true", help="sign in to ecobee, save the sign-in to --ecobee, list its sensors, and exit"
     )
     parser.add_argument(
+        "--mova",
+        type=Path,
+        default=Path("data") / "mova.json",
+        help="the saved MOVAhome sign-in: with it, the page shows what each of the account's robot vacuums is doing and"
+        " its battery (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--mova-sign-in", action="store_true", help="sign in to MOVAhome, save the sign-in to --mova, list its vacuums, and exit"
+    )
+    parser.add_argument(
         "--govee-scan",
         action="store_true",
         help="listen for Govee H5075 sensors over Bluetooth, list those heard with their readings, and exit (needs bleak)",
@@ -57,6 +67,12 @@ def main(argv: list[str] | None = None) -> None:
             ecobee.sign_in_interactively(args.ecobee)
         except ecobee.EcobeeError as e:
             raise SystemExit(f"Couldn't sign in to ecobee: {e}") from None
+        return
+    if args.mova_sign_in:
+        try:
+            mova.sign_in_interactively(args.mova)
+        except (mova.MovaError, OSError) as e:
+            raise SystemExit(f"Couldn't sign in to MOVAhome: {e}") from None
         return
 
     house_file = houses.HouseFile(args.house)
@@ -133,6 +149,10 @@ def main(argv: list[str] | None = None) -> None:
     if bluetooth:
         listener = govee.GoveeSource(govee_rooms)
         collectors.append(threading.Thread(target=listener.run, args=(hub.publish, stop), name="govee", daemon=True))
+    vacuums = args.mova.exists()
+    if vacuums:
+        poller = mova.MovaSource(mova.Account(args.mova))
+        collectors.append(threading.Thread(target=poller.run, args=(hub.publish_vacuum, stop), name="mova", daemon=True))
     for collector in collectors:
         collector.start()
     file = Path(house.__file__).resolve()
@@ -145,6 +165,8 @@ def main(argv: list[str] | None = None) -> None:
             sources += f", weather where {', '.join(sorted(ecobee_weather()))} is"
     if bluetooth and govee_rooms():
         sources += f", Govee sensors ({', '.join(sorted(govee_rooms(), key=str.casefold))})"
+    if vacuums:
+        sources += ", MOVA vacuums"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
     try:
         server.serve_forever()
