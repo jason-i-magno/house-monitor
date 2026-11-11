@@ -79,11 +79,13 @@ class ReadingAtTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Plan(0, 0, 10, 10, drop=("rear", 2))
 
-    def test_a_room_reads_from_one_sensor(self):
+    def test_a_room_can_name_a_govee_sensor_beside_an_ecobee_one(self):
         kitchen = ROOMS["Kitchen"]
-        self.assertEqual(dataclasses.replace(kitchen, govee="GVH5075_1A2B").govee, "GVH5075_1A2B")
-        with self.assertRaisesRegex(ValueError, "ecobee and govee"):
-            dataclasses.replace(kitchen, ecobee="Kitchen", govee="GVH5075_1A2B")
+        both = dataclasses.replace(kitchen, ecobee="Kitchen", govee="GVH5075_1A2B")
+        self.assertEqual((both.ecobee, both.govee), ("Kitchen", "GVH5075_1A2B"))
+        dataclasses.replace(ROOMS["Outside"], ecobee_weather="Hallway", govee="GVH5075_1A2B")
+        with self.assertRaisesRegex(ValueError, "not both"):
+            dataclasses.replace(kitchen, ecobee="Kitchen", ecobee_weather="Hallway")
 
 
 class SimulatedSourceTest(unittest.TestCase):

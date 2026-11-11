@@ -85,6 +85,24 @@ class GoveeSourceTest(unittest.TestCase):
         source.due(200)
         self.assertEqual(self.warnings, [])
 
+    def test_knows_whether_a_rooms_sensor_was_heard_lately(self):
+        source = self.source({KITCHEN.lower(): "sim-kitchen"})
+        self.assertFalse(source.hears("sim-kitchen", 100))
+        source.heard(KITCHEN, broadcast(21.5, 40.2, 88), -70, now=100)
+        self.assertTrue(source.hears("sim-kitchen", 100 + govee.BACKUP))
+        self.assertFalse(source.hears("sim-kitchen", 101 + govee.BACKUP))
+        self.assertFalse(source.hears("sim-office", 100))  # names no Govee sensor
+
+    def test_another_source_for_a_room_fills_in_only_while_its_govee_is_quiet(self):
+        source = self.source({KITCHEN: "sim-kitchen"})
+        published: list[Reading] = []
+        publish = govee.unless_heard(published.append, source, within=120)
+        source.heard(KITCHEN, broadcast(21.5, 40.2, 88), -70, now=100)
+        ecobee = [Reading("sim-kitchen", t, 21.0, None) for t in (150, 220, 230)] + [Reading("sim-office", 150, 19.0, None)]
+        for reading in ecobee:
+            publish(reading)
+        self.assertEqual([(r.sensor_id, r.ts) for r in published], [("sim-kitchen", 230), ("sim-office", 150)])
+
     def test_publishes_what_it_hears_and_listens_again_after_a_failure(self):
         calls = []
 
