@@ -18,7 +18,7 @@ SIDES = ("left", "right", "back", "front")
 OPENINGS = ("door", "window", "sliding door", "garage door", "opening", "vent")
 FIXTURES = (
     "appliance", "vent", "plumbing", "fireplace", "half wall", "railing", "backflow", "valve box", "controller", "gas meter",
-    "attic vent",
+    "attic vent", "litter box",
 )
 ROOF_VENTS = ("pipe", "chimney")
 # A roof vent's width and how far it stands over the roof, unless it says (MODEL_ROOF_VENT in model.js)
@@ -145,6 +145,10 @@ class Fixture:
     A gas meter is outside, against the house's wall: its box `lift` over the ground, on its riser, the pipe the gas
     comes up out of the ground through. So is an attic vent, high on the wall, in a gable over the top floor's
     ceiling, say: its box, its slats across it, shown only with the whole house, as the roof is.
+
+    A litter box is a Litter-Robot, say: its base, and its globe over it, its entry on the side away from the wall
+    it stands against, or nearest it, or in a corner at the end of its longer side. whisker names the Litter-Robot it is, as the Whisker app shows it: signed in to Whisker, its state
+    comes from that robot (whisker.py), and until then from the simulator.
     """
 
     name: str
@@ -159,9 +163,12 @@ class Fixture:
     finish: str = "white"
     known: bool = False
     against: tuple[str, ...] = ()
+    whisker: str | None = None
 
     def __post_init__(self):
         _check(self.kind, FIXTURES, "a fixture's kind")
+        if self.whisker is not None and self.kind != "litter box":
+            raise ValueError(f"{self.name} names a Litter-Robot, so it's a litter box, not a {self.kind}")
         _check(self.finish, FINISHES, "a fixture's finish")
         if self.kind in ("fireplace", "half wall") and self.room is None:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
@@ -585,6 +592,15 @@ class Details:
     def __post_init__(self):
         if self.window_border < 0:
             raise ValueError(f"a window border can't be {self.window_border} ft wide")
+        # A litter box's state goes by its name, and a robot is one litter box.
+        boxes = [f for f in self.fixtures if f.kind == "litter box"]
+        for what, values in (("name", [f.name for f in boxes]), ("Litter-Robot", [f.whisker.casefold() for f in boxes if f.whisker])):
+            if len(set(values)) < len(values):
+                raise ValueError(f"two litter boxes have one {what}, so they'd show one state")
+
+    def litter_robots(self) -> dict[str, str]:
+        """Each Litter-Robot a litter box names, by its name in the Whisker app, to that litter box's name."""
+        return {f.whisker: f.name for f in self.fixtures if f.kind == "litter box" and f.whisker}
 
     def ground(self, x, y):
         """How high the ground is at x, y on the plan, above the main floor: the grade, less what the slopes fall by

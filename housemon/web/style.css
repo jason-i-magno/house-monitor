@@ -323,6 +323,23 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .notes .icon { margin-right: 4px; color: var(--status-warning); }
 .room.is-stale .notes { opacity: 0.45; }
 
+/* A litter box's card: its status, a warning sign beside one that needs seeing to, and its drawer's gauge. */
+.litter-box .status { margin-top: 6px; font-size: 1.125rem; font-weight: 600; line-height: 1.3; }
+.litter-box .status .icon { margin-right: 6px; color: var(--status-warning); }
+.litter-box .drawer { margin-top: 4px; color: var(--text-secondary); }
+.litter-box .gauge {
+  height: 6px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--grid);
+}
+.litter-box .gauge span { display: block; height: 100%; border-radius: 3px; background: var(--text-secondary); }
+.litter-box .cycles { margin-top: 6px; }
+.litter-box .updated-at { margin-top: 0; }
+.room.is-stale .status, .room.is-stale .drawer, .room.is-stale .gauge { opacity: 0.45; }
+.tooltip .warning { color: var(--status-warning); }
+
 /* The range filter scopes every chart below it. */
 
 .filters {

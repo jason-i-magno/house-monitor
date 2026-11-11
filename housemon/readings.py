@@ -1,4 +1,4 @@
-"""The records every sensor source produces, and what a robot vacuum is doing."""
+"""The records every sensor source produces, a litter box's state, and what a robot vacuum is doing."""
 
 from dataclasses import asdict, dataclass
 
@@ -63,6 +63,54 @@ class Reading:
 
     def to_json(self) -> dict:
         return asdict(self)
+
+
+# A Litter-Robot's status codes, as it reports them: what each says, and whether it needs someone to see to it.
+LITTER_STATUSES = {
+    "RDY": ("Ready", False),
+    "CSI": ("Cat sensor interrupted", False),  # a cat in it, say
+    "CD": ("Cat detected", False),
+    "CST": ("Waiting to clean", False),  # timing the wait after the cat sensor clears
+    "CCP": ("Cleaning", False),
+    "CCC": ("Clean cycle complete", False),
+    "EC": ("Empty cycle", False),
+    "PWRU": ("Powering up", False),
+    "PWRD": ("Powering down", False),
+    "DF1": ("Drawer almost full, 2 cycles left", True),
+    "DF2": ("Drawer almost full, 1 cycle left", True),
+    "DFS": ("Drawer full", True),
+    "SDF": ("Drawer full at startup", True),
+    "BR": ("Bonnet removed", True),
+    "P": ("Clean cycle paused", True),
+    "PD": ("Pinch detected", True),
+    "SPF": ("Pinch detected at startup", True),
+    "CSF": ("Cat sensor fault", True),
+    "SCF": ("Cat sensor fault at startup", True),
+    "DPF": ("Dump position fault", True),
+    "HPF": ("Home position fault", True),
+    "DHF": ("Dump and home position fault", True),
+    "OTF": ("Over torque fault", True),
+    "OFF": ("Off", True),
+    "OFFLINE": ("Offline", True),
+}
+
+
+@dataclass(frozen=True)
+class LitterBox:
+    """A self-cleaning litter box's latest state: a Litter-Robot's, as Whisker's cloud reports it, or the simulator's."""
+
+    name: str  # the litter box in the house file's details it is
+    ts: float  # Unix time, seconds, when it was read
+    status: str  # its status code, as the robot reports it (LITTER_STATUSES)
+    cycles: int  # clean cycles since its waste drawer was last emptied
+    drawer: float  # how full its waste drawer is, percent, as the robot estimates from its cycles
+    seen: float | None = None  # when the robot was last heard from, Unix time
+    simulated: bool = False  # made up by the simulator, not read from a robot
+
+    def to_json(self) -> dict:
+        """Its state, with what its status says and whether it needs seeing to."""
+        text, attention = LITTER_STATUSES.get(self.status, (f"Unknown status {self.status or '(none)'}", True))
+        return {**asdict(self), "text": text, "attention": attention}
 
 
 @dataclass(frozen=True)
