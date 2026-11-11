@@ -61,13 +61,13 @@ The rest of the house stays simulated. The page's **Hide simulated** button, bes
 
 ## MOVA vacuums
 
-A MOVA robot vacuum can have a card of its own on the page, with what it's doing (vacuuming, returning to its dock, charging, an error) and its battery. Sign in once; it asks for your MOVAhome region (us, eu, cn, sg, ru or in), email and password:
+A MOVA robot vacuum can have a card of its own on the page, with what it's doing (vacuuming, returning to its dock, charging, an error) and its battery, and what needs looking at: an error or warning in words, as "Wheels are suspended", what's wrong at its dock (its water tanks, dust bag and detergent), and the parts it counts down that are at 15% or less, the brushes, filter and mop pads to replace and the sensors and wheels to clean. Sign in once; it asks for your MOVAhome region (us, eu, cn, sg, ru or in), email and password:
 
 ```sh
 python3 -m housemon --mova-sign-in
 ```
 
-If you sign in to MOVAhome with Apple or Google, set a password in the app first. It saves only the refresh token MOVA gives, to `data/mova.json` (readable only by you, and gitignored), never your email or password, and lists the vacuums it found. Then start the app: it asks each vacuum on the account what it's doing every minute. MOVA has no public API, so this signs in as the MOVAhome app does, as the community [Dreame Vacuum integration](https://github.com/Tasshack/dreame-vacuum) for Home Assistant worked out, with the app's own client id and secret, which are the same for every MOVAhome user. It isn't official, and could stop working if MOVA changes its app; the newest apps connect in a way of their own, which this doesn't copy. If the sign-in lapses, the terminal says so; sign in again.
+If you sign in to MOVAhome with Apple or Google, set a password in the app first. It saves only the refresh token MOVA gives, to `data/mova.json` (readable only by you, and gitignored), never your email or password, and lists the vacuums it found. Then start the app: it asks each vacuum on the account how it is every minute. MOVA has no public API, so this signs in as the MOVAhome app does, as the community [Dreame Vacuum integration](https://github.com/Tasshack/dreame-vacuum) for Home Assistant worked out, with the app's own client id and secret, which are the same for every MOVAhome user. It isn't official, and could stop working if MOVA changes its app; the newest apps connect in a way of their own, which this doesn't copy. If the sign-in lapses, the terminal says so; sign in again.
 
 ## Your own house
 
@@ -95,7 +95,7 @@ source ──► Hub ──► Store (SQLite)
   - `GET /api/history?hours=24`: bucketed history.
   - `GET /api/stream`: a Server-Sent Events stream with one JSON reading per message, and a `vacuum` event with what a robot vacuum is doing whenever it says.
 - **Page** (`web/`):
-  - Room cards grouped by floor, and a card for each robot vacuum, with its battery and what it's doing. A card is flagged if its room, or vacuum, goes 5 minutes without a reading.
+  - Room cards grouped by floor, and a card for each robot vacuum, with its battery, what it's doing and what needs looking at. A card is flagged if its room, or vacuum, goes 5 minutes without a reading.
   - A house map: a floor plan of each level, or a 3D view of the house you can drag, or turn with shift and the arrow keys, to turn and tilt, from any side, above or below, with each room colored by its temperature on a gradient (blue colder, red warmer, through gray at a comfortable 68 °F) and the outside temperature in its corner and as the tint of its background. Its detailed view shows the house as it looks, with its doors, windows, vents, appliances, closets, roof and yard: whole from outside, or cut away to any level, and zoomed with the scroll wheel, about the pointer, with the + and − keys, or in on whatever you double-click, and panned by dragging with shift or the right button held, or with two fingers on a touch screen. The button beside the views makes the map full screen.
   - Temperature and humidity charts for 6 hours to 30 days, with a hover or keyboard readout and a table view. Unheated spaces like the garage get a temperature chart of their own. Click a room in a chart's legend to hide or show its line.
   - Light and dark mode follow the system setting.

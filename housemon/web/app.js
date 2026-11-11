@@ -3,6 +3,8 @@
 // How long a room can go without a reading before its card says so. Real
 // sensors report about once a minute, so this allows a few missed broadcasts.
 const STALE_AFTER = 5 * 60;
+// The percent of a robot vacuum part's life left at which its card says to replace or clean it.
+const PART_LOW = 15;
 const RANGES = [
   { label: "6 h", hours: 6 },
   { label: "24 h", hours: 24 },
@@ -195,7 +197,8 @@ function renderRooms() {
   updateRooms();
 }
 
-// A robot vacuum's card: its battery, what it's doing, and when the server last heard. Not a room, so no line key.
+// A robot vacuum's card: its battery, what it's doing, its notes, and when the server last heard. Not a room, so no
+// line key.
 function vacuumCard(vacuum) {
   vacuum.card = el(
     "article",
@@ -203,20 +206,39 @@ function vacuumCard(vacuum) {
     el("h3", {}, vacuum.name),
     el("p", { class: "temp" }, el("span", { class: "value" }, "–"), el("span", { class: "unit" }, "% battery")),
     el("p", { class: "humidity doing" }),
+    el("ul", { class: "notes" }),
     el("p", { class: "meta updated-at" }),
     el("p", { class: "stale", hidden: "" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), el("span")),
   );
   return vacuum.card;
 }
 
+// What a vacuum's card says to look at: its error or warning, what's wrong at its dock, and its parts running low,
+// the lowest first.
+function vacuumNotes(vacuum) {
+  const parts = (vacuum.parts ?? [])
+    .filter((part) => part.left <= PART_LOW)
+    .sort((a, b) => a.left - b.left)
+    .map(({ name, left, replace }) => replace
+      ? `Replace the ${name}${left > 0 ? " soon" : ""} (${left}% left)`
+      : `Clean the ${name} (${left}% left)`);
+  return [...(vacuum.problem ? [vacuum.problem] : []), ...(vacuum.dock ?? []), ...parts];
+}
+
 function updateVacuums(now) {
   for (const vacuum of state.vacuums) {
-    const [value, unit, doing, updatedAt, stale] = [".value", ".unit", ".doing", ".updated-at", ".stale"]
+    const [value, unit, doing, notes, updatedAt, stale] = [".value", ".unit", ".doing", ".notes", ".updated-at", ".stale"]
       .map((s) => vacuum.card.querySelector(s));
     value.textContent = vacuum.battery ?? "–";
     unit.hidden = vacuum.battery == null;
-    // An error says so in words, with the warning icon beside them.
+    // An error says so in words, with the warning icon beside them, as does each note.
     doing.replaceChildren(...(vacuum.error ? [el("span", { class: "icon", "aria-hidden": "true" }, "⚠")] : []), vacuum.state);
+    const said = vacuumNotes(vacuum);
+    if (notes.dataset.said !== said.join("\n")) { // only when they change, as this runs every second
+      notes.dataset.said = said.join("\n");
+      notes.replaceChildren(...said.map((text) => el("li", {}, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), text)));
+    }
+    notes.hidden = !said.length;
     const age = now - vacuum.ts;
     updatedAt.textContent = `Updated ${ago(age)}`;
     const isStale = age > STALE_AFTER;
