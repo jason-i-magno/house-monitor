@@ -43,6 +43,7 @@
   --model-roof: #5f5c58;
   --model-shed-roof: #8b8985;
   --model-glass: #a9c8d8;
+  --model-mirror: #cdd8df;
   --model-door: #7b3a2c;
   --model-garage-door: #ebe8e0;
   --model-seam: #8f8b82;
@@ -131,6 +132,7 @@
     --model-roof: #3c3a37;
     --model-shed-roof: #5c5a57;
     --model-glass: #5d7d8f;
+    --model-mirror: #94a3ad;
     --model-door: #5a2c22;
     --model-garage-door: #9d9a92;
     --model-seam: #5d5a54;

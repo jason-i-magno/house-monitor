@@ -141,7 +141,7 @@ DETAILS = Details(
         Opening("Shed window", "window", "Shed", "left", 2.5, 3, 2, sill=3.5),
     ),
     closets=(
-        Closet("Upstairs bedroom closet", "Upstairs bedroom", 1.5, 11.5, 7, 2.5, door="back"),
+        Closet("Upstairs bedroom closet", "Upstairs bedroom", 1.5, 11.5, 7, 2.5, door="back", finish="mirror"),  # mirrored doors
         Closet("Front bedroom closet", "Front bedroom", 1.5, 0, 7, 2.5, door="front"),
         Closet("Coat closet", "Entry", 9, 0, 3, 3, door="left"),
     ),
