@@ -147,7 +147,7 @@ class Fixture:
     ceiling, say: its box, its slats across it, shown only with the whole house, as the roof is.
 
     A litter box is a Litter-Robot, say: its base, and its globe over it, its entry on the side away from the wall
-    nearest it. whisker names the Litter-Robot it is, as the Whisker app shows it: signed in to Whisker, its state
+    it stands against, or nearest it, or in a corner at the end of its longer side. whisker names the Litter-Robot it is, as the Whisker app shows it: signed in to Whisker, its state
     comes from that robot (whisker.py), and until then from the simulator.
     """
 

@@ -1793,15 +1793,21 @@ function atticVent(mesh, C, f) {
   }
 }
 
-// The wall of its piece a fixture stands nearest, which a fireplace's firebox and a litter box's entry face away from.
+// The wall a fixture stands nearest, which a fireplace's firebox and a litter box's entry face away from: the one it
+// stands against, or of two, as in a corner, the one across the way it's longer, so it faces out along its length;
+// else the one of its piece it's nearest.
 function nearestWall(f) {
+  if (f.against?.length) {
+    const along = f.y1 - f.y0 > f.x1 - f.x0 ? ["back", "front"] : ["left", "right"];
+    return f.against.find((side) => along.includes(side)) ?? f.against[0];
+  }
   const p = f.piece;
   const gaps = { left: f.x0 - p.x, right: p.x + p.width - f.x1, back: f.y0 - p.y, front: p.y + p.depth - f.y1 };
   return Object.keys(gaps).reduce((a, b) => (gaps[b] < gaps[a] ? b : a));
 }
 
 // A litter box, as a Litter-Robot is: its base, the lower third, and its globe sitting in it, a drum lying across
-// the way its entry faces, away from the wall nearest it (toward the front out in the yard), as wide as the box
+// the way its entry faces, away from the wall nearest it (nearestWall; toward the front out in the yard), as wide as the box
 // across and up to its top, with its entry a dark disc standing just out from the drum's end, its back inside it.
 function litterBox(mesh, C, f) {
   const color = C[f.finish] ?? C.white;
