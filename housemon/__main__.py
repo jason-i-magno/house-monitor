@@ -143,12 +143,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     stop = threading.Event()
     collectors = [threading.Thread(target=source.run, args=(hub.publish, stop), name="collector", daemon=True)]
-    if signed_in:
-        poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms, weather=ecobee_weather)
-        collectors.append(threading.Thread(target=poller.run, args=(hub.publish, stop), name="ecobee", daemon=True))
+    # A room with a Govee sensor and an ecobee one reads the Govee, and the ecobee only while the Govee is quiet.
+    publish_ecobee = hub.publish
     if bluetooth:
         listener = govee.GoveeSource(govee_rooms)
         collectors.append(threading.Thread(target=listener.run, args=(hub.publish, stop), name="govee", daemon=True))
+        publish_ecobee = govee.unless_heard(hub.publish, listener)
+    if signed_in:
+        poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms, weather=ecobee_weather)
+        collectors.append(threading.Thread(target=poller.run, args=(publish_ecobee, stop), name="ecobee", daemon=True))
     vacuums = args.mova.exists()
     if vacuums:
         poller = mova.MovaSource(mova.Account(args.mova))

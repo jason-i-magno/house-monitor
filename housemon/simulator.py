@@ -40,16 +40,13 @@ class SimulatedRoom:
     # where the thermostat is instead.
     ecobee_weather: str | None = None
     # The name a Govee H5075 in the room broadcasts, as python3 -m housemon --govee-scan lists it: with bleak installed,
-    # the room's readings come from it instead (govee.py).
+    # the room's readings come from it instead (govee.py). Beside an ecobee sensor or thermostat's weather, the Govee's
+    # readings come while it's heard, and the ecobee's fill in while it isn't (govee.unless_heard).
     govee: str | None = None
 
     def __post_init__(self):
-        named = [field for field in ("ecobee", "ecobee_weather", "govee") if getattr(self, field)]
-        if len(named) > 1:
-            raise ValueError(
-                f"{self.sensor.name} reads from one sensor, so it names one of ecobee, ecobee_weather and govee, not"
-                f" {' and '.join(named)}"
-            )
+        if self.ecobee and self.ecobee_weather:
+            raise ValueError(f"{self.sensor.name} reads an ecobee sensor or a thermostat's weather, not both")
 
 
 def _smoothstep(x: float) -> float:
