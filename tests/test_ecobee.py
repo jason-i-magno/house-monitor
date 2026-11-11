@@ -236,5 +236,35 @@ class EcobeeSourceTest(unittest.TestCase):
         self.assertEqual(warnings, ["no thermostat named 'Upstairs', as the house file has; the account has 'Hallway', 'Offline'"])
 
 
+class EcobeeRunTest(unittest.TestCase):
+    def test_a_lapsed_sign_in_is_left_alone_and_a_failure_backs_off(self):
+        calls, waits, err = [], [], io.StringIO()
+        answers = iter([ecobee.EcobeeError("ecobee's thermostat endpoint answered 503"), ecobee.SignInNeeded("ecobee no longer takes the saved sign-in")])
+
+        class Account:
+            path = Path("/nonexistent/ecobee.json")
+
+            def thermostats(self):
+                calls.append(1)
+                raise next(answers)
+
+        class Stop:  # waits for nothing, and stops after four
+            def is_set(self):
+                return len(waits) >= 4
+
+            def wait(self, seconds):
+                waits.append(seconds)
+                return self.is_set()
+
+        source = ecobee.EcobeeSource(Account(), lambda: {"Dining Room": "dining"})
+        with unittest.mock.patch("sys.stderr", err):
+            source.run(lambda reading: None, Stop())
+        self.assertEqual(len(calls), 2)  # none while the sign-in has lapsed
+        self.assertEqual(waits[0], 180.0)  # backing off, but never sooner than its interval
+        self.assertEqual(waits[1:], [10.0] * 3)  # looking for a new sign-in
+        self.assertIn("ecobee: ecobee's thermostat endpoint answered 503; trying again in 3 min", err.getvalue())
+        self.assertIn("sign in again with python3 -m housemon --ecobee-sign-in, and until then it's left alone", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

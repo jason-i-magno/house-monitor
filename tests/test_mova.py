@@ -280,22 +280,36 @@ class SourceTest(unittest.TestCase):
         source.poll(1000.0 + mova.DEVICES_EVERY)
         self.assertEqual(lists(), 2)
 
-    def test_a_failed_poll_is_reported_and_tried_again(self):
-        source = mova.MovaSource(self.account, interval=0)
-        stop, published, err = threading.Event(), [], io.StringIO()
-        polls = iter([mova.MovaError("MOVA's cloud answered 502"), None])
+    def test_a_failed_poll_is_reported_and_tried_again_later(self):
+        source = mova.MovaSource(self.account)
+        source.poll(1000.0)
+        published, err, waits = [], io.StringIO(), []
+        failures = iter([OSError("network is unreachable"), mova.MovaError("MOVA's cloud answered 502")])
+        listed = []
 
         def poll(now):
-            failure = next(polls)
+            listed.append(source.devices is not None)
+            failure = next(failures, None)
             if failure:
                 raise failure
-            stop.set()
             return [Vacuum("mova-1234", "P10 Pro Ultra", "Idle", 50, now)]
+
+        class Stop:  # waits for nothing, and stops after three
+            def is_set(self):
+                return len(waits) >= 3
+
+            def wait(self, seconds):
+                waits.append(seconds)
+                return self.is_set()
 
         source.poll = poll
         with unittest.mock.patch("sys.stderr", err):
-            source.run(published.append, stop)
-        self.assertIn("MOVA: MOVA's cloud answered 502", err.getvalue())
+            source.run(published.append, Stop())
+        self.assertIn("MOVA: couldn't get its vacuums: OSError('network is unreachable'); trying again in 2 min", err.getvalue())
+        self.assertIn("MOVA: MOVA's cloud answered 502; trying again in 5 min", err.getvalue())
+        self.assertEqual(waits, [120.0, 300.0, mova.POLL])
+        # A network error forgets nothing of the account's vacuums; an error from MOVA has them listed again.
+        self.assertEqual(listed, [True, True, False])
         self.assertEqual([v.state for v in published], ["Idle"])
 
 

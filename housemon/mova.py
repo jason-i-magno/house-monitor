@@ -23,6 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+from .polling import poll_gently
 from .readings import Vacuum, VacuumPart
 
 REGIONS = ("us", "eu", "cn", "sg", "ru", "in")  # MOVA's clouds, each with accounts of its own
@@ -451,7 +452,7 @@ class Account:
 
 class MovaSource:
     """What each vacuum on a MOVAhome account is doing, polled every `interval` seconds, the account's vacuums listed
-    again every hour, or after a poll fails, to take up one added, renamed or moved."""
+    again every hour, or after MOVA answers a poll with an error, to take up one added, renamed or moved."""
 
     def __init__(self, account: Account, interval: float = POLL):
         self.account = account
@@ -465,22 +466,22 @@ class MovaSource:
         return [self.account.status(device, now) for device in self.devices]
 
     def run(self, publish: Callable[[Vacuum], None], stop: threading.Event) -> None:
-        """Call publish(vacuum) for each vacuum every poll until stop is set. A failed poll is reported and tried again
-        next time, so a network outage or a lapsed sign-in doesn't stop the rest of the house."""
-        while not stop.is_set():
-            try:
-                for vacuum in self.poll(time.time()):
-                    publish(vacuum)
-            except SignInNeeded as e:
+        """Call publish(vacuum) for each vacuum every poll until stop is set, gently (polling.py): backing off while
+        polls fail, as in a network outage, and waiting while the sign-in has lapsed until it's signed in again, so
+        neither stops the rest of the house."""
+
+        def forget(e: Exception) -> None:
+            if isinstance(e, MovaError):  # not a network error, which says nothing of the account's vacuums
                 self.devices = None
-                print(f"MOVA: {e}; sign in again with python3 -m housemon --mova-sign-in", file=sys.stderr, flush=True)
-            except MovaError as e:
-                self.devices = None
-                print(f"MOVA: {e}", file=sys.stderr, flush=True)
-            except (OSError, ValueError, KeyError, TypeError) as e:
-                self.devices = None
-                print(f"MOVA: couldn't get its vacuums: {e!r}", file=sys.stderr, flush=True)
-            stop.wait(self.interval)
+
+        poll_gently(
+            self.poll, publish, stop, self.interval,
+            sign_in=self.account.path, lapsed=SignInNeeded, failed=(MovaError, OSError, ValueError, KeyError, TypeError),
+            sign_in_again="python3 -m housemon --mova-sign-in",
+            log=lambda message: print(f"MOVA: {message}", file=sys.stderr, flush=True),
+            describe=lambda e: str(e) if isinstance(e, MovaError) else f"couldn't get its vacuums: {e!r}",
+            on_failure=forget,
+        )
 
 
 def sign_in_interactively(path: Path, ask: Callable[[str], str] = input, ask_secret: Callable[[str], str] | None = None, **kwargs) -> None:

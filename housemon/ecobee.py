@@ -30,6 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
+from .polling import poll_gently
 from .readings import Reading
 
 AUTH = "https://auth.ecobee.com"
@@ -334,19 +335,16 @@ class EcobeeSource:
         unmatched.update((kind, name.casefold()) for name in missing)
 
     def run(self, publish: Callable[[Reading], None], stop: threading.Event) -> None:
-        """Call publish(reading) for each room's reading every poll until stop is set. A failed poll is reported and
-        tried again next time, so a network outage or a lapsed sign-in doesn't stop the rest of the house."""
-        while not stop.is_set():
-            try:
-                for reading in self.poll(time.time()):
-                    publish(reading)
-            except SignInNeeded as e:
-                print(f"ecobee: {e}; sign in again with python3 -m housemon --ecobee-sign-in", file=sys.stderr, flush=True)
-            except EcobeeError as e:
-                print(f"ecobee: {e}", file=sys.stderr, flush=True)
-            except (URLError, OSError, ValueError) as e:
-                print(f"ecobee: couldn't get its readings: {e}", file=sys.stderr, flush=True)
-            stop.wait(self.interval)
+        """Call publish(reading) for each room's reading every poll until stop is set, gently (polling.py): backing off
+        while polls fail, as in a network outage, and waiting while the sign-in has lapsed until it's signed in again,
+        so neither stops the rest of the house."""
+        poll_gently(
+            self.poll, publish, stop, self.interval,
+            sign_in=self.account.path, lapsed=SignInNeeded, failed=(EcobeeError, URLError, OSError, ValueError),
+            sign_in_again="python3 -m housemon --ecobee-sign-in",
+            log=lambda message: print(f"ecobee: {message}", file=sys.stderr, flush=True),
+            describe=lambda e: str(e) if isinstance(e, EcobeeError) else f"couldn't get its readings: {e}",
+        )
 
 
 def sign_in_interactively(path: Path, ask: Callable[[str], str] = input, ask_secret: Callable[[str], str] | None = None) -> None:
