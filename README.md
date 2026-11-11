@@ -2,9 +2,9 @@
 
 Live temperature and humidity for every room, in a web app you run at home.
 
-For now the readings come from simulated sensors in a house: an example two-story house over a basement, with warm rooms upstairs, a cold basement, the thermostat on the main floor and a space heater in the office during the work day, or a house file of your own. Rooms with an ecobee thermostat or SmartSensor can read from it instead (see [ecobee sensors](#ecobee-sensors)), and a MOVA robot vacuum can show what it's doing and its battery (see [MOVA vacuums](#mova-vacuums)). Real Govee H5075 Bluetooth sensors come next.
+For now the readings come from simulated sensors in a house: an example two-story house over a basement, with warm rooms upstairs, a cold basement, the thermostat on the main floor and a space heater in the office during the work day, or a house file of your own. Rooms with an ecobee thermostat or SmartSensor can read from it instead (see [ecobee sensors](#ecobee-sensors)), and rooms with a Govee H5075 Bluetooth thermo-hygrometer from that (see [Govee sensors](#govee-sensors)). A MOVA robot vacuum can show what it's doing and its battery (see [MOVA vacuums](#mova-vacuums)).
 
-It uses only the Python standard library (Python 3.10 or newer) and plain HTML, CSS and JavaScript, with no build step.
+It uses only the Python standard library (Python 3.10 or newer) and plain HTML, CSS and JavaScript, with no build step. Hearing Govee sensors takes one more package, [bleak](https://github.com/hbldh/bleak); without it, everything else works.
 
 ## Running it
 
@@ -22,7 +22,7 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--host` | 127.0.0.1 | `0.0.0.0` serves the whole network. There is no login, so keep it off the internet. |
 | `--db` | `data/<source>.sqlite3` | |
 | `--house` | `private/house.py` if it's there, else the example | The house file the simulator models. |
-| `--interval` | 10 | Seconds between simulated readings from each sensor (real H5075s report about once a minute). |
+| `--interval` | 10 | Seconds between simulated readings from each sensor. |
 | `--store-every` | 60 | Seconds between stored readings per sensor. |
 | `--backfill-hours` | 24 | Simulated history to create in a new database; 0 for none. |
 | `--dump` | | Print the house as the page gets it, with its walls worked out, and exit. |
@@ -30,6 +30,7 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--ecobee-sign-in` | | Sign in to ecobee, save it to `--ecobee`, list its sensors, and exit. |
 | `--mova` | `data/mova.json` | The saved MOVAhome sign-in. |
 | `--mova-sign-in` | | Sign in to MOVAhome, save it to `--mova`, list its vacuums, and exit. |
+| `--govee-scan` | | List the Govee sensors heard over Bluetooth, with their readings, and exit. |
 
 ## ecobee sensors
 
@@ -41,8 +42,20 @@ python3 -m housemon --ecobee-sign-in
 
 It saves only the refresh token ecobee gives, to `data/ecobee.json` (readable only by you, and gitignored), never your password, and lists the sensors it found. In your house file, give the room the sensor's name as the ecobee app shows it, as `SimulatedRoom(..., ecobee="Dining Room")`, and start the app. The outside can read the weather ecobee reports where a thermostat is, its area's temperature and humidity now from a weather service, rather than a sensor at your house: give it the thermostat's name, as `ecobee_weather="Hallway"`. It polls ecobee every three minutes. A SmartSensor reads temperature but not humidity, so that room shows no humidity. ecobee no longer gives out developer API keys, so this signs in as ecobee's own web app does, as Home Assistant's ecobee integration does; it isn't an official API, and could stop working if ecobee changes its sign-in. If the sign-in lapses, the terminal says so; sign in again. If a room names a sensor your account doesn't have, the terminal says that too, and lists the names it does have.
 
-The rest of the house stays simulated. The page's **Hide simulated** button, beside the connection status, leaves the simulator's readings out: their rooms' cards, their values on the map and their lines in the charts, along with the made-up past of a room that now reads from a real sensor, so you see only real readings.
+## Govee sensors
 
+A room with a Govee H5075 in it can show that sensor's temperature, humidity, battery and signal. The H5075 keeps broadcasting its reading over Bluetooth, so there's no app, account or pairing: the app just listens, on the computer it runs on, which needs Bluetooth and to be in range of each sensor. Install bleak, turn Bluetooth on, and list the sensors it hears:
+
+```sh
+python3 -m pip install -r requirements.txt   # bleak
+python3 -m housemon --govee-scan
+```
+
+Each is named `GVH5075_` and the last four characters of its Bluetooth address. To tell them apart, hold one in your hand for a minute and scan again: its temperature rises. In your house file, give the room its name, as `SimulatedRoom(..., govee="GVH5075_1A2B")`, and start the app. Each room takes its sensor's newest reading every 10 seconds. If a sensor isn't heard from for 5 minutes, the terminal says so, with the names it does hear; if Bluetooth is off, it says that, and tries again every minute. Without bleak, the terminal notes that those rooms stay simulated.
+
+## Simulated readings
+
+The rest of the house stays simulated. The page's **Hide simulated** button, beside the connection status, leaves the simulator's readings out: their rooms' cards, their values on the map and their lines in the charts, along with the made-up past of a room that now reads from a real sensor, so you see only real readings.
 
 ## MOVA vacuums
 
@@ -71,7 +84,7 @@ source ──► Hub ──► Store (SQLite)
                 └► every open page (Server-Sent Events)
 ```
 
-- **Source** (`simulator.py`, with the house from `house.py`): anything with a `sensors` list and a `run(publish, stop)` method that calls `publish(reading)` for each reading until `stop` is set. Every simulated value is a pure function of the room and the time, so the backfilled history matches the live readings.
+- **Source** (`simulator.py`, with the house from `house.py`, beside `ecobee.py` and `govee.py` for the rooms with real sensors): anything with a `sensors` list and a `run(publish, stop)` method that calls `publish(reading)` for each reading until `stop` is set. Every simulated value is a pure function of the room and the time, so the backfilled history matches the live readings.
 - **Hub** (`hub.py`): keeps the latest reading from each sensor, hands each one to the store, and pushes it to every connected page. A page that stops reading misses readings rather than holding up the others. It keeps what each robot vacuum last said too (`mova.py`), and pushes that to the pages, but doesn't store it.
 - **Store** (`store.py`): stores at most one reading per sensor per `--store-every` seconds, since sensors broadcast far more often than room temperatures change. History is averaged into buckets so a chart gets at most 500 points per room for any range.
 - **Server** (`server.py`):
@@ -97,10 +110,6 @@ node tools/shot.mjs --view detailed --level Main --top --room Kitchen kitchen.pn
 ```
 
 `scan.mjs` builds the detailed view without a browser or server. `shot.mjs` needs Chromium (`$CHROME`, or one on the PATH or from Playwright); its options are listed at the top of the file.
-
-## Next: real sensors
-
-A `GoveeSource` will listen for the H5075's Bluetooth broadcasts with [bleak](https://github.com/hbldh/bleak) (the first third-party dependency). It will decode temperature, humidity and battery, and map each sensor's Bluetooth address to a room. Everything downstream of the source stays the same.
 
 ## License
 

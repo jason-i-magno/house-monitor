@@ -2,11 +2,12 @@
 
 import argparse
 import json
+import sys
 import threading
 import time
 from pathlib import Path
 
-from . import ecobee, mova
+from . import ecobee, govee, mova
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -54,6 +55,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--mova-sign-in", action="store_true", help="sign in to MOVAhome, save the sign-in to --mova, list its vacuums, and exit"
     )
+    parser.add_argument(
+        "--govee-scan",
+        action="store_true",
+        help="listen for Govee H5075 sensors over Bluetooth, list those heard with their readings, and exit (needs bleak)",
+    )
     args = parser.parse_args(argv)
 
     if args.ecobee_sign_in:
@@ -76,20 +82,42 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(house_json(source.sensors, source.areas, source.details)))
         return
 
+    def govee_rooms() -> dict[str, str]:
+        return {room.govee: room.sensor.id for room in source.rooms if getattr(room, "govee", None)}
+
+    bluetooth = govee.available()
+    if args.govee_scan:
+        if not bluetooth:
+            raise SystemExit(f"Listening for Govee sensors takes bleak: {sys.executable} -m pip install bleak")
+        try:
+            govee.scan_interactively({room.govee: room.sensor.name for room in source.rooms if getattr(room, "govee", None)})
+        except Exception as e:
+            raise SystemExit(f"Couldn't listen for Govee sensors: {e or type(e).__name__}") from None
+        return
+    if govee_rooms() and not bluetooth:
+        print(
+            f"govee: rooms name Govee sensors, but hearing them takes bleak ({sys.executable} -m pip install bleak), so"
+            " they're simulated",
+            file=sys.stderr,
+            flush=True,
+        )
+
     # Signed in to ecobee, the rooms that name an ecobee sensor read from it, and an outside that names a thermostat
-    # from its weather, and the simulator leaves them be.
+    # from its weather; with bleak, the rooms that name a Govee sensor read from it; and the simulator leaves them be.
     def ecobee_rooms() -> dict[str, str]:
         return {room.ecobee: room.sensor.id for room in source.rooms if getattr(room, "ecobee", None)}
 
     def ecobee_weather() -> dict[str, str]:
         return {room.ecobee_weather: room.sensor.id for room in source.rooms if getattr(room, "ecobee_weather", None)}
 
-    def ecobee_read() -> set[str]:
-        return set(ecobee_rooms().values()) | set(ecobee_weather().values())
+    def read_elsewhere() -> set[str]:
+        ids = set(govee_rooms().values()) if bluetooth else set()
+        if signed_in:
+            ids |= set(ecobee_rooms().values()) | set(ecobee_weather().values())
+        return ids
 
     signed_in = args.ecobee.exists()
-    if signed_in:
-        source.skip = ecobee_read()
+    source.skip = read_elsewhere()
 
     db = args.db or Path("data") / f"{args.source}.sqlite3"
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -105,8 +133,7 @@ def main(argv: list[str] | None = None) -> None:
         changed = house_file.changed()
         if changed:
             source.rooms = changed.HOUSE
-            if signed_in:
-                source.skip = ecobee_read()
+            source.skip = read_elsewhere()
             source.areas = list(getattr(changed, "AREAS", ()))
             source.details = getattr(changed, "DETAILS", None)
             server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
@@ -119,6 +146,9 @@ def main(argv: list[str] | None = None) -> None:
     if signed_in:
         poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms, weather=ecobee_weather)
         collectors.append(threading.Thread(target=poller.run, args=(hub.publish, stop), name="ecobee", daemon=True))
+    if bluetooth:
+        listener = govee.GoveeSource(govee_rooms)
+        collectors.append(threading.Thread(target=listener.run, args=(hub.publish, stop), name="govee", daemon=True))
     vacuums = args.mova.exists()
     if vacuums:
         poller = mova.MovaSource(mova.Account(args.mova))
@@ -133,6 +163,8 @@ def main(argv: list[str] | None = None) -> None:
         sources += f", ecobee sensors ({names})"
         if ecobee_weather():
             sources += f", weather where {', '.join(sorted(ecobee_weather()))} is"
+    if bluetooth and govee_rooms():
+        sources += f", Govee sensors ({', '.join(sorted(govee_rooms(), key=str.casefold))})"
     if vacuums:
         sources += ", MOVA vacuums"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)

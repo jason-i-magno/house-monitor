@@ -1,3 +1,4 @@
+import dataclasses
 import statistics
 import threading
 import time
@@ -77,6 +78,12 @@ class ReadingAtTest(unittest.TestCase):
     def test_a_ceiling_drops_only_to_a_wall(self):
         with self.assertRaises(ValueError):
             Plan(0, 0, 10, 10, drop=("rear", 2))
+
+    def test_a_room_reads_from_one_sensor(self):
+        kitchen = ROOMS["Kitchen"]
+        self.assertEqual(dataclasses.replace(kitchen, govee="GVH5075_1A2B").govee, "GVH5075_1A2B")
+        with self.assertRaisesRegex(ValueError, "ecobee and govee"):
+            dataclasses.replace(kitchen, ecobee="Kitchen", govee="GVH5075_1A2B")
 
 
 class SimulatedSourceTest(unittest.TestCase):
