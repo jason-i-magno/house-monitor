@@ -310,6 +310,19 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .stale .icon { margin-right: 4px; color: var(--status-warning); }
 .doing .icon { margin-right: 4px; color: var(--status-warning); }
 
+/* A vacuum's notes: its error, its dock and its parts running low, each with the warning icon. */
+.notes {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.notes li + li { margin-top: 2px; }
+.notes .icon { margin-right: 4px; color: var(--status-warning); }
+.room.is-stale .notes { opacity: 0.45; }
+
 /* The range filter scopes every chart below it. */
 
 .filters {

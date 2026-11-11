@@ -66,6 +66,15 @@ class Reading:
 
 
 @dataclass(frozen=True)
+class VacuumPart:
+    """A part of a robot vacuum it counts down the life of: one to replace, as a brush, or to clean, as its sensors."""
+
+    name: str  # as "filter" or "sensors"
+    left: int  # percent of its life left
+    replace: bool  # replaced when it runs out, else cleaned
+
+
+@dataclass(frozen=True)
 class Vacuum:
     """What a robot vacuum is doing, as its maker's cloud last said: not a reading of a room, so not stored."""
 
@@ -74,7 +83,10 @@ class Vacuum:
     state: str  # what it's doing, as "Charging"; "Offline" when its cloud can't reach it
     battery: int | None  # percent
     ts: float  # Unix time, seconds
-    error: bool = False  # stopped by a problem, which its app says more about
+    error: bool = False  # stopped by a problem
+    problem: str | None = None  # the problem, or a warning, in words, as "Wheels are suspended"
+    dock: tuple[str, ...] = ()  # what's wrong at its dock, in words, as "Clean water tank is low"
+    parts: tuple[VacuumPart, ...] = ()  # the parts it counts down, those it reports
 
     def to_json(self) -> dict:
         return asdict(self)

@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 from housemon import mova
-from housemon.readings import Vacuum
+from housemon.readings import Vacuum, VacuumPart
 
 EMAIL, PASSWORD = "someone@example.com", "hunter2"
 BASE = "http://mova.test:13267"
@@ -76,7 +76,11 @@ class FakeMova:
             values = self.values.get(params["did"])
             if values is None:
                 return 200, json.dumps({"code": 80001, "success": False, "msg": "device offline"}).encode()
-            result = [{**p, "code": 0, "value": values[(p["siid"], p["piid"])]} for p in params["data"]["params"]]
+            # A property the vacuum hasn't, as most have only some, comes back with an error code and no value.
+            result = [
+                {**p, "code": 0, "value": values[(p["siid"], p["piid"])]} if (p["siid"], p["piid"]) in values else {**p, "code": -1}
+                for p in params["data"]["params"]
+            ]
             return 200, json.dumps({"code": 0, "success": True, "data": {"id": params["id"], "result": result}}).encode()
         return 404, b"{}"
 
@@ -168,6 +172,33 @@ class SignInTest(unittest.TestCase):
         self.cloud.values["1234"] = {(2, 1): 99, (3, 1): 40}
         self.assertEqual(account.status(VACUUM, 1000.0).state, "State 99")
 
+    def test_status_says_what_the_error_is_whats_wrong_at_the_dock_and_how_its_parts_are(self):
+        account = self.sign_in()
+        self.cloud.values["1234"] = {
+            (2, 1): 4, (2, 2): 1, (3, 1): 40, (9, 2): 56, (10, 2): 35, (11, 1): 13, (16, 1): 0, (30, 2): 0,
+            (27, 1): 2, (27, 2): 1, (27, 3): 0, (27, 4): 1,
+        }
+        vacuum = account.status(VACUUM, 1000.0)
+        self.assertEqual((vacuum.state, vacuum.error, vacuum.problem), ("Error", True, "Wheels are suspended"))
+        self.assertEqual(vacuum.dock, ("Clean water tank is low", "Dirty water tank is full or out"))  # the bag's in, detergent off
+        self.assertEqual(vacuum.parts, (
+            VacuumPart("main brush", 56, True), VacuumPart("side brush", 35, True), VacuumPart("filter", 13, True),
+            VacuumPart("sensors", 0, False), VacuumPart("wheels", 0, False),
+        ))  # no mop pads or water tank filter, which it doesn't count
+        self.assertEqual(self.cloud.calls[-1][0], "/dreame-iot-com-20000/device/sendCommand")
+        asked = json.loads(self.cloud.calls[-1][2])["data"]["params"]
+        self.assertEqual(len(asked), len(mova.WANTED))
+        self.assertLessEqual(len(asked), 15)  # one request, as a vacuum takes up to 15 properties at a time
+
+    def test_a_warning_is_said_but_isnt_an_error(self):
+        account = self.sign_in()
+        self.cloud.values["1234"] = {(2, 1): 6, (2, 2): 121, (3, 1): 90}
+        vacuum = account.status(VACUUM, 1000.0)
+        self.assertEqual((vacuum.state, vacuum.error, vacuum.problem), ("Charging", False, "Dust bag is full or vents are blocked"))
+        self.cloud.values["1234"] = {(2, 1): 2, (2, 2): 9999, (3, 1): 90}
+        self.assertEqual(account.status(VACUUM, 1000.0).problem, "Error 9999")
+        self.assertTrue(account.status(VACUUM, 1000.0).error)
+
     def test_a_vacuum_the_cloud_cant_reach_is_offline(self):
         account = self.sign_in()
         self.cloud.values = {}
@@ -219,6 +250,13 @@ class SignInTest(unittest.TestCase):
             mova.sign_in_interactively(self.path, ask=lambda prompt: next(answers), ask_secret=lambda prompt: PASSWORD,
                                        send=self.cloud.send, base=BASE)
         self.assertIn("'P10 Pro Ultra' (mova.vacuum.r2491a): Charging, 87% battery", out.getvalue())
+        self.cloud.values["1234"].update({(11, 1): 13, (27, 1): 2})
+        out = io.StringIO()
+        answers = iter(["", EMAIL])
+        with unittest.mock.patch("sys.stdout", out):
+            mova.sign_in_interactively(self.path, ask=lambda prompt: next(answers), ask_secret=lambda prompt: PASSWORD,
+                                       send=self.cloud.send, base=BASE)
+        self.assertIn("    Clean water tank is low\n    life left: filter 13%\n", out.getvalue())
         self.assertEqual(json.loads(self.path.read_text())["cloud"], "us")
 
 
