@@ -158,6 +158,7 @@ DETAILS = Details(
         Fixture("Water heater", "appliance", "Utility room", 3.5, 0.5, 1.5, 1.5, 4.8),
         Fixture("Washer", "appliance", "Utility room", 0.35, 6, 2.3, 2.3, 3.2),
         Fixture("Dryer", "appliance", "Utility room", 0.35, 8.5, 2.3, 2.3, 3.2),
+        Fixture("Litter-Robot", "litter box", "Utility room", 0, 11, 2.02, 2.25, 2.46, against=("right",), whisker="Litter-Robot"),
         Fixture("Space heater", "appliance", "Office", 1, 1, 1, 1.5, 2, finish="black"),
         Fixture("Family room half wall", "half wall", "Family room", 14.7, 4, 5, 0.4, 3.5, finish="wood", against=("right",)),  # out from the office's wall
         Fixture("Fireplace", "fireplace", "Living room", 15, 12.8, 5, 1.75, 4.5, finish="brick", against=("front",)),  # beside the window
