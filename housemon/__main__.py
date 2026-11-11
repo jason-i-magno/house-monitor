@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import ecobee, govee
+from . import ecobee, govee, whisker
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -46,6 +46,18 @@ def main(argv: list[str] | None = None) -> None:
         "--ecobee-sign-in", action="store_true", help="sign in to ecobee, save the sign-in to --ecobee, list its sensors, and exit"
     )
     parser.add_argument(
+        "--whisker",
+        type=Path,
+        default=Path("data") / "whisker.json",
+        help="the saved Whisker sign-in: with it, litter boxes the house file names a Litter-Robot for read their state from"
+        " that robot (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--whisker-sign-in",
+        action="store_true",
+        help="sign in to Whisker, for a Litter-Robot, save the sign-in to --whisker, list its robots, and exit",
+    )
+    parser.add_argument(
         "--govee-scan",
         action="store_true",
         help="listen for Govee H5075 sensors over Bluetooth, list those heard with their readings, and exit (needs bleak)",
@@ -57,6 +69,12 @@ def main(argv: list[str] | None = None) -> None:
             ecobee.sign_in_interactively(args.ecobee)
         except ecobee.EcobeeError as e:
             raise SystemExit(f"Couldn't sign in to ecobee: {e}") from None
+        return
+    if args.whisker_sign_in:
+        try:
+            whisker.sign_in_interactively(args.whisker)
+        except whisker.WhiskerError as e:
+            raise SystemExit(f"Couldn't sign in to Whisker: {e}") from None
         return
 
     house_file = houses.HouseFile(args.house)
@@ -103,6 +121,13 @@ def main(argv: list[str] | None = None) -> None:
     signed_in = args.ecobee.exists()
     source.skip = read_elsewhere()
 
+    # Signed in to Whisker, the litter boxes that name a Litter-Robot read from it, and the simulator leaves them be.
+    def litter_robots() -> dict[str, str]:
+        return source.details.litter_robots() if source.details else {}
+
+    with_whisker = args.whisker.exists()
+    source.skip_boxes = set(litter_robots().values()) if with_whisker else set()
+
     db = args.db or Path("data") / f"{args.source}.sqlite3"
     db.parent.mkdir(parents=True, exist_ok=True)
     store = Store(db, min_interval=args.store_every)
@@ -120,6 +145,7 @@ def main(argv: list[str] | None = None) -> None:
             source.skip = read_elsewhere()
             source.areas = list(getattr(changed, "AREAS", ()))
             source.details = getattr(changed, "DETAILS", None)
+            source.skip_boxes = set(litter_robots().values()) if with_whisker else set()
             server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
 
     server = HouseServer(
@@ -130,6 +156,9 @@ def main(argv: list[str] | None = None) -> None:
     if signed_in:
         poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms, weather=ecobee_weather)
         collectors.append(threading.Thread(target=poller.run, args=(hub.publish, stop), name="ecobee", daemon=True))
+    if with_whisker:
+        robots = whisker.WhiskerSource(whisker.Account(args.whisker), litter_robots)
+        collectors.append(threading.Thread(target=robots.run, args=(hub.publish, stop), name="whisker", daemon=True))
     if bluetooth:
         listener = govee.GoveeSource(govee_rooms)
         collectors.append(threading.Thread(target=listener.run, args=(hub.publish, stop), name="govee", daemon=True))
@@ -143,6 +172,8 @@ def main(argv: list[str] | None = None) -> None:
         sources += f", ecobee sensors ({names})"
         if ecobee_weather():
             sources += f", weather where {', '.join(sorted(ecobee_weather()))} is"
+    if with_whisker:
+        sources += f", Litter-Robots ({', '.join(sorted(litter_robots(), key=str.casefold)) or 'no litter box names one yet'})"
     if bluetooth and govee_rooms():
         sources += f", Govee sensors ({', '.join(sorted(govee_rooms(), key=str.casefold))})"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)

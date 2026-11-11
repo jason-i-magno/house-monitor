@@ -4,6 +4,7 @@ Each test runs once per house, as a subtest named for it.
 """
 
 import contextlib
+import dataclasses
 import io
 import itertools
 import math
@@ -744,6 +745,14 @@ class KindsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Fixture("Attic vent", "attic vent", "Office", 0, 0, 1, 0.1, 1.5)  # so is an attic vent
         Fixture("Attic vent", "attic vent", None, 0, 0, 1, 0.1, 1.5, lift=15, finish="trim")
+        with self.assertRaises(ValueError):
+            Fixture("Washer", "appliance", "Office", 0, 0, 2, 2, 3, whisker="Litter-Robot")  # only a litter box is one
+        box = Fixture("Litter box", "litter box", "Office", 0, 0, 2, 2.25, 2.5, whisker="Litter-Robot")
+        for other in (box, dataclasses.replace(box, name="Upstairs litter box", whisker="LITTER-ROBOT")):
+            with self.assertRaises(ValueError):  # one name, or one robot, for two
+                Details(lot=((0, 0), (10, 0), (10, 10)), grade=0, fixtures=(box, other))
+        details = Details(lot=((0, 0), (10, 0), (10, 10)), grade=0, fixtures=(box, dataclasses.replace(box, name="Plain box", whisker=None)))
+        self.assertEqual(details.litter_robots(), {"Litter-Robot": "Litter box"})
         RoofVent("Chimney", 0, 0, kind="chimney", width=1.1, height=2.8, finish="window-border")
         for wrong in ({"kind": "flue"}, {"finish": "red"}, {"width": 0}, {"height": -1}):
             with self.assertRaises(ValueError, msg=wrong):

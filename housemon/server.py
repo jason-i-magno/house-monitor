@@ -1,4 +1,4 @@
-"""The web app: static files, a JSON API, and a Server-Sent Events stream of live readings."""
+"""The web app: static files, a JSON API, and a Server-Sent Events stream of live readings and litter boxes' states."""
 
 import json
 import math
@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from .details import Details
 from .hub import Hub
 from .layout import WALL, house_layout
-from .readings import Area, Reading, Sensor
+from .readings import Area, LitterBox, Reading, Sensor
 from .store import Store
 
 STATIC = {
@@ -27,9 +27,12 @@ MAX_HISTORY_HOURS = 24 * 366
 HISTORY_POINTS = 500  # per sensor, so a chart stays light whatever the range
 
 
-def house_json(sensors: list[Sensor], areas: list[Area], details: Details | None, latest: dict[str, Reading] = {}) -> dict:
+def house_json(
+    sensors: list[Sensor], areas: list[Area], details: Details | None, latest: dict[str, Reading] = {}, boxes: dict[str, LitterBox] = {}
+) -> dict:
     """The house as /api/sensors sends it: its sensors, with their latest readings, areas and details, each plan with
-    its share of the wall on each side (layout.py), and the details with what's placed against a wall resolved."""
+    its share of the wall on each side (layout.py), the details with what's placed against a wall resolved, and the
+    latest state of each litter box in them that names a Litter-Robot, by its name."""
     layout = house_layout(sensors, areas, details)
 
     def plan(plan):  # a dict, a list of them for a place in pieces, or None
@@ -51,6 +54,9 @@ def house_json(sensors: list[Sensor], areas: list[Area], details: Details | None
         ],
         "areas": [{**asdict(area), "plan": plan(area.plan)} for area in areas],
         "details": asdict(layout.resolve(details)) if details else None,
+        "litter_boxes": {
+            name: boxes[name].to_json() if name in boxes else None for name in (details.litter_robots().values() if details else ())
+        },
         "wall": WALL,
     }
 
@@ -103,7 +109,8 @@ class Handler(BaseHTTPRequestHandler):
     def _sensors(self) -> dict:
         if self.server.refresh:
             self.server.refresh()
-        return house_json(self.server.sensors, self.server.areas, self.server.details, self.server.hub.latest())
+        hub = self.server.hub
+        return house_json(self.server.sensors, self.server.areas, self.server.details, hub.latest(), hub.litter_boxes())
 
     def _history(self, query: dict[str, list[str]]) -> None:
         try:
@@ -131,7 +138,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             while True:
                 try:
-                    message = f"data: {json.dumps(client.get(timeout=KEEPALIVE).to_json())}\n\n"
+                    item = client.get(timeout=KEEPALIVE)
+                    # A litter box's state is an event of its own, so a reading is the stream's plain message.
+                    event = "event: litter-box\n" if isinstance(item, LitterBox) else ""
+                    message = f"{event}data: {json.dumps(item.to_json())}\n\n"
                 except queue.Empty:
                     message = ": keepalive\n\n"
                 self.wfile.write(message.encode())

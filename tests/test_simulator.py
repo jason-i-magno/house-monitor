@@ -1,4 +1,5 @@
 import dataclasses
+import datetime
 import statistics
 import threading
 import time
@@ -6,8 +7,8 @@ import unittest
 
 from housemon import example_house
 from housemon import house as houses
-from housemon.readings import Plan
-from housemon.simulator import SimulatedSource, reading_at
+from housemon.readings import LitterBox, Plan
+from housemon.simulator import LITTER_INSIDE, LITTER_WAIT, SimulatedSource, _visits, litter_box_at, reading_at
 
 HOUSE = example_house.HOUSE
 # Every house file's rooms, for the checks that hold of any: the example's, and your own if it's there.
@@ -86,6 +87,40 @@ class ReadingAtTest(unittest.TestCase):
             dataclasses.replace(kitchen, ecobee="Kitchen", govee="GVH5075_1A2B")
 
 
+def sunday(hour: float, weeks: int = 0) -> float:
+    """A Unix time at `hour` o'clock local time on the Sunday of a week in the past."""
+    t = time.localtime(time.time() - (8 + 7 * weeks) * 86400)
+    day = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 12, 0, 0, 0, 0, -1)) + ((6 - t.tm_wday) % 7) * 86400
+    t = time.localtime(day)
+    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)) + hour * 3600
+
+
+class LitterBoxAtTest(unittest.TestCase):
+    def test_is_a_pure_function_of_its_name_and_the_time(self):
+        t = sunday(15)
+        self.assertEqual(litter_box_at("Litter-Robot", t), litter_box_at("Litter-Robot", t))
+        self.assertTrue(litter_box_at("Litter-Robot", t).simulated)
+
+    def test_its_drawer_fills_through_the_week_and_is_emptied_on_sunday_morning(self):
+        before, after = litter_box_at("Litter-Robot", sunday(9.99)), litter_box_at("Litter-Robot", sunday(10.01))
+        self.assertEqual((before.cycles, before.status), (28, "DF1"))  # four a day, and it's almost full
+        self.assertAlmostEqual(before.drawer, 93.3)
+        self.assertEqual((after.cycles, after.drawer, after.status), (0, 0.0, "RDY"))
+        week = [litter_box_at("Litter-Robot", sunday(10.01) + day * 86400).cycles for day in range(1, 7)]
+        self.assertEqual(week, sorted(week))
+        self.assertTrue(all(0 < cycles < 28 for cycles in week))
+
+    def test_a_visit_interrupts_its_cat_sensor_then_it_waits_and_cleans(self):
+        t = sunday(12)
+        visit = next(v for v in _visits("Litter-Robot", datetime.date.fromtimestamp(t)) if v > t)
+        statuses = [litter_box_at("Litter-Robot", visit + s).status for s in (-1, 1, LITTER_INSIDE + 1, LITTER_INSIDE + LITTER_WAIT + 1, 3600)]
+        self.assertEqual(statuses, ["RDY", "CSI", "CST", "CCP", "RDY"])
+        self.assertEqual(litter_box_at("Litter-Robot", visit + 3600).cycles, litter_box_at("Litter-Robot", visit - 1).cycles + 1)
+
+    def test_says_what_its_status_is(self):
+        self.assertEqual(LitterBox("Litter box", 0, "CCP", 3, 10.0).to_json()["text"], "Cleaning")
+
+
 class SimulatedSourceTest(unittest.TestCase):
     def test_backfill_covers_each_room_at_each_step(self):
         source = SimulatedSource(HOUSE)
@@ -122,6 +157,22 @@ class SimulatedSourceTest(unittest.TestCase):
         ids = [r.sensor_id for r in readings]
         self.assertGreaterEqual(len(ids), 2 * len(HOUSE))
         self.assertEqual(ids[: len(HOUSE)], [room.sensor.id for room in HOUSE])
+
+    def test_run_publishes_each_litter_box_that_names_a_robot_but_those_read_elsewhere(self):
+        source = SimulatedSource(HOUSE[:1], interval=0.06, details=example_house.DETAILS)
+        published, stop = [], threading.Event()
+        worker = threading.Thread(target=source.run, args=(published.append, stop))
+        worker.start()
+        time.sleep(0.1)
+        source.skip_boxes = {"Litter-Robot"}  # signed in to Whisker
+        time.sleep(0.07)  # the round it was set in ends
+        since = len(published)
+        time.sleep(0.15)
+        stop.set()
+        worker.join(timeout=1)
+        self.assertEqual({i.name for i in published[:since] if isinstance(i, LitterBox)}, {"Litter-Robot"})
+        self.assertGreater(len(published), since)
+        self.assertFalse(any(isinstance(i, LitterBox) for i in published[since:]))
 
     def test_run_takes_up_rooms_swapped_in(self):
         source = SimulatedSource(HOUSE, interval=0.06)

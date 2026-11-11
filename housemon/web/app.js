@@ -55,6 +55,9 @@ const state = {
   // the newest reading, and reading the one shown: null while it's the simulator's and those are hidden.
   sensors: [],
   hideSimulated: false, // the simulator's readings left out, for this viewer
+  // [{name, where, latest, card}]: the litter boxes that name a Litter-Robot, in house order, where each is, and its
+  // latest state, or null before the first
+  litterBoxes: [],
   areas: [], // [{name, floor, plan}]: parts of the house with no sensor
   details: null, // the doors, windows, roof, yard and more for the detailed view (housemon/details.py), if any
   wall: null, // how thick every wall is, in feet (housemon/layout.py)
@@ -180,6 +183,10 @@ function renderRooms() {
     const outside = state.sensors.every((s) => s.floor !== floor || s.outside); // not a level
     root.append(el("section", { class: "floor" }, el("h2", {}, outside ? floor : `${floor} level`), grid));
   }
+  if (state.litterBoxes.length) {
+    const grid = el("div", { class: "room-grid" }, ...state.litterBoxes.map(litterBoxCard));
+    root.append(el("section", { class: "floor" }, el("h2", {}, state.litterBoxes.length > 1 ? "Litter boxes" : "Litter box"), grid));
+  }
   updateRooms();
 }
 
@@ -225,11 +232,92 @@ function updateRooms() {
     stale.hidden = !isStale;
     stale.lastElementChild.textContent = `No reading for ${duration(age)}`;
   }
+  updateLitterBoxes(now);
   // A level whose rooms are all hidden goes too, and the toggle shows only while there's something to hide.
   for (const section of document.querySelectorAll("#rooms .floor")) {
     section.hidden = [...section.querySelectorAll(".room")].every((card) => card.hidden);
   }
-  document.getElementById("simulated").hidden = !state.sensors.some((s) => s.latest?.simulated);
+  document.getElementById("simulated").hidden = ![...state.sensors, ...state.litterBoxes].some((s) => s.latest?.simulated);
+}
+
+// --- Litter boxes --------------------------------------------------------
+
+// Whether a litter box is hidden: its latest state made up by the simulator, while those are hidden.
+function hiddenLitterBox(box) {
+  return state.hideSimulated && Boolean(box.latest?.simulated);
+}
+
+function litterBoxCard(box) {
+  box.card = el(
+    "article",
+    { class: "room litter-box" },
+    el("h3", {}, box.name),
+    el("p", { class: "status" }, el("span", { class: "icon", "aria-hidden": "true", hidden: "" }, "⚠"), el("span", { class: "text" }, "–")),
+    el("p", { class: "drawer" }),
+    el("div", { class: "gauge", "aria-hidden": "true", hidden: "" }, el("span")),
+    el("p", { class: "meta cycles" }),
+    el("p", { class: "meta updated-at" }),
+    el("p", { class: "meta device" }),
+    el("p", { class: "stale", hidden: "" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), el("span")),
+  );
+  return box.card;
+}
+
+// Each litter box's card: its status, with a warning sign when it needs seeing to, how full its drawer is, in words
+// and a gauge, and how old its state is.
+function updateLitterBoxes(now) {
+  for (const box of state.litterBoxes) {
+    const card = box.card;
+    const litter = box.latest;
+    card.hidden = hiddenLitterBox(box);
+    const [icon, text, drawer, gauge, cycles, updatedAt, device, stale] = [".status .icon", ".status .text", ".drawer", ".gauge", ".cycles", ".updated-at", ".device", ".stale"]
+      .map((s) => card.querySelector(s));
+    if (!litter) {
+      text.textContent = "No state yet";
+      continue;
+    }
+    icon.hidden = !litter.attention;
+    text.textContent = litter.text;
+    drawer.textContent = `Drawer ${Math.round(litter.drawer)}% full`;
+    gauge.hidden = false;
+    gauge.firstElementChild.style.width = `${Math.min(Math.max(litter.drawer, 0), 100)}%`;
+    const age = now - litter.ts;
+    updatedAt.textContent = litter.status === "OFFLINE" && litter.seen ? `Last seen ${ago(now - litter.seen)}` : `Updated ${ago(age)}`;
+    cycles.textContent = `${litter.cycles} ${litter.cycles === 1 ? "cycle" : "cycles"} since emptied`;
+    const details = box.where ? [box.where] : [];
+    if (litter.simulated) details.push("Simulated");
+    device.replaceChildren(...details.flatMap((text, i) => [i ? " · " : "", el("span", { class: "nowrap" }, text)]));
+    const isStale = age > STALE_AFTER;
+    card.classList.toggle("is-stale", isStale);
+    stale.hidden = !isStale;
+    stale.lastElementChild.textContent = `No update for ${duration(age)}`;
+  }
+}
+
+// A litter box's readout, below its name and kind in the detailed view's: its status, drawer and cycles, and how old
+// they are.
+function litterBoxReadout(box) {
+  const litter = hiddenLitterBox(box) ? null : box.latest;
+  if (!litter) return [el("div", { class: "time" }, "No state yet")];
+  const now = Date.now() / 1000;
+  const rows = [
+    el("div", { class: "row" }, ...(litter.attention ? [el("span", { class: "warning", "aria-hidden": "true" }, "⚠")] : []), el("strong", {}, litter.text)),
+    el("div", { class: "row" }, el("strong", {}, `${Math.round(litter.drawer)}%`), el("span", { class: "name" }, "Drawer full")),
+    el("div", { class: "row" }, el("strong", {}, String(litter.cycles)), el("span", { class: "name" }, "Cycles since emptied")),
+    el("div", { class: "time" }, litter.status === "OFFLINE" && litter.seen ? `Last seen ${ago(now - litter.seen)}` : `Updated ${ago(now - litter.ts)}`),
+  ];
+  if (now - litter.ts > STALE_AFTER) {
+    rows.push(el("div", { class: "stale" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), `No update for ${duration(now - litter.ts)}`));
+  }
+  return rows;
+}
+
+function onLitterBox(litter) {
+  const box = state.litterBoxes.find((b) => b.name === litter.name);
+  if (!box) return;
+  box.latest = litter;
+  updateRooms();
+  drawMapSoon(); // its readout
 }
 
 // --- Charts --------------------------------------------------------------
@@ -1483,7 +1571,9 @@ function renderMapTooltip() {
     tooltip.hidden = true;
     return;
   }
-  tooltip.replaceChildren(...(sensor ? roomReadout(sensor) : modelReadout(layout.item(state.mapFocus))));
+  const item = sensor ? null : layout.item(state.mapFocus);
+  const box = item && state.litterBoxes.find((b) => b.name === item.name && item.kind === MODEL_KINDS["litter box"]);
+  tooltip.replaceChildren(...(sensor ? roomReadout(sensor) : [...modelReadout(item), ...(box ? litterBoxReadout(box) : [])]));
   tooltip.hidden = false;
   // Beside the room if there's room, else below it, else above it.
   const [w, h, gap] = [tooltip.offsetWidth, tooltip.offsetHeight, 8];
@@ -1533,7 +1623,11 @@ function drawAll() {
 
 async function loadSensors() {
   const response = await fetch("/api/sensors");
-  ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null } = await response.json());
+  const house = await response.json();
+  ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null } = house);
+  state.litterBoxes = Object.entries(house.litter_boxes ?? {}).map(([name, latest]) => {
+    return { name, where: state.details?.fixtures.find((f) => f.name === name)?.room ?? null, latest };
+  });
   for (const sensor of state.sensors) {
     sensor.latest = sensor.reading;
     showReading(sensor);
@@ -1603,6 +1697,7 @@ function connect() {
     if (stream.readyState === EventSource.CLOSED) setTimeout(connect, 5000);
   };
   stream.onmessage = (event) => onReading(JSON.parse(event.data));
+  stream.addEventListener("litter-box", (event) => onLitterBox(JSON.parse(event.data)));
 }
 
 function renderRanges() {

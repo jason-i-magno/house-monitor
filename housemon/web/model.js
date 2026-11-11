@@ -63,7 +63,7 @@ const MODEL_KINDS = {
   door: "Door", window: "Window", "sliding door": "Sliding door", "garage door": "Garage door", opening: "Opening",
   vent: "Vent", appliance: "Appliance", plumbing: "Plumbing", fireplace: "Fireplace", "half wall": "Half wall", railing: "Railing", porch: "Porch", patio: "Patio", deck: "Deck", driveway: "Driveway", walk: "Walk", bed: "Bed",
   deciduous: "Tree", evergreen: "Evergreen tree", backflow: "Backflow preventer", "valve box": "Valve box", controller: "Sprinkler controller", "gas meter": "Gas meter",
-  "attic vent": "Attic vent", pipe: "Roof vent", chimney: "Chimney",
+  "attic vent": "Attic vent", pipe: "Roof vent", chimney: "Chimney", "litter box": "Litter box",
 };
 const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard", "Sprinklers"];
 // Each side of a plan as a line: the axis it runs along, where it is across
@@ -1742,7 +1742,8 @@ function backflow(mesh, C, f) {
 // from the wall it's against, across its middle and from low on it to a little over halfway up. A backflow
 // preventer is pipes, and a valve box is sunk in the ground, its lid just over it. A gas meter is its box on its
 // riser, a pipe up out of the ground under its middle, its foot sunk so it's not in the ground's plane, and its top
-// inside the box. An attic vent is its box with its slats (atticVent).
+// inside the box. An attic vent is its box with its slats (atticVent), and a litter box its base and globe
+// (litterBox).
 // A register set in the corner of its floor and the wall it stands against, its grille sloping from the floor out
 // in the room up to the wall, as high as its height.
 function cornerRegister(mesh, C, f) {
@@ -1792,7 +1793,40 @@ function atticVent(mesh, C, f) {
   }
 }
 
+// The wall of its piece a fixture stands nearest, which a fireplace's firebox and a litter box's entry face away from.
+function nearestWall(f) {
+  const p = f.piece;
+  const gaps = { left: f.x0 - p.x, right: p.x + p.width - f.x1, back: f.y0 - p.y, front: p.y + p.depth - f.y1 };
+  return Object.keys(gaps).reduce((a, b) => (gaps[b] < gaps[a] ? b : a));
+}
+
+// A litter box, as a Litter-Robot is: its base, the lower third, and its globe sitting in it, a drum lying across
+// the way its entry faces, away from the wall nearest it (toward the front out in the yard), as wide as the box
+// across and up to its top, with its entry a dark disc standing just out from the drum's end, its back inside it.
+function litterBox(mesh, C, f) {
+  const color = C[f.finish] ?? C.white;
+  const id = f.item.id;
+  const base = f.z0 + (f.z1 - f.z0) / 3;
+  box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, base], color, id);
+  const faces = f.piece ? { left: "right", right: "left", back: "front", front: "back" }[nearestWall(f)] : "front";
+  const across = faces === "left" || faces === "right" ? f.y1 - f.y0 : f.x1 - f.x0;
+  const r = Math.min(across, f.z1 - base + 0.1) / 2;
+  const z = f.z1 - r;
+  const [cx, cy] = [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2];
+  // a point along the way it faces, from its back (0) to its entry (1), at the drum's height
+  const at = (k, out = 0) => {
+    if (faces === "left" || faces === "right") return [faces === "right" ? f.x0 + k * (f.x1 - f.x0) + out : f.x1 - k * (f.x1 - f.x0) - out, cy, z];
+    return [cx, faces === "front" ? f.y0 + k * (f.y1 - f.y0) + out : f.y1 - k * (f.y1 - f.y0) - out, z];
+  };
+  limb(mesh, at(0.03), at(1, -0.05), r, r, color, id, 12);
+  limb(mesh, at(1, -0.08), at(1, -0.02), 0.6 * r, 0.6 * r, C.black, id, 12); // clear of the base's face below it
+}
+
 function fixture(mesh, C, f) {
+  if (f.kind === "litter box") {
+    litterBox(mesh, C, f);
+    return;
+  }
   if (f.kind === "attic vent") {
     atticVent(mesh, C, f);
     return;
@@ -1829,9 +1863,7 @@ function fixture(mesh, C, f) {
   }
   box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
   if (f.kind !== "fireplace" || !f.piece) return;
-  const p = f.piece;
-  const gaps = { left: f.x0 - p.x, right: p.x + p.width - f.x1, back: f.y0 - p.y, front: p.y + p.depth - f.y1 };
-  const wall = Object.keys(gaps).reduce((a, b) => (gaps[b] < gaps[a] ? b : a));
+  const wall = nearestWall(f);
   const middle = (a, b) => [a + 0.2 * (b - a), b - 0.2 * (b - a)];
   const [z0, z1] = [f.z0 + 0.15 * (f.z1 - f.z0), f.z0 + 0.6 * (f.z1 - f.z0)];
   const t = 0.03;

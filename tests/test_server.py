@@ -11,7 +11,7 @@ from pathlib import Path
 from housemon.details import Details, Finish, Fixture, Opening, Roof
 from housemon.hub import Hub
 from housemon.layout import house_layout
-from housemon.readings import Area, Plan, Reading
+from housemon.readings import Area, LitterBox, Plan, Reading
 from housemon.server import HouseServer, house_json
 from housemon.example_house import HOUSE
 from housemon.store import Store
@@ -30,6 +30,7 @@ class ServerTest(unittest.TestCase):
             finishes={"Office": Finish("carpet")},
             roofs=(Roof("Roof", 0, 0, 60, 50, eave=9, peak=14, ridge="x"),),
             openings=(Opening("Office door", "door", "Office", "front", 1, 3, 6.67),),
+            fixtures=(Fixture("Litter box", "litter box", "Office", 1, 1, 2, 2.25, 2.5, whisker="Litter-Robot"),),
         )
         self.server = HouseServer(("127.0.0.1", 0), self.hub, self.store, self.sensors, self.areas, self.details)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -84,6 +85,15 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(details["roofs"][0]["ridge"], "x")
         self.assertEqual(details["openings"][0]["room"], "Office")
         self.assertEqual(details["trees"], [])
+
+    def test_sensors_include_each_litter_boxs_latest_state(self):
+        self.assertEqual(json.loads(self.get("/api/sensors")[2])["litter_boxes"], {"Litter box": None})
+        state = LitterBox("Litter box", time.time(), "DF1", 28, 93.3)
+        self.hub.publish(state)
+        self.hub.publish(LitterBox("Gone", time.time(), "RDY", 0, 0.0))  # from before the house file changed
+        self.assertEqual(json.loads(self.get("/api/sensors")[2])["litter_boxes"], {"Litter box": state.to_json()})
+        self.assertEqual(state.to_json()["text"], "Drawer almost full, 2 cycles left")
+        self.assertEqual(self.store.latest(), {})  # only readings are stored
 
     def test_details_place_things_against_walls(self):
         office = next(s for s in self.sensors if s.name == "Office")
@@ -151,6 +161,10 @@ class ServerTest(unittest.TestCase):
         self.hub.publish(reading)
         lines = [response.readline() for _ in range(2)]
         self.assertEqual(lines[1], b"data: " + json.dumps(reading.to_json()).encode() + b"\n")
+        state = LitterBox("Litter box", time.time(), "CCP", 4, 13.3)
+        self.hub.publish(state)
+        lines = [response.readline() for _ in range(3)]
+        self.assertEqual(lines[1:], [b"event: litter-box\n", b"data: " + json.dumps(state.to_json()).encode() + b"\n"])
         conn.close()
 
 

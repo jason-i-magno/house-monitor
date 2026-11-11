@@ -5,9 +5,12 @@ simulator backfills matches what it later reports live. Each room runs on the
 main floor's thermostat, offset from it (upstairs warm, a basement cold), or
 holds near 68 °F on its own; follows a share of the weather outside; and can
 have a space heater, cooking or showers. The rooms themselves are a house
-file's HOUSE: example_house.py, or your own.
+file's HOUSE: example_house.py, or your own. A litter box the house file
+names a Litter-Robot for is simulated too, until Whisker reads it: a cat
+uses it four times a day, and its drawer is emptied on Sunday mornings.
 """
 
+import datetime
 import functools
 import math
 import random
@@ -17,7 +20,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from .details import Details
-from .readings import Area, Reading, Sensor
+from .readings import Area, LitterBox, Reading, Sensor
+
+LITTER_VISITS = (7.0, 12.5, 18.0, 22.5)  # about when, in hours, a cat uses a simulated litter box each day
+LITTER_INSIDE = 2 * 60  # seconds the cat is in it, interrupting its cat sensor
+LITTER_WAIT = 7 * 60  # seconds it waits after the cat sensor clears, as a Litter-Robot 3 does unless set otherwise
+LITTER_CYCLE = 150  # seconds a clean cycle takes
+LITTER_CAPACITY = 30  # cycles its waste drawer holds, as a Litter-Robot 3 first estimates
+LITTER_EMPTIED = 10.0  # the hour on Sunday its drawer is emptied
 
 
 @dataclass(frozen=True)
@@ -130,6 +140,43 @@ def reading_at(room: SimulatedRoom, t: float) -> Reading:
     )
 
 
+def _local(day: datetime.date, hour: float) -> float:
+    """The Unix time of an hour of a local day."""
+    whole = int(hour)
+    return time.mktime((day.year, day.month, day.day, whole, 0, 0, 0, 0, -1)) + (hour - whole) * 3600
+
+
+def _visits(name: str, day: datetime.date) -> list[float]:
+    """When a cat comes to the litter box `name` on a local day: about at LITTER_VISITS, each up to an hour off, as
+    seeded from its name and the day."""
+    rng = random.Random(f"{name}:{day.isoformat()}")
+    return [_local(day, hour + rng.uniform(-1, 1)) for hour in LITTER_VISITS]
+
+
+def litter_box_at(name: str, t: float) -> LitterBox:
+    """A simulated Litter-Robot's state at t: its cat sensor interrupted while a cat is in it, waiting to clean after
+    it leaves, then cleaning, a cycle more in its drawer for each, and ready between, its drawer almost full when it
+    has two cycles left or fewer."""
+    today = datetime.date.fromtimestamp(t)
+    emptied_on = today - datetime.timedelta(days=(today.weekday() - 6) % 7)  # the last Sunday, or today
+    emptied = _local(emptied_on, LITTER_EMPTIED)
+    if emptied > t:
+        emptied_on -= datetime.timedelta(days=7)
+        emptied = _local(emptied_on, LITTER_EMPTIED)
+    done = LITTER_INSIDE + LITTER_WAIT + LITTER_CYCLE  # from a visit to its cycle's end
+    days = [emptied_on + datetime.timedelta(days=n) for n in range(-1, (today - emptied_on).days + 1)]
+    visits = [v for day in days for v in _visits(name, day)]
+    cycles = sum(1 for v in visits if emptied < v + done <= t)
+    status = "RDY"
+    if LITTER_CAPACITY - cycles <= 2:
+        status = {2: "DF1", 1: "DF2"}.get(LITTER_CAPACITY - cycles, "DFS")
+    for v in visits:
+        if v <= t < v + done:
+            status = "CSI" if t < v + LITTER_INSIDE else "CST" if t < v + LITTER_INSIDE + LITTER_WAIT else "CCP"
+    drawer = round(min(cycles / LITTER_CAPACITY, 1) * 100, 1)
+    return LitterBox(name, t, status, cycles, drawer, seen=t, simulated=True)
+
+
 class SimulatedSource:
     """Reports each room every `interval` seconds, staggered like real broadcasts, but the rooms whose sensor ids are
     in `skip`, which another source reads."""
@@ -146,6 +193,7 @@ class SimulatedSource:
         self.areas = list(areas)
         self.details = details
         self.skip: set[str] = set()
+        self.skip_boxes: set[str] = set()  # the litter boxes another source reads, by name
 
     @property
     def sensors(self) -> list[Sensor]:
@@ -154,6 +202,11 @@ class SimulatedSource:
     def simulated(self) -> list[SimulatedRoom]:
         """The rooms it reports, all but those another source reads."""
         return [room for room in self.rooms if room.sensor.id not in self.skip]
+
+    def litter_boxes(self) -> list[str]:
+        """The litter boxes it reports, by name: those naming a Litter-Robot, but those another source reads."""
+        names = self.details.litter_robots().values() if self.details else ()
+        return [name for name in names if name not in self.skip_boxes]
 
     def backfill(self, since: float, until: float, step: float) -> Iterator[Reading]:
         """The readings the simulator would have stored had it been running."""
@@ -164,11 +217,14 @@ class SimulatedSource:
                 yield reading_at(room, t)
             t += step
 
-    def run(self, publish: Callable[[Reading], None], stop: threading.Event) -> None:
-        """Call publish(reading) for every new reading until stop is set. Each round goes through the rooms as they
-        are then, so rooms swapped in while it runs, from a changed house file, get their turns."""
+    def run(self, publish: Callable[[Reading | LitterBox], None], stop: threading.Event) -> None:
+        """Call publish(reading) for every new reading, and publish(state) for each litter box's state once a round,
+        until stop is set. Each round goes through the rooms as they are then, so rooms swapped in while it runs, from
+        a changed house file, get their turns."""
         due = time.time()
         while True:
+            for name in self.litter_boxes():
+                publish(litter_box_at(name, time.time()))
             rooms = self.simulated()
             step = self.interval / max(1, len(rooms))
             for room in rooms:
