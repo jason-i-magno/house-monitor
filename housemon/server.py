@@ -1,4 +1,4 @@
-"""The web app: static files, a JSON API, and a Server-Sent Events stream of live readings."""
+"""The web app: static files, a JSON API, and a Server-Sent Events stream of live readings and vacuums."""
 
 import json
 import math
@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from .details import Details
 from .hub import Hub
 from .layout import WALL, house_layout
-from .readings import Area, Reading, Sensor
+from .readings import Area, Reading, Sensor, Vacuum
 from .store import Store
 
 STATIC = {
@@ -103,7 +103,8 @@ class Handler(BaseHTTPRequestHandler):
     def _sensors(self) -> dict:
         if self.server.refresh:
             self.server.refresh()
-        return house_json(self.server.sensors, self.server.areas, self.server.details, self.server.hub.latest())
+        house = house_json(self.server.sensors, self.server.areas, self.server.details, self.server.hub.latest())
+        return {**house, "vacuums": [vacuum.to_json() for vacuum in self.server.hub.vacuums()]}
 
     def _history(self, query: dict[str, list[str]]) -> None:
         try:
@@ -131,7 +132,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             while True:
                 try:
-                    message = f"data: {json.dumps(client.get(timeout=KEEPALIVE).to_json())}\n\n"
+                    item = client.get(timeout=KEEPALIVE)
+                    # A reading is the stream's own kind of message, and a vacuum one of its own.
+                    kind = "event: vacuum\n" if isinstance(item, Vacuum) else ""
+                    message = f"{kind}data: {json.dumps(item.to_json())}\n\n"
                 except queue.Empty:
                     message = ": keepalive\n\n"
                 self.wfile.write(message.encode())

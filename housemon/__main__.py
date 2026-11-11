@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import ecobee
+from . import ecobee, mova
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -44,6 +44,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--ecobee-sign-in", action="store_true", help="sign in to ecobee, save the sign-in to --ecobee, list its sensors, and exit"
     )
+    parser.add_argument(
+        "--mova",
+        type=Path,
+        default=Path("data") / "mova.json",
+        help="the saved MOVAhome sign-in: with it, the page shows what each of the account's robot vacuums is doing and"
+        " its battery (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--mova-sign-in", action="store_true", help="sign in to MOVAhome, save the sign-in to --mova, list its vacuums, and exit"
+    )
     args = parser.parse_args(argv)
 
     if args.ecobee_sign_in:
@@ -51,6 +61,12 @@ def main(argv: list[str] | None = None) -> None:
             ecobee.sign_in_interactively(args.ecobee)
         except ecobee.EcobeeError as e:
             raise SystemExit(f"Couldn't sign in to ecobee: {e}") from None
+        return
+    if args.mova_sign_in:
+        try:
+            mova.sign_in_interactively(args.mova)
+        except (mova.MovaError, OSError) as e:
+            raise SystemExit(f"Couldn't sign in to MOVAhome: {e}") from None
         return
 
     house_file = houses.HouseFile(args.house)
@@ -103,6 +119,10 @@ def main(argv: list[str] | None = None) -> None:
     if signed_in:
         poller = ecobee.EcobeeSource(ecobee.Account(args.ecobee), ecobee_rooms, weather=ecobee_weather)
         collectors.append(threading.Thread(target=poller.run, args=(hub.publish, stop), name="ecobee", daemon=True))
+    vacuums = args.mova.exists()
+    if vacuums:
+        poller = mova.MovaSource(mova.Account(args.mova))
+        collectors.append(threading.Thread(target=poller.run, args=(hub.publish_vacuum, stop), name="mova", daemon=True))
     for collector in collectors:
         collector.start()
     file = Path(house.__file__).resolve()
@@ -113,6 +133,8 @@ def main(argv: list[str] | None = None) -> None:
         sources += f", ecobee sensors ({names})"
         if ecobee_weather():
             sources += f", weather where {', '.join(sorted(ecobee_weather()))} is"
+    if vacuums:
+        sources += ", MOVA vacuums"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
     try:
         server.serve_forever()
