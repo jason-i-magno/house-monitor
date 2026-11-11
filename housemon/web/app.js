@@ -362,6 +362,14 @@ function timeTicks(since, until, plotWidth) {
   return ticks;
 }
 
+// How long a room's line can go between points before it breaks: three of its usual steps between them (their
+// median), so it breaks where two readings in a row are missing, or three buckets if that's longer. A room read less
+// often than the history's bucket, as ecobee's are every 180 s or so, has points further apart than one.
+function lineGap(points, bucket) {
+  const steps = points.slice(1).map((p, i) => p[0] - points[i][0]).sort((a, b) => a - b);
+  return 3 * Math.max(bucket, steps[steps.length >> 1] ?? 0);
+}
+
 // A run of points, in pixels and in time order, as a smooth curve through every one that never bends past one, so
 // a peak or dip drawn is one read: cubic Béziers with Steffen's monotone tangents, as d3's curveMonotoneX draws. Two
 // points are a straight line, and one draws nothing, as a line through it would.
@@ -395,17 +403,13 @@ function drawChart(chart) {
   const m = { top: 12, right: 16, bottom: 28, left: 44 };
   const until = Date.now() / 1000;
   const since = until - state.hours * 3600;
-  const gap = Math.max(3 * state.history.bucket, 180); // a longer silence breaks the line
-
-  const series = state.sensors.map((sensor, i) => ({
-    sensor,
-    index: i,
-    color: seriesColor(i),
-    dash: seriesDash(i, 2),
-    points: (state.history.series[sensor.id] || [])
+  const series = state.sensors.map((sensor, i) => {
+    const points = (state.history.series[sensor.id] || [])
       .filter((p) => p[0] >= since && p[metric.index] != null) // a sensor that reads only temperature has no humidity
-      .map((p) => [p[0], metric.value(p[metric.index])]),
-  })).filter((s) => shown(chart, s.sensor)); // the scale fits the rooms shown
+      .map((p) => [p[0], metric.value(p[metric.index])]);
+    const gap = lineGap(points, state.history.bucket); // a longer silence breaks the line
+    return { sensor, index: i, color: seriesColor(i), dash: seriesDash(i, 2), points, gap };
+  }).filter((s) => shown(chart, s.sensor)); // the scale fits the rooms shown
   const values = series.flatMap((s) => s.points.map((p) => p[1]));
   root.setAttribute("viewBox", `0 0 ${width} ${height}`);
   root.replaceChildren();
@@ -441,7 +445,7 @@ function drawChart(chart) {
     // Each run of points between gaps, as a smooth curve through them.
     const runs = [];
     s.points.forEach(([t, v], i) => {
-      if (i === 0 || t - s.points[i - 1][0] > gap) runs.push([]);
+      if (i === 0 || t - s.points[i - 1][0] > s.gap) runs.push([]);
       runs[runs.length - 1].push([x(t), y(v)]);
     });
     const d = runs.map(smoothPath).join("");
@@ -464,7 +468,7 @@ function drawChart(chart) {
   const hoverDots = svg("g");
   crosshair.style.display = "none";
   root.append(crosshair, hoverDots);
-  chart.layout = { since, until, x, y, m, width, gap, series, crosshair, hoverDots };
+  chart.layout = { since, until, x, y, m, width, series, crosshair, hoverDots };
   if (chart.hoverTime != null) setHover(chart, snap(chart.layout, chart.hoverTime));
 }
 
@@ -542,7 +546,7 @@ function setHover(chart, t) {
   const rows = [];
   layout.series.forEach((s) => {
     const p = nearest(s.points, t);
-    const value = p && Math.abs(p[0] - t) <= layout.gap / 2 ? p[1] : null;
+    const value = p && Math.abs(p[0] - t) <= s.gap / 2 ? p[1] : null;
     if (value != null) hoverDots.append(dot(layout.x(p[0]), layout.y(value), s.color));
     rows.push(el(
       "div",
