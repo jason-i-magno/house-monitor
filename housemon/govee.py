@@ -89,7 +89,8 @@ class GoveeSource:
     broadcasts it, to the sensor id of the room it reads; it's looked up every `interval` seconds, so a changed house
     file takes effect, and a name matches whatever its case. Each room gets the newest broadcast heard from its sensor
     since its last reading, once every `interval` seconds at most, so a sensor out of range gives none. A name not heard
-    from for `missing` seconds is warned about, with the names heard, once until it's heard again."""
+    from for `missing` seconds, counted from when it was first named or listening started, whichever is later, so one
+    added to a house file has its full time, is warned about, with the names heard, once until it's heard again."""
 
     def __init__(
         self,
@@ -106,11 +107,12 @@ class GoveeSource:
         self.warn = warn or (lambda message: print(f"govee: {message}", file=sys.stderr, flush=True))
         self.scan = scan
         self.retry = retry
-        self.started = time.time()
+        self.started: float | None = None  # when listening started
         self._lock = threading.Lock()
         self._heard: dict[str, Broadcast] = {}  # the newest broadcast from each sensor, by its name casefolded
         self._read: dict[str, float] = {}  # when the broadcast each sensor's room last read was heard
         self.unheard: set[str] = set()  # the names warned about, casefolded
+        self._named: dict[str, float] = {}  # when each name the house file gives was first seen, casefolded
 
     def heard(self, name: str, data: bytes, rssi: int | None, now: float | None = None) -> None:
         """Note a broadcast; one that isn't an H5075's reading is let go."""
@@ -148,11 +150,18 @@ class GoveeSource:
 
     def _check(self, names: dict[str, str], heard: dict[str, Broadcast], now: float) -> None:
         """Warn of the names not heard from for `missing` seconds, but those warned of already."""
+        self._named = {name.casefold(): self._named.get(name.casefold(), now) for name in names}
+        if self.started is None:
+            return  # not listening yet
         since = now - self.missing
-        if self.started > since:
-            return  # not listening long enough to tell
         quiet = sorted(
-            (name for name in names if (b := heard.get(name.casefold())) is None or b.at < since), key=str.casefold
+            (
+                name
+                for name in names
+                if max(self.started, self._named[name.casefold()]) <= since
+                and ((b := heard.get(name.casefold())) is None or b.at < since)
+            ),
+            key=str.casefold,
         )
         new = [name for name in quiet if name.casefold() not in self.unheard]
         if new:
@@ -175,12 +184,12 @@ class GoveeSource:
     def run(self, publish: Callable[[Reading], None], stop: threading.Event) -> None:
         """Call publish(reading) for each room's new readings every `interval` seconds until stop is set, listening
         while any room names a sensor."""
-        self.started = time.time()
         listener: threading.Thread | None = None
         while not stop.wait(self.interval):
             if listener is None and self.rooms():
                 listener = threading.Thread(target=self._listen, args=(stop,), name="govee-scan", daemon=True)
                 listener.start()
+                self.started = time.time()
             for reading in self.due(time.time()):
                 publish(reading)
         if listener:
