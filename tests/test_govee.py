@@ -65,6 +65,7 @@ class GoveeSourceTest(unittest.TestCase):
 
     def test_warns_once_of_a_sensor_not_heard_from(self):
         source = self.source({KITCHEN: "sim-kitchen"}, missing=300)
+        source.due(0)  # named from the start
         source.heard(OTHER, broadcast(19.0, 35.0, 60), -80, now=290)
         source.due(310)
         self.assertEqual(len(self.warnings), 1)
@@ -81,9 +82,36 @@ class GoveeSourceTest(unittest.TestCase):
 
     def test_waits_to_warn_until_it_has_listened_long_enough(self):
         source = self.source({KITCHEN: "sim-kitchen"}, missing=300)
-        source.started = 100.0
-        source.due(200)
+        source.started = None  # not listening yet
+        source.due(0)
+        source.due(1000)
         self.assertEqual(self.warnings, [])
+        source.started = 1000.0
+        source.due(1299)
+        self.assertEqual(self.warnings, [])
+        source.due(1300)
+        self.assertEqual(len(self.warnings), 1)
+
+    def test_gives_a_sensor_added_to_the_house_file_its_full_time(self):
+        rooms = {KITCHEN: "sim-kitchen"}
+        source = self.source(rooms, missing=300)
+        source.due(0)
+        for t in range(0, 1000, 10):
+            source.heard(KITCHEN, broadcast(21.5, 40.2, 88), -70, now=t)
+        rooms[OTHER] = "sim-office"  # added long after listening started
+        source.due(400)
+        source.due(699)
+        self.assertEqual(self.warnings, [])
+        source.due(700)
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn(repr(OTHER), self.warnings[0])
+        self.assertNotIn(repr(KITCHEN), self.warnings[0])
+        del rooms[OTHER]  # taken out, then named again: its time starts over
+        source.due(710)
+        rooms[OTHER] = "sim-office"
+        source.due(720)
+        source.due(1019)
+        self.assertEqual(len(self.warnings), 1)
 
     def test_knows_whether_a_rooms_sensor_was_heard_lately(self):
         source = self.source({KITCHEN.lower(): "sim-kitchen"})
