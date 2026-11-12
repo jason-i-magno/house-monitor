@@ -146,9 +146,12 @@ class Fixture:
     comes up out of the ground through. So is an attic vent, high on the wall, in a gable over the top floor's
     ceiling, say: its box, its slats across it, shown only with the whole house, as the roof is.
 
-    A litter box is a Litter-Robot, say: its base, and its globe over it, its entry on the side away from the wall
-    it stands against, or nearest it, or in a corner at the end of its longer side. whisker names the Litter-Robot it is, as the Whisker app shows it: signed in to Whisker, its state
-    comes from that robot (whisker.py), and until then from the simulator.
+    A litter box is a Litter-Robot, say: its base, and its globe over it, its entry on the side it faces: faces,
+    else away from the wall it stands against, or nearest it, or in a corner at the end of its longer side. One in
+    a cabinet made to look like furniture is drawn as the cabinet instead, in its finish: two doors on the side
+    it faces, and at one end of that side, cabinet, the left or right as you face it, a column of two open shelves
+    the cat goes in by. whisker names the Litter-Robot it is, as the Whisker app shows it: signed in to Whisker,
+    its state comes from that robot (whisker.py), and until then from the simulator.
     """
 
     name: str
@@ -164,11 +167,18 @@ class Fixture:
     known: bool = False
     against: tuple[str, ...] = ()
     whisker: str | None = None
+    faces: str | None = None  # the side a litter box faces, its entry or its cabinet's doors
+    cabinet: str | None = None  # in a cabinet: the end of its front, "left" or "right", its shelves the cat goes in by are
 
     def __post_init__(self):
         _check(self.kind, FIXTURES, "a fixture's kind")
-        if self.whisker is not None and self.kind != "litter box":
-            raise ValueError(f"{self.name} names a Litter-Robot, so it's a litter box, not a {self.kind}")
+        for field, value in (("names a Litter-Robot", self.whisker), ("faces a side", self.faces), ("is in a cabinet", self.cabinet)):
+            if value is not None and self.kind != "litter box":
+                raise ValueError(f"{self.name} {field}, so it's a litter box, not a {self.kind}")
+        if self.faces is not None:
+            _check(self.faces, SIDES, "the side a litter box faces")
+        if self.cabinet is not None:
+            _check(self.cabinet, ("left", "right"), "the end of a litter box's cabinet its shelves are at")
         _check(self.finish, FINISHES, "a fixture's finish")
         if self.kind in ("fireplace", "half wall") and self.room is None:
             raise ValueError(f"{self.name} is a {self.kind}, so it's in a room")
