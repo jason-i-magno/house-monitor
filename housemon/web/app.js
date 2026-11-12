@@ -5,6 +5,7 @@
 const STALE_AFTER = 5 * 60;
 // The percent of a robot vacuum part's life left at which its card says to replace or clean it.
 const PART_LOW = 15;
+const SQUARE_FEET = 10.7639; // in a square meter, as a vacuum reports the area it's cleaned
 const RANGES = [
   { label: "6 h", hours: 6 },
   { label: "24 h", hours: 24 },
@@ -206,6 +207,8 @@ function vacuumCard(vacuum) {
     el("h3", {}, vacuum.name),
     el("p", { class: "temp" }, el("span", { class: "value" }, "–"), el("span", { class: "unit" }, "% battery")),
     el("p", { class: "humidity doing" }),
+    el("p", { class: "meta progress", hidden: "" }),
+    el("div", { class: "gauge", "aria-hidden": "true", hidden: "" }, el("span")),
     el("ul", { class: "notes" }),
     el("p", { class: "meta updated-at" }),
     el("p", { class: "stale", hidden: "" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), el("span")),
@@ -233,6 +236,19 @@ function updateVacuums(now) {
     unit.hidden = vacuum.battery == null;
     // An error says so in words, with the warning icon beside them, as does each note.
     doing.replaceChildren(...(vacuum.error ? [el("span", { class: "icon", "aria-hidden": "true" }, "⚠")] : []), vacuum.state);
+    // A clean underway: how far along, in words and a gauge, how long and how much it's cleaned, as far as it says.
+    const [progress, gauge] = [".progress", ".gauge"].map((s) => vacuum.card.querySelector(s));
+    const clean = vacuum.clean;
+    const done = clean ? [
+      ...(clean.progress != null ? [`${clean.progress}% done`] : []),
+      ...(clean.minutes != null ? [`${clean.minutes} min`] : []),
+      ...(clean.area != null ? [`${Math.round(clean.area * SQUARE_FEET)} sq ft`] : []),
+    ] : [];
+    progress.hidden = !clean;
+    progress.replaceChildren(...(clean && !done.length ? ["Cleaning"] : done)
+      .flatMap((text, i) => [i ? " · " : "", el("span", { class: "nowrap" }, text)]));
+    gauge.hidden = clean?.progress == null;
+    gauge.firstElementChild.style.width = `${Math.min(100, Math.max(0, clean?.progress ?? 0))}%`;
     const said = vacuumNotes(vacuum);
     if (notes.dataset.said !== said.join("\n")) { // only when they change, as this runs every second
       notes.dataset.said = said.join("\n");

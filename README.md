@@ -61,7 +61,7 @@ The rest of the house stays simulated. The page's **Hide simulated** button, bes
 
 ## MOVA vacuums
 
-A MOVA robot vacuum can have a card of its own on the page, with what it's doing (vacuuming, returning to its dock, charging, an error) and its battery, and what needs looking at: an error or warning in words, as "Wheels are suspended", what's wrong at its dock (its water tanks, dust bag and detergent), and the parts it counts down that are at 15% or less, the brushes, filter and mop pads to replace and the sensors and wheels to clean. Sign in once; it asks for your MOVAhome region (us, eu, cn, sg, ru or in), email and password:
+A MOVA robot vacuum can have a card of its own on the page, with what it's doing (vacuuming, returning to its dock, charging, an error) and its battery; while it's cleaning, how far along it is, with how long it's been at it and how much it's cleaned; and what needs looking at: an error or warning in words, as "Wheels are suspended", what's wrong at its dock (its water tanks, dust bag and detergent), and the parts it counts down that are at 15% or less, the brushes, filter and mop pads to replace and the sensors and wheels to clean. Sign in once; it asks for your MOVAhome region (us, eu, cn, sg, ru or in), email and password:
 
 ```sh
 python3 -m housemon --mova-sign-in
@@ -95,7 +95,7 @@ source ──► Hub ──► Store (SQLite)
   - `GET /api/history?hours=24`: bucketed history.
   - `GET /api/stream`: a Server-Sent Events stream with one JSON reading per message, and a `vacuum` event with what a robot vacuum is doing whenever it says.
 - **Page** (`web/`):
-  - Room cards grouped by floor, and a card for each robot vacuum, with its battery, what it's doing and what needs looking at. A card is flagged if its room, or vacuum, goes 5 minutes without a reading.
+  - Room cards grouped by floor, and a card for each robot vacuum, with its battery, what it's doing, how far along a clean is, and what needs looking at. A card is flagged if its room, or vacuum, goes 5 minutes without a reading.
   - A house map: a floor plan of each level, or a 3D view of the house you can drag, or turn with shift and the arrow keys, to turn and tilt, from any side, above or below, with each room colored by its temperature on a gradient (blue colder, red warmer, through gray at a comfortable 68 °F) and the outside temperature in its corner and as the tint of its background. Its detailed view shows the house as it looks, with its doors, windows, vents, appliances, closets, roof and yard: whole from outside, or cut away to any level, and zoomed with the scroll wheel, about the pointer, with the + and − keys, or in on whatever you double-click, and panned by dragging with shift or the right button held, or with two fingers on a touch screen. The button beside the views makes the map full screen.
   - Temperature and humidity charts for 6 hours to 30 days, with a hover or keyboard readout and a table view. Unheated spaces like the garage get a temperature chart of their own. Click a room in a chart's legend to hide or show its line.
   - Light and dark mode follow the system setting.

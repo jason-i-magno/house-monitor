@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 from housemon import mova
-from housemon.readings import Vacuum, VacuumPart
+from housemon.readings import Vacuum, VacuumClean, VacuumPart
 
 EMAIL, PASSWORD = "someone@example.com", "hunter2"
 BASE = "http://mova.test:13267"
@@ -190,6 +190,26 @@ class SignInTest(unittest.TestCase):
         self.assertEqual(len(asked), len(mova.WANTED))
         self.assertLessEqual(len(asked), 15)  # one request, as a vacuum takes up to 15 properties at a time
 
+    def test_a_clean_underway_says_how_far_along_it_is(self):
+        account = self.sign_in()
+        self.cloud.values["1234"] = {(2, 1): 1, (3, 1): 80, (4, 7): 1, (4, 63): 42, (4, 2): 12, (4, 3): 17}
+        before = len(self.cloud.calls)
+        self.assertEqual(account.status(VACUUM, 1000.0).clean, VacuumClean(42, 12, 17))
+        commands = [json.loads(c[2])["data"]["params"] for c in self.cloud.calls[before:]]
+        self.assertEqual(len(commands), 2)  # the usual request, then one for how far along it is
+        self.assertEqual([(p["siid"], p["piid"]) for p in commands[1]], [(4, 63), (4, 2), (4, 3)])
+        # Paused partway is still a clean underway, and a vacuum that doesn't say how far along it is says the rest.
+        self.cloud.values["1234"] = {(2, 1): 3, (3, 1): 80, (4, 7): 6, (4, 2): 12, (4, 3): 17}
+        self.assertEqual(account.status(VACUUM, 1000.0).clean, VacuumClean(None, 12, 17))
+
+    def test_no_clean_underway_asks_nothing_more(self):
+        account = self.sign_in()
+        for task in (0, 20):  # none, or patrolling, which isn't cleaning
+            self.cloud.values["1234"] = {(2, 1): 13, (3, 1): 100, (4, 7): task, (4, 63): 0}
+            before = len(self.cloud.calls)
+            self.assertIsNone(account.status(VACUUM, 1000.0).clean)
+            self.assertEqual(len(self.cloud.calls) - before, 1)
+
     def test_a_warning_is_said_but_isnt_an_error(self):
         account = self.sign_in()
         self.cloud.values["1234"] = {(2, 1): 6, (2, 2): 121, (3, 1): 90}
@@ -257,6 +277,13 @@ class SignInTest(unittest.TestCase):
             mova.sign_in_interactively(self.path, ask=lambda prompt: next(answers), ask_secret=lambda prompt: PASSWORD,
                                        send=self.cloud.send, base=BASE)
         self.assertIn("    Clean water tank is low\n    life left: filter 13%\n", out.getvalue())
+        self.cloud.values["1234"] = {(2, 1): 1, (3, 1): 80, (4, 7): 1, (4, 63): 42, (4, 2): 12, (4, 3): 17}
+        out = io.StringIO()
+        answers = iter(["", EMAIL])
+        with unittest.mock.patch("sys.stdout", out):
+            mova.sign_in_interactively(self.path, ask=lambda prompt: next(answers), ask_secret=lambda prompt: PASSWORD,
+                                       send=self.cloud.send, base=BASE)
+        self.assertIn("    cleaning: 42% done, 12 min, 183 sq ft\n", out.getvalue())
         self.assertEqual(json.loads(self.path.read_text())["cloud"], "us")
 
 

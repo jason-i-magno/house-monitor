@@ -310,6 +310,18 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .stale .icon { margin-right: 4px; color: var(--status-warning); }
 .doing .icon { margin-right: 4px; color: var(--status-warning); }
 
+/* A vacuum's clean underway: how far along, and a gauge of it, as a litter box's drawer has. */
+.vacuum .progress { margin-top: 4px; }
+.vacuum .gauge {
+  height: 6px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--grid);
+}
+.vacuum .gauge span { display: block; height: 100%; border-radius: 3px; background: var(--text-secondary); }
+.room.is-stale .progress, .room.is-stale .gauge { opacity: 0.45; }
+
 /* A vacuum's notes: its error, its dock and its parts running low, each with the warning icon. */
 .notes {
   margin: 6px 0 0;
