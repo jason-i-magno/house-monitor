@@ -119,6 +119,19 @@ node tools/shot.mjs --view detailed --level Main --top --room Kitchen kitchen.pn
 
 `scan.mjs` builds the detailed view without a browser or server. `shot.mjs` needs Chromium (`$CHROME`, or one on the PATH or from Playwright); its options are listed at the top of the file.
 
+## Cloud service
+
+A Go service in `cloud/` is the cloud side of house-monitor, in progress: a house sends it readings in batches, it keeps them in Postgres, and it serves each house's page, the same page as above, at `/houses/<id>/`. Sending a batch again stores nothing twice, so a house can retry until it hears back. It needs Go 1.27 or newer and Postgres:
+
+```sh
+podman run -d --name housecloud-db -e POSTGRES_PASSWORD=dev -p 127.0.0.1:5432:5432 docker.io/library/postgres:18-alpine
+export DATABASE_URL=postgres://postgres:dev@127.0.0.1:5432/postgres
+go run ./cloud/cmd/housecloud house add -id example -name "Example house" -public   # prints the house's token
+go run ./cloud/cmd/housecloud serve -listen 127.0.0.1:8080 -default-house example
+```
+
+A house sends what `python3 -m housemon --dump` prints with `PUT /houses/<id>/api/house`, and its readings with `POST /houses/<id>/api/readings`, as `{"readings": [...]}`, each with `Authorization: Bearer <token>`. Only a house added with `-public` can be read, as there's no signing in yet.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
