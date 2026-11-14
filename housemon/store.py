@@ -1,4 +1,4 @@
-"""SQLite storage for readings."""
+"""SQLite storage for readings, numbered in the order they're stored, for the uplink to send them in."""
 
 import sqlite3
 import threading
@@ -9,6 +9,7 @@ from .readings import Reading
 
 TABLE = """
 CREATE TABLE IF NOT EXISTS readings (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
     sensor_id TEXT NOT NULL,
     ts REAL NOT NULL,
     temperature_c REAL NOT NULL,
@@ -16,10 +17,12 @@ CREATE TABLE IF NOT EXISTS readings (
     battery INTEGER,
     rssi INTEGER,
     simulated INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (sensor_id, ts)
-) WITHOUT ROWID
+    UNIQUE (sensor_id, ts)
+)
 """
 INDEX = "CREATE INDEX IF NOT EXISTS readings_by_time ON readings (ts)"
+# How far each house in the cloud service the uplink sends to has got: the seq of the last reading it took.
+UPLINK = "CREATE TABLE IF NOT EXISTS uplink (url TEXT PRIMARY KEY, sent INTEGER NOT NULL)"
 
 COLUMNS = "sensor_id, ts, temperature_c, humidity, battery, rssi, simulated"
 
@@ -29,6 +32,14 @@ class Store:
 
     Sensors broadcast far more often than room temperatures change, so the
     live view gets every reading and the database a thinned-out history.
+
+    Each reading stored gets the next seq, never reused (AUTOINCREMENT), so the
+    uplink can send them in the order they were stored and remember how far it
+    got as one number. Not by their time: a reading can be stored after a newer
+    one, as an ecobee sensor's, polled every 3 minutes, is after the
+    simulator's, and a cursor of times would pass it by. One connection writes,
+    so seqs are committed in order, and a reading can't turn up later behind
+    the cursor.
     """
 
     def __init__(self, path: str | Path, min_interval: float = 60.0):
@@ -38,11 +49,12 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute(TABLE)
         self._db.execute(INDEX)
+        self._db.execute(UPLINK)
         notnull = {name: notnull for _, name, _, notnull, *_ in self._db.execute("PRAGMA table_info(readings)")}
         if "simulated" not in notnull:
             self._mark_simulated()
-        if notnull["humidity"]:
-            self._allow_no_humidity()
+        if notnull["humidity"] or "seq" not in notnull:
+            self._rebuild()
         self._last_stored = dict(self._db.execute("SELECT sensor_id, MAX(ts) FROM readings GROUP BY sensor_id"))
 
     def _mark_simulated(self) -> None:
@@ -57,20 +69,24 @@ class Store:
             self._db.execute("ROLLBACK")
             raise
 
-    def _allow_no_humidity(self) -> None:
-        """Let a reading have no humidity, as a sensor that reads only temperature gives, in a database from before
-        that was allowed: its table rebuilt with the column nullable, every reading kept, all or nothing."""
+    def _rebuild(self) -> None:
+        """Rebuild the table as TABLE has it, every reading kept, all or nothing, in a database from before a reading
+        could have no humidity, as a sensor that reads only temperature gives, or before readings were numbered: those
+        it has numbered in time order."""
         self._db.execute("BEGIN")
         try:
             self._db.execute("ALTER TABLE readings RENAME TO readings_before")
             self._db.execute(TABLE)
-            self._db.execute(f"INSERT INTO readings ({COLUMNS}) SELECT {COLUMNS} FROM readings_before")
+            self._db.execute(f"INSERT INTO readings ({COLUMNS}) SELECT {COLUMNS} FROM readings_before ORDER BY ts, sensor_id")
             self._db.execute("DROP TABLE readings_before")  # and its index, which went with it
             self._db.execute(INDEX)
             self._db.execute("COMMIT")
         except BaseException:
             self._db.execute("ROLLBACK")
             raise
+        # The old table's pages are free now, but still in the file, which would look twice its size until new
+        # readings filled them.
+        self._db.execute("VACUUM")
 
     def close(self) -> None:
         with self._lock:
@@ -109,6 +125,25 @@ class Store:
                 " JOIN (SELECT sensor_id, MAX(ts) AS ts FROM readings GROUP BY sensor_id) USING (sensor_id, ts)"
             ).fetchall()
         return {row[0]: Reading(*row[:6], simulated=bool(row[6])) for row in rows}
+
+    def unsent(self, url: str, limit: int) -> list[tuple[int, Reading]]:
+        """Up to `limit` readings the house at url hasn't taken yet, in the order they were stored, each with its seq,
+        to mark it sent with (mark_sent)."""
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT seq, {COLUMNS} FROM readings"
+                " WHERE seq > (SELECT coalesce(max(sent), 0) FROM uplink WHERE url = ?) ORDER BY seq LIMIT ?",
+                (url, limit),
+            ).fetchall()
+        return [(row[0], Reading(*row[1:7], simulated=bool(row[7]))) for row in rows]
+
+    def mark_sent(self, url: str, seq: int) -> None:
+        """Note that the house at url has taken every reading up to seq, so they aren't sent to it again."""
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO uplink (url, sent) VALUES (?, ?) ON CONFLICT (url) DO UPDATE SET sent = max(sent, excluded.sent)",
+                (url, seq),
+            )
 
     def history(self, since: float, bucket: float, simulated: bool = True) -> dict[str, list[list[float]]]:
         """Readings since `since`, averaged into `bucket`-second buckets, but the simulator's unless `simulated`.

@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import ecobee, govee, mova, whisker
+from . import ecobee, govee, mova, uplink, whisker
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -68,6 +68,19 @@ def main(argv: list[str] | None = None) -> None:
         "--mova-sign-in", action="store_true", help="sign in to MOVAhome, save the sign-in to --mova, list its vacuums, and exit"
     )
     parser.add_argument(
+        "--uplink",
+        type=Path,
+        default=Path("data") / "uplink.json",
+        help="the house in the cloud service (cloud/) and its token: with it, the house and its readings are sent there"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--uplink-sign-in",
+        action="store_true",
+        help="set up the uplink: ask for the house's URL in the cloud service and its token, check it, save it to --uplink,"
+        " and exit",
+    )
+    parser.add_argument(
         "--govee-scan",
         action="store_true",
         help="listen for Govee H5075 sensors over Bluetooth, list those heard with their readings, and exit (needs bleak)",
@@ -91,6 +104,12 @@ def main(argv: list[str] | None = None) -> None:
             mova.sign_in_interactively(args.mova)
         except (mova.MovaError, OSError) as e:
             raise SystemExit(f"Couldn't sign in to MOVAhome: {e}") from None
+        return
+    if args.uplink_sign_in:
+        try:
+            uplink.sign_in_interactively(args.uplink)
+        except uplink.UplinkError as e:
+            raise SystemExit(f"Couldn't set up the uplink: {e}") from None
         return
 
     house_file = houses.HouseFile(args.house)
@@ -185,6 +204,15 @@ def main(argv: list[str] | None = None) -> None:
     if vacuums:
         poller = mova.MovaSource(mova.Account(args.mova))
         collectors.append(threading.Thread(target=poller.run, args=(hub.publish_vacuum, stop), name="mova", daemon=True))
+    # Set up, the uplink sends the house, as it is when each round starts, and the readings the store keeps.
+    def house_now() -> dict:
+        refresh()
+        return house_json(source.sensors, source.areas, source.details)
+
+    sending = args.uplink.exists()
+    if sending:
+        sender = uplink.Uplink(args.uplink, store, house_now)
+        collectors.append(threading.Thread(target=sender.run, args=(stop,), name="uplink", daemon=True))
     for collector in collectors:
         collector.start()
     file = Path(house.__file__).resolve()
@@ -201,6 +229,11 @@ def main(argv: list[str] | None = None) -> None:
         sources += f", Govee sensors ({', '.join(sorted(govee_rooms(), key=str.casefold))})"
     if vacuums:
         sources += ", MOVA vacuums"
+    if sending:
+        try:
+            sources += f", sending to {uplink.Target.load(args.uplink).url}"
+        except uplink.UplinkError:
+            sources += f", sending as {args.uplink} says once it can be read"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
     try:
         server.serve_forever()
