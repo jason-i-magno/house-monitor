@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // How long a room can go without a reading before its card says so. Real
@@ -12,13 +13,16 @@ const RANGES = [
   { label: "7 d", hours: 24 * 7 },
   { label: "30 d", hours: 24 * 30 },
 ];
+/** @type {Metric} */
 const TEMPERATURE = { unit: "°F", index: 1, value: (c) => c * 9 / 5 + 32, digits: 1, minSpan: 4 };
+/** @type {Metric} */
 const HUMIDITY = { unit: "%", index: 2, value: (h) => h, digits: 0, minSpan: 10 };
 // Each chart's measure and rooms. Unheated spaces, like the garage, and the
 // outside get their own temperature chart, since their range would flatten the
 // rooms' lines.
 // A chart with no rooms is hidden. A room whose sensor reads only temperature,
 // its latest reading with no humidity, is left out of the humidity chart.
+/** @type {{title: string, metric: Metric, rooms: (sensor: Room) => boolean}[]} */
 const CHARTS = [
   { title: "Temperature", metric: TEMPERATURE, rooms: (sensor) => sensor.heated },
   { title: "Temperature outside and in unheated spaces", metric: TEMPERATURE, rooms: (sensor) => !sensor.heated },
@@ -41,6 +45,7 @@ const TEMP_STOPS = [59.5, 62.5, 65.5, 68.5, 71.5, 74.5, 77.5];
 const TEMP_TICKS = [60, 64, 68, 72, 76];
 // The two inks for a label on a room's color, sRGB from 0 to 1: white and near-black.
 const INKS = { "#ffffff": [1, 1, 1], "#0b0b0b": [11 / 255, 11 / 255, 11 / 255] };
+/** @type {{id: MapView, label: string}[]} */
 const MAP_VIEWS = [
   { id: "plan", label: "Floor plan" },
   { id: "3d", label: "3D" },
@@ -53,6 +58,109 @@ const MAP_KEY_ZOOM = 1.25; // times the detailed view zooms in, or out, for a pr
 // Where to try a room's label on a face of its box, as fractions across it: the middle first.
 const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
 
+// --- Types: the page's own (the house as the server sends it is in model.js) ---
+
+/** @typedef {Sensor & {latest: Reading | null, card: HTMLElement}} Room a sensor, its newest reading and its card */
+/** @typedef {{name: string, where: string | null, latest: LitterBoxState | null, card: HTMLElement}} LitterBox */
+/** @typedef {Vacuum & {card: HTMLElement}} VacuumCard */
+/** @typedef {[number, number, number | null]} HistoryPoint a bucket's time, temperature in °C and humidity */
+/**
+ * Every room's history, from /api/history: its range, its buckets' length in seconds, and each room's points.
+ * @typedef {{since: number, until: number, bucket: number, series: Record<string, HistoryPoint[]>}} HistoryData
+ */
+/**
+ * A chart's measure: its unit, its place in a history point, and its value from the sensors' own units.
+ * @typedef {{unit: string, index: 1 | 2, value: (v: number) => number, digits: number, minSpan: number}} Metric
+ */
+/** @typedef {[number, number]} ChartPoint a time and a value */
+/**
+ * @typedef {{sensor: Room, index: number, color: string, dash: string, points: ChartPoint[], gap: number}} ChartSeries
+ */
+/**
+ * What a chart last drew, for its readout.
+ * @typedef {{
+ *   since: number, until: number, x: (t: number) => number, y: (v: number) => number,
+ *   m: {top: number, right: number, bottom: number, left: number}, width: number, series: ChartSeries[],
+ *   crosshair: SVGLineElement, hoverDots: SVGGElement,
+ * }} ChartLayout
+ */
+/**
+ * @typedef {{
+ *   title: string, metric: Metric, figure: HTMLElement, svg: SVGSVGElement, plot: HTMLDivElement,
+ *   tooltip: HTMLDivElement, legend: HTMLUListElement, details: HTMLDetailsElement, tableWrap: HTMLDivElement,
+ *   rooms: (sensor: Room) => boolean, hidden: Set<string>, layout: ChartLayout | null, hoverTime: number | null,
+ * }} Chart
+ */
+/** @typedef {{x: number, y: number, width: number, height: number}} MapRect in px on the map */
+/** @typedef {[number, number]} Spot a point on the map, in px */
+/**
+ * A room's or area's box on the map, one piece of its plan, in feet: without plans, a made-up one in a row.
+ * @typedef {{
+ *   place: Room | Area, sensor: Room | null, name: string, floor: string, x: number, y: number, width: number,
+ *   depth: number, elevation: number, height: number, drop?: [Side, number] | null, sides?: Record<Side, number>,
+ * }} HouseBox
+ */
+/** @typedef {(x: number, y: number, z: number) => Spot} Project a point in feet, onto the map */
+/**
+ * A face of a room's box in the 3D view: its corners on the map, its middle in feet, how squarely it faces the viewer,
+ * and how much darker it's shaded.
+ * @typedef {{points: Spot[], center: [number, number, number], facing: number, shade: number}} Face
+ */
+/**
+ * A place's first box, the spots on the map for its label, best first, and its top's middle.
+ * @typedef {[HouseBox, Spot[], Spot]} LabelSpots
+ */
+/** @typedef {[HouseBox & {sensor: Room}, Spot[], Spot]} RoomSpots a room's, as opposed to an area's */
+/**
+ * The floor plan's or 3D view's layout: its height, where each room is for its readout, and its focus outline.
+ * @typedef {{
+ *   height: number, anchors: Record<string, MapRect>, outlines: Record<string, string[]>, focus: SVGGElement,
+ *   keys?: undefined, item?: undefined, highlight?: undefined, centerOf?: undefined, pick?: undefined,
+ *   anchorOf?: undefined,
+ * }} RoomsLayout
+ */
+/**
+ * The layout the map last drew: the floor plan's or 3D view's, or the detailed view's (drawModel, in model.js).
+ * @typedef {RoomsLayout | (ModelLayout & {anchors?: undefined, outlines?: undefined, focus?: undefined})} MapLayout
+ */
+/**
+ * The detailed view's layout once it's drawn, not a note in its place, as it is once a part's been picked or anchored.
+ * @typedef {ModelLayout & Required<Pick<ModelLayout, "item" | "centerOf">>} DrawnModelLayout
+ */
+/** @typedef {{x: number, y: number, apart: number}} Fingers two pointers' middle, and how far apart */
+/**
+ * A drag on the map: two fingers panning and pinching, or one pointer turning and tilting it, or panning it.
+ * @typedef {{fingers: Fingers, moved: boolean} | {
+ *   fingers?: undefined, x: number, y: number, last: {x: number, y: number}, angle: number, tilt: number,
+ *   touch: boolean, pan: boolean, moved: boolean,
+ * }} MapDrag
+ */
+/**
+ * The house map's elements, the layout it last drew, a drag on it, and the detailed view's WebGL, camera and the
+ * part under the pointer.
+ * @typedef {{
+ *   figure: HTMLElement, svg: SVGSVGElement, canvas: HTMLCanvasElement, note: HTMLParagraphElement,
+ *   plot: HTMLDivElement, tooltip: HTMLDivElement, outside: HTMLDivElement, views: HTMLDivElement,
+ *   full: HTMLButtonElement, cuts: HTMLDivElement, coverage: HTMLDivElement, turns: HTMLDivElement,
+ *   list: HTMLDetailsElement, listWrap: HTMLDivElement, layout: MapLayout | null,
+ *   drag: MapDrag | null, pointers: Map<number, {x: number, y: number}>, gl?: ReturnType<typeof modelGL>,
+ *   camera?: ReturnType<typeof modelCamera> & {base: number}, pointer?: {key: string, x: number, y: number} | null,
+ * }} HouseMap
+ */
+/** @typedef {"plan" | "3d" | "model"} MapView */
+/**
+ * @typedef {{
+ *   sensors: Room[], hideSimulated: boolean, litterBoxes: LitterBox[], vacuums: VacuumCard[], areas: Area[],
+ *   details: Details | null, wall: number | null, hours: number, history: HistoryData | null, charts: Chart[],
+ *   historyRequest: number, map: HouseMap, mapView: MapView, mapAngle: number, mapFull: boolean, mapTilt: number,
+ *   mapFocus: string | null, modelCut: string, modelTrees: boolean, modelSeason: Season,
+ *   modelCoverage: boolean, modelCoverageBy: Measure,
+ *   modelScene: ReturnType<typeof modelScene> | null, modelZoom: number | null, modelTarget: number[] | null,
+ *   tempStops: number[][] | null,
+ * }} State
+ */
+
+/** @type {State} */
 const state = {
   // [{id, name, floor, plan, latest, reading, card}], in house order; a plan is a list of pieces for an L. latest is
   // the newest reading, and reading the one shown: null while it's the simulator's and those are hidden.
@@ -69,7 +177,7 @@ const state = {
   history: null, // {since, until, bucket, series: {sensor_id: [[ts, temperature_c, humidity], ...]}}
   charts: [],
   historyRequest: 0,
-  map: null, // the house map's elements, and the layout it last drew
+  map: /** @type {HouseMap} */ (/** @type {unknown} */ (null)), // the house map's elements, and the layout it last drew
   mapView: "plan",
   mapAngle: MAP_HOME.angle, // degrees the 3D view is turned, from looking at the front
   mapFull: false, // the map filling the screen
@@ -88,19 +196,25 @@ const state = {
 
 // --- DOM helpers ---------------------------------------------------------
 
+/**
+ * @template {keyof HTMLElementTagNameMap} K
+ * @param {K} tag @param {Record<string, string | number>} [attrs] @param {...(Node | string)} children
+ */
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
-  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
   node.append(...children);
   return node;
 }
 
+/** @template {keyof SVGElementTagNameMap} K @param {K} tag @param {Record<string, string | number>} [attrs] */
 function svg(tag, attrs = {}) {
   const node = document.createElementNS(SVG_NS, tag);
-  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
   return node;
 }
 
+/** @param {number} i */
 function seriesColor(i) {
   return i < SERIES_SLOTS ? `var(--series-${i + 1})` : "var(--series-other)";
 }
@@ -108,12 +222,14 @@ function seriesColor(i) {
 // The stroke-dasharray for room i's line at this width. Round caps add half
 // the width to each end of a dash, so dashes are drawn that much shorter and
 // gaps that much longer.
+/** @param {number} i @param {number} width */
 function seriesDash(i, width) {
   const pattern = i < SERIES_SLOTS ? [] : OTHER_DASHES[(i - SERIES_SLOTS) % OTHER_DASHES.length];
   if (!pattern.length) return "none";
   return pattern.map((v, k) => (k % 2 ? v + width : Math.max(v - width, 0.01))).join(" ");
 }
 
+/** @param {number} i */
 function lineKey(i) {
   const key = svg("svg", { class: "key", width: 20, height: 3, "aria-hidden": "true" });
   key.append(svg("line", {
@@ -129,10 +245,12 @@ function lineKey(i) {
   return key;
 }
 
+/** @param {number} celsius */
 function fahrenheit(celsius) {
   return celsius * 9 / 5 + 32;
 }
 
+/** @param {number} seconds */
 function ago(seconds) {
   if (seconds < 60) return `${Math.max(0, Math.round(seconds))} s ago`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
@@ -140,6 +258,7 @@ function ago(seconds) {
   return `${Math.floor(seconds / 86400)} d ago`;
 }
 
+/** @param {number} seconds */
 function duration(seconds) {
   return ago(seconds).replace(" ago", "");
 }
@@ -148,15 +267,18 @@ function duration(seconds) {
 
 // Whether a room is hidden: its newest reading made up by the simulator, while those are hidden. A room read from
 // a sensor stays, its history without what the simulator made up before.
+/** @param {Room} sensor */
 function hiddenRoom(sensor) {
   return state.hideSimulated && Boolean(sensor.latest?.simulated);
 }
 
+/** @param {Room} sensor */
 function showReading(sensor) {
   sensor.reading = hiddenRoom(sensor) ? null : sensor.latest ?? null;
 }
 
 // Hide or show the simulator's readings: their rooms' cards, values on the map, lines and history in the charts.
+/** @param {boolean} hide */
 function setHideSimulated(hide) {
   state.hideSimulated = hide;
   try {
@@ -171,13 +293,13 @@ function setHideSimulated(hide) {
 }
 
 function renderSimulatedToggle() {
-  const button = document.getElementById("simulated");
+  const button = /** @type {HTMLButtonElement} */ (document.getElementById("simulated"));
   button.setAttribute("aria-pressed", String(state.hideSimulated));
   button.onclick = () => setHideSimulated(!state.hideSimulated);
 }
 
 function renderRooms() {
-  const root = document.getElementById("rooms");
+  const root = /** @type {HTMLElement} */ (document.getElementById("rooms"));
   root.replaceChildren();
   for (const floor of new Set(state.sensors.map((s) => s.floor))) {
     const grid = el("div", { class: "room-grid" });
@@ -200,6 +322,7 @@ function renderRooms() {
 
 // A robot vacuum's card: its battery, what it's doing, its notes, and when the server last heard. Not a room, so no
 // line key.
+/** @param {VacuumCard} vacuum */
 function vacuumCard(vacuum) {
   vacuum.card = el(
     "article",
@@ -218,6 +341,7 @@ function vacuumCard(vacuum) {
 
 // What a vacuum's card says to look at: its error or warning, what's wrong at its dock, and its parts running low,
 // the lowest first.
+/** @param {Vacuum} vacuum */
 function vacuumNotes(vacuum) {
   const parts = (vacuum.parts ?? [])
     .filter((part) => part.left <= PART_LOW)
@@ -228,16 +352,20 @@ function vacuumNotes(vacuum) {
   return [...(vacuum.problem ? [vacuum.problem] : []), ...(vacuum.dock ?? []), ...parts];
 }
 
+/** @param {number} now */
 function updateVacuums(now) {
   for (const vacuum of state.vacuums) {
-    const [value, unit, doing, notes, updatedAt, stale] = [".value", ".unit", ".doing", ".notes", ".updated-at", ".stale"]
-      .map((s) => vacuum.card.querySelector(s));
-    value.textContent = vacuum.battery ?? "–";
+    const [value, unit, doing, notes, updatedAt, stale] = /** @type {HTMLElement[]} */ (
+      [".value", ".unit", ".doing", ".notes", ".updated-at", ".stale"].map((s) => vacuum.card.querySelector(s))
+    );
+    value.textContent = String(vacuum.battery ?? "–");
     unit.hidden = vacuum.battery == null;
     // An error says so in words, with the warning icon beside them, as does each note.
     doing.replaceChildren(...(vacuum.error ? [el("span", { class: "icon", "aria-hidden": "true" }, "⚠")] : []), vacuum.state);
     // A clean underway: how far along, in words and a gauge, how long and how much it's cleaned, as far as it says.
-    const [progress, gauge] = [".progress", ".gauge"].map((s) => vacuum.card.querySelector(s));
+    const [progress, gauge] = /** @type {HTMLElement[]} */ (
+      [".progress", ".gauge"].map((s) => vacuum.card.querySelector(s))
+    );
     const clean = vacuum.clean;
     const done = clean ? [
       ...(clean.progress != null ? [`${clean.progress}% done`] : []),
@@ -248,7 +376,7 @@ function updateVacuums(now) {
     progress.replaceChildren(...(clean && !done.length ? ["Cleaning"] : done)
       .flatMap((text, i) => [i ? " · " : "", el("span", { class: "nowrap" }, text)]));
     gauge.hidden = clean?.progress == null;
-    gauge.firstElementChild.style.width = `${Math.min(100, Math.max(0, clean?.progress ?? 0))}%`;
+    /** @type {HTMLElement} */ (gauge.firstElementChild).style.width = `${Math.min(100, Math.max(0, clean?.progress ?? 0))}%`;
     const said = vacuumNotes(vacuum);
     if (notes.dataset.said !== said.join("\n")) { // only when they change, as this runs every second
       notes.dataset.said = said.join("\n");
@@ -260,18 +388,19 @@ function updateVacuums(now) {
     const isStale = age > STALE_AFTER;
     vacuum.card.classList.toggle("is-stale", isStale);
     stale.hidden = !isStale;
-    stale.lastElementChild.textContent = `No update for ${duration(age)}`;
+    /** @type {Element} */ (stale.lastElementChild).textContent = `No update for ${duration(age)}`;
   }
 }
 
+/** @param {Vacuum} vacuum */
 function onVacuum(vacuum) {
   const known = state.vacuums.find((v) => v.id === vacuum.id);
   if (!known) {
-    state.vacuums.push(vacuum);
+    state.vacuums.push(/** @type {VacuumCard} */ (vacuum)); // its card made just below
     renderRooms();
     return;
   }
-  if (known.name !== vacuum.name) known.card.querySelector("h3").textContent = vacuum.name;
+  if (known.name !== vacuum.name) /** @type {HTMLElement} */ (known.card.querySelector("h3")).textContent = vacuum.name;
   Object.assign(known, vacuum);
   updateRooms();
   known.card.classList.remove("updated");
@@ -279,6 +408,7 @@ function onVacuum(vacuum) {
   known.card.classList.add("updated");
 }
 
+/** @param {Room} sensor @param {number} i */
 function roomCard(sensor, i) {
   sensor.card = el(
     "article",
@@ -299,8 +429,9 @@ function updateRooms() {
     const card = sensor.card;
     const reading = sensor.reading;
     card.hidden = hiddenRoom(sensor);
-    const [value, humidity, updatedAt, device, stale] = [".value", ".humidity", ".updated-at", ".device", ".stale"]
-      .map((s) => card.querySelector(s));
+    const [value, humidity, updatedAt, device, stale] = /** @type {HTMLElement[]} */ (
+      [".value", ".humidity", ".updated-at", ".device", ".stale"].map((s) => card.querySelector(s))
+    );
     if (!reading) {
       humidity.textContent = "No readings yet";
       continue;
@@ -319,24 +450,28 @@ function updateRooms() {
     const isStale = age > STALE_AFTER;
     card.classList.toggle("is-stale", isStale);
     stale.hidden = !isStale;
-    stale.lastElementChild.textContent = `No reading for ${duration(age)}`;
+    /** @type {Element} */ (stale.lastElementChild).textContent = `No reading for ${duration(age)}`;
   }
   updateLitterBoxes(now);
   updateVacuums(now);
   // A level whose rooms are all hidden goes too, and the toggle shows only while there's something to hide.
-  for (const section of document.querySelectorAll("#rooms .floor")) {
-    section.hidden = [...section.querySelectorAll(".room")].every((card) => card.hidden);
+  for (const section of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("#rooms .floor"))) {
+    section.hidden = [.../** @type {NodeListOf<HTMLElement>} */ (section.querySelectorAll(".room"))]
+      .every((card) => card.hidden);
   }
-  document.getElementById("simulated").hidden = ![...state.sensors, ...state.litterBoxes].some((s) => s.latest?.simulated);
+  /** @type {HTMLElement} */ (document.getElementById("simulated")).hidden =
+    ![...state.sensors, ...state.litterBoxes].some((s) => s.latest?.simulated);
 }
 
 // --- Litter boxes --------------------------------------------------------
 
 // Whether a litter box is hidden: its latest state made up by the simulator, while those are hidden.
+/** @param {LitterBox} box */
 function hiddenLitterBox(box) {
   return state.hideSimulated && Boolean(box.latest?.simulated);
 }
 
+/** @param {LitterBox} box */
 function litterBoxCard(box) {
   box.card = el(
     "article",
@@ -355,13 +490,16 @@ function litterBoxCard(box) {
 
 // Each litter box's card: its status, with a warning sign when it needs seeing to, how full its drawer is, in words
 // and a gauge, and how old its state is.
+/** @param {number} now */
 function updateLitterBoxes(now) {
   for (const box of state.litterBoxes) {
     const card = box.card;
     const litter = box.latest;
     card.hidden = hiddenLitterBox(box);
-    const [icon, text, drawer, gauge, cycles, updatedAt, device, stale] = [".status .icon", ".status .text", ".drawer", ".gauge", ".cycles", ".updated-at", ".device", ".stale"]
-      .map((s) => card.querySelector(s));
+    const [icon, text, drawer, gauge, cycles, updatedAt, device, stale] = /** @type {HTMLElement[]} */ (
+      [".status .icon", ".status .text", ".drawer", ".gauge", ".cycles", ".updated-at", ".device", ".stale"]
+        .map((s) => card.querySelector(s))
+    );
     if (!litter) {
       text.textContent = "No state yet";
       continue;
@@ -370,7 +508,7 @@ function updateLitterBoxes(now) {
     text.textContent = litter.text;
     drawer.textContent = `Drawer ${Math.round(litter.drawer)}% full`;
     gauge.hidden = false;
-    gauge.firstElementChild.style.width = `${Math.min(Math.max(litter.drawer, 0), 100)}%`;
+    /** @type {HTMLElement} */ (gauge.firstElementChild).style.width = `${Math.min(Math.max(litter.drawer, 0), 100)}%`;
     const age = now - litter.ts;
     updatedAt.textContent = litter.status === "OFFLINE" && litter.seen ? `Last seen ${ago(now - litter.seen)}` : `Updated ${ago(age)}`;
     cycles.textContent = `${litter.cycles} ${litter.cycles === 1 ? "cycle" : "cycles"} since emptied`;
@@ -380,12 +518,13 @@ function updateLitterBoxes(now) {
     const isStale = age > STALE_AFTER;
     card.classList.toggle("is-stale", isStale);
     stale.hidden = !isStale;
-    stale.lastElementChild.textContent = `No update for ${duration(age)}`;
+    /** @type {Element} */ (stale.lastElementChild).textContent = `No update for ${duration(age)}`;
   }
 }
 
 // A litter box's readout, below its name and kind in the detailed view's: its status, drawer and cycles, and how old
 // they are.
+/** @param {LitterBox} box */
 function litterBoxReadout(box) {
   const litter = hiddenLitterBox(box) ? null : box.latest;
   if (!litter) return [el("div", { class: "time" }, "No state yet")];
@@ -402,6 +541,7 @@ function litterBoxReadout(box) {
   return rows;
 }
 
+/** @param {LitterBoxState} litter */
 function onLitterBox(litter) {
   const box = state.litterBoxes.find((b) => b.name === litter.name);
   if (!box) return;
@@ -412,6 +552,7 @@ function onLitterBox(litter) {
 
 // --- Charts --------------------------------------------------------------
 
+/** @param {(typeof CHARTS)[number]} chart */
 function createChart({ title, metric, rooms }) {
   const plot = el("div", { class: "plot" });
   const tooltip = el("div", { class: "tooltip", hidden: "" });
@@ -433,10 +574,12 @@ function createChart({ title, metric, rooms }) {
     "aria-label": `${title} by room. Arrow keys step through the readings; the table below lists them all.`,
   });
   plot.append(root, tooltip);
+  /** @type {string[]} */
   let hidden = [];
   try {
-    hidden = JSON.parse(localStorage.getItem(HIDDEN_ROOMS_KEY))?.[title] ?? [];
+    hidden = JSON.parse(localStorage.getItem(HIDDEN_ROOMS_KEY) ?? "{}")?.[title] ?? [];
   } catch {}
+  /** @type {Chart} */
   const chart = {
     title, metric, figure, svg: root, plot, tooltip, legend, details, tableWrap,
     rooms: (sensor) => rooms(sensor) && !hiddenRoom(sensor), // but rooms whose made-up readings are hidden
@@ -459,6 +602,7 @@ function createChart({ title, metric, rooms }) {
 }
 
 // Whether a room's line is drawn in a chart: the chart has it, and it isn't hidden.
+/** @param {Chart} chart @param {Room} sensor */
 function shown(chart, sensor) {
   return chart.rooms(sensor) && !chart.hidden.has(sensor.id);
 }
@@ -466,6 +610,7 @@ function shown(chart, sensor) {
 // Each room keeps its house-wide color, whichever charts it's in. Its legend
 // entry is a button that hides or shows its line, and the last button hides
 // or shows them all, so one room can be followed alone.
+/** @param {Chart} chart */
 function renderLegend(chart) {
   chart.figure.hidden = !state.sensors.some(chart.rooms);
   const entries = state.sensors.flatMap((sensor, i) => {
@@ -484,14 +629,16 @@ function renderLegend(chart) {
 }
 
 // Updated in place, so a button keeps its focus.
+/** @param {Chart} chart */
 function updateLegend(chart) {
-  for (const button of chart.legend.querySelectorAll("button[data-sensor]")) {
-    button.setAttribute("aria-pressed", String(!chart.hidden.has(button.dataset.sensor)));
+  for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (chart.legend.querySelectorAll("button[data-sensor]"))) {
+    button.setAttribute("aria-pressed", String(!chart.hidden.has(/** @type {string} */ (button.dataset.sensor))));
   }
   const anyHidden = state.sensors.some((s) => chart.rooms(s) && chart.hidden.has(s.id));
-  chart.legend.querySelector(".all").textContent = anyHidden ? "Show all" : "Hide all";
+  /** @type {HTMLButtonElement} */ (chart.legend.querySelector(".all")).textContent = anyHidden ? "Show all" : "Hide all";
 }
 
+/** @param {Chart} chart @param {string[]} ids @param {boolean} hide */
 function hideRooms(chart, ids, hide) {
   for (const id of ids) {
     if (hide) chart.hidden.add(id);
@@ -506,6 +653,7 @@ function hideRooms(chart, ids, hide) {
 }
 
 // A clean axis covering [min, max], at least minSpan wide: [low, high, step].
+/** @param {number} min @param {number} max @param {number} minSpan */
 function niceScale(min, max, minSpan) {
   if (max - min < minSpan) {
     const middle = (min + max) / 2;
@@ -513,20 +661,23 @@ function niceScale(min, max, minSpan) {
   }
   const rough = (max - min) / 4;
   const power = 10 ** Math.floor(Math.log10(rough));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= rough);
+  const step = /** @type {number} */ ([1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= rough)); // 10 × power always is
   return [Math.floor(min / step) * step, Math.ceil(max / step) * step, step];
 }
 
 // Time ticks on local clock boundaries, as many as fit about 64px apart.
 // Midnight ticks show the date; weekly ticks fall on Mondays.
+/** @param {number} since @param {number} until @param {number} plotWidth */
 function timeTicks(since, until, plotWidth) {
   const spanHours = (until - since) / 3600;
   const stepHours = [1, 2, 3, 6, 12, 24, 48, 168].find((h) => spanHours / h <= plotWidth / 64) ?? 168;
+  /** @param {Date} d */
   const onStep = (d) => {
     if (stepHours < 24) return d.getHours() % stepHours === 0;
     if (d.getHours() !== 0) return false;
     return stepHours === 24 || (stepHours === 48 ? d.getDate() % 2 === 1 : d.getDay() === 1);
   };
+  /** @type {[number, string][]} */
   const ticks = [];
   const d = new Date(since * 1000);
   d.setMinutes(0, 0, 0);
@@ -543,6 +694,7 @@ function timeTicks(since, until, plotWidth) {
 // How long a room's line can go between points before it breaks: three of its usual steps between them (their
 // median), so it breaks where two readings in a row are missing, or three buckets if that's longer. A room read less
 // often than the history's bucket, as ecobee's are every 180 s or so, has points further apart than one.
+/** @param {ChartPoint[]} points @param {number} bucket */
 function lineGap(points, bucket) {
   const steps = points.slice(1).map((p, i) => p[0] - points[i][0]).sort((a, b) => a - b);
   return 3 * Math.max(bucket, steps[steps.length >> 1] ?? 0);
@@ -551,12 +703,15 @@ function lineGap(points, bucket) {
 // A run of points, in pixels and in time order, as a smooth curve through every one that never bends past one, so
 // a peak or dip drawn is one read: cubic Béziers with Steffen's monotone tangents, as d3's curveMonotoneX draws. Two
 // points are a straight line, and one draws nothing, as a line through it would.
+/** @param {Spot[]} points */
 function smoothPath(points) {
+  /** @param {Spot} point */
   const at = ([px, py]) => `${px.toFixed(1)},${py.toFixed(1)}`;
   const n = points.length;
   if (n < 3) return points.map((p, i) => (i ? "L" : "M") + at(p)).join("");
   const h = points.slice(1).map((p, i) => p[0] - points[i][0]);
   const slope = h.map((dx, i) => (dx ? (points[i + 1][1] - points[i][1]) / dx : 0));
+  /** @type {number[]} */
   const m = new Array(n).fill(0); // each point's tangent
   for (let i = 1; i < n - 1; i++) {
     const p = (slope[i - 1] * h[i] + slope[i] * h[i - 1]) / (h[i - 1] + h[i] || 1);
@@ -573,6 +728,7 @@ function smoothPath(points) {
   return d;
 }
 
+/** @param {Chart} chart */
 function drawChart(chart) {
   const width = chart.plot.clientWidth;
   if (!width || !state.history) return;
@@ -582,10 +738,10 @@ function drawChart(chart) {
   const until = Date.now() / 1000;
   const since = until - state.hours * 3600;
   const series = state.sensors.map((sensor, i) => {
-    const points = (state.history.series[sensor.id] || [])
+    const points = (/** @type {HistoryData} */ (state.history).series[sensor.id] || [])
       .filter((p) => p[0] >= since && p[metric.index] != null) // a sensor that reads only temperature has no humidity
-      .map((p) => [p[0], metric.value(p[metric.index])]);
-    const gap = lineGap(points, state.history.bucket); // a longer silence breaks the line
+      .map((p) => /** @type {ChartPoint} */ ([p[0], metric.value(/** @type {number} */ (p[metric.index]))]));
+    const gap = lineGap(points, /** @type {HistoryData} */ (state.history).bucket); // a longer silence breaks the line
     return { sensor, index: i, color: seriesColor(i), dash: seriesDash(i, 2), points, gap };
   }).filter((s) => shown(chart, s.sensor)); // the scale fits the rooms shown
   const values = series.flatMap((s) => s.points.map((p) => p[1]));
@@ -602,7 +758,9 @@ function drawChart(chart) {
   }
 
   const [low, high, step] = niceScale(Math.min(...values), Math.max(...values), metric.minSpan);
+  /** @param {number} t */
   const x = (t) => m.left + ((t - since) / (until - since)) * (width - m.left - m.right);
+  /** @param {number} v */
   const y = (v) => m.top + ((high - v) / (high - low)) * (height - m.top - m.bottom);
 
   for (let k = 0; low + k * step <= high + step / 2; k++) {
@@ -621,6 +779,7 @@ function drawChart(chart) {
 
   for (const s of series) {
     // Each run of points between gaps, as a smooth curve through them.
+    /** @type {Spot[][]} */
     const runs = [];
     s.points.forEach(([t, v], i) => {
       if (i === 0 || t - s.points[i - 1][0] > s.gap) runs.push([]);
@@ -650,6 +809,7 @@ function drawChart(chart) {
   if (chart.hoverTime != null) setHover(chart, snap(chart.layout, chart.hoverTime));
 }
 
+/** @param {number} cx @param {number} cy @param {string} color */
 function dot(cx, cy, color) {
   // The surface-colored ring keeps a dot legible where it sits on other lines.
   return svg("circle", { cx, cy, r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2 });
@@ -657,6 +817,7 @@ function dot(cx, cy, color) {
 
 // --- Hover and keyboard readout ------------------------------------------
 
+/** @param {ChartPoint[]} points @param {number} t */
 function nearest(points, t) {
   let [lo, hi] = [0, points.length - 1];
   if (hi < 0) return null;
@@ -670,7 +831,9 @@ function nearest(points, t) {
 }
 
 // The data time nearest to t, across every room.
+/** @param {ChartLayout} layout @param {number} t */
 function snap(layout, t) {
+  /** @type {number | null} */
   let best = null;
   for (const s of layout.series) {
     const p = nearest(s.points, t);
@@ -679,6 +842,7 @@ function snap(layout, t) {
   return best;
 }
 
+/** @param {Chart} chart @param {PointerEvent} event */
 function pointerHover(chart, event) {
   const layout = chart.layout;
   if (!layout) return;
@@ -688,20 +852,23 @@ function pointerHover(chart, event) {
   setHover(chart, snap(layout, since + ((px - m.left) / (width - m.left - m.right)) * (until - since)));
 }
 
+/** @param {Chart} chart @param {KeyboardEvent} event */
 function keyHover(chart, event) {
   const layout = chart.layout;
   if (!layout || chart.hoverTime == null) return;
+  /** @type {Record<string, number>} */
   const moves = { ArrowLeft: -1, ArrowRight: 1 };
   if (event.key === "Escape") return setHover(chart, null);
   if (!(event.key in moves)) return;
   event.preventDefault();
-  const step = state.history.bucket * moves[event.key];
+  const step = /** @type {HistoryData} */ (state.history).bucket * moves[event.key]; // drawn, so there's history
   // Step one bucket, then snap; jump ahead if snapping lands back where we were.
   let t = snap(layout, chart.hoverTime + step);
   if (t === chart.hoverTime) t = snap(layout, chart.hoverTime + 2 * step);
   setHover(chart, t);
 }
 
+/** @param {Chart} chart @param {number | null} t */
 function setHover(chart, t) {
   chart.hoverTime = t;
   const { layout, tooltip } = chart;
@@ -717,15 +884,16 @@ function setHover(chart, t) {
     return;
   }
   const cx = layout.x(t);
-  crosshair.setAttribute("x1", cx);
-  crosshair.setAttribute("x2", cx);
+  crosshair.setAttribute("x1", String(cx));
+  crosshair.setAttribute("x2", String(cx));
   crosshair.style.display = "";
 
+  /** @type {HTMLDivElement[]} */
   const rows = [];
   layout.series.forEach((s) => {
     const p = nearest(s.points, t);
     const value = p && Math.abs(p[0] - t) <= s.gap / 2 ? p[1] : null;
-    if (value != null) hoverDots.append(dot(layout.x(p[0]), layout.y(value), s.color));
+    if (value != null) hoverDots.append(dot(layout.x(/** @type {ChartPoint} */ (p)[0]), layout.y(value), s.color));
     rows.push(el(
       "div",
       { class: "row" },
@@ -743,19 +911,22 @@ function setHover(chart, t) {
 
 // --- Table view: every charted value, without hovering --------------------
 
+/** @param {Chart} chart */
 function renderTable(chart) {
   const { metric } = chart;
   if (!state.history) return;
   const bucket = state.history.bucket;
   const since = Date.now() / 1000 - state.hours * 3600;
   const sensors = state.sensors.filter((sensor) => shown(chart, sensor));
+  /** @typedef {{t: number, values: Record<string, number>}} TableRow a bucket's time, and each room's value in it */
+  /** @type {Map<number, TableRow>} */
   const rows = new Map();
   for (const sensor of sensors) {
     for (const p of state.history.series[sensor.id] || []) {
       if (p[0] < since || p[metric.index] == null) continue;
       const key = Math.floor(p[0] / bucket);
       if (!rows.has(key)) rows.set(key, { t: p[0], values: {} });
-      rows.get(key).values[sensor.id] = metric.value(p[metric.index]);
+      /** @type {TableRow} */ (rows.get(key)).values[sensor.id] = metric.value(/** @type {number} */ (p[metric.index]));
     }
   }
   const head = el("tr", {}, el("th", {}, "Time"), ...sensors.map((s) => el("th", {}, s.name)));
@@ -777,6 +948,10 @@ function createMap() {
   const plot = el("div", { class: "plot" });
   const tooltip = el("div", { class: "tooltip", hidden: "" });
   // Each with the keys that do the same on the map, a step at a time, in its tooltip (mapKey).
+  /**
+   * @param {string} label @param {string} text @param {number | null} turn @param {number | null} tilt
+   * @param {string} [keys]
+   */
   const button = (label, text, turn, tilt, keys) => {
     const node = el("button", { type: "button", "aria-label": label, title: keys ? `${label} (${keys})` : label }, text);
     node.addEventListener("click", () => moveMap(turn, tilt));
@@ -792,6 +967,7 @@ function createMap() {
     el("span", { class: "with-mouse" }, " and tilt"),
     el("span", { class: "model-only" }, ", ", el("span", { class: "with-wheel" }, "shift-drag to pan, scroll or "), "double-click to zoom"),
   );
+  /** @param {string} label @param {string} text @param {number} factor @param {string} key */
   const zoom = (label, text, factor, key) => {
     const node = el("button", { type: "button", class: "model-only", "aria-label": label, title: `${label} (${key})` }, text);
     node.addEventListener("click", () => zoomModel(factor));
@@ -853,8 +1029,9 @@ function createMap() {
     el("div", { class: "map-foot" }, scaleLegend(), cuts, coverage, turns),
     list,
   );
+  /** @type {HouseMap} */
   const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, coverage, turns, list, listWrap, layout: null, drag: null, pointers: new Map() };
-  for (const surface of [root, canvas]) {
+  for (const surface of /** @type {(GlobalEventHandlers & Element)[]} */ ([root, canvas])) {
     surface.addEventListener("focus", () => setMapFocus(state.mapFocus ?? map.layout?.keys?.[0] ?? indoors()[0]?.id ?? null));
     surface.addEventListener("blur", () => setMapFocus(null));
     surface.addEventListener("keydown", mapKey);
@@ -870,7 +1047,7 @@ function createMap() {
       } catch {} // a pointer already gone
       const model = state.mapView === "model";
       if (model && map.pointers.size === 2) {
-        map.drag = { fingers: fingers(map.pointers), moved: true };
+        map.drag = { fingers: /** @type {Fingers} */ (fingers(map.pointers)), moved: true };
         return;
       }
       if (map.pointers.size > 1) return;
@@ -906,6 +1083,7 @@ function createMap() {
       }
     });
     // Lifting a finger of two ends their gesture; the one left does nothing until it's lifted too.
+    /** @param {PointerEvent} event */
     const lift = (event) => {
       map.pointers.delete(event.pointerId);
       const moved = map.drag?.moved;
@@ -922,7 +1100,7 @@ function createMap() {
   canvas.addEventListener("dblclick", (event) => {
     const box = canvas.getBoundingClientRect();
     const key = map.layout?.pick?.(event.clientX - box.left, event.clientY - box.top);
-    zoomModel(key ? 1.75 : 0, key && map.layout.centerOf(key)); // on nothing, back out to the whole scene
+    zoomModel(key ? 1.75 : 0, key && /** @type {DrawnModelLayout} */ (map.layout).centerOf(key)); // on nothing, back out to the whole scene
   });
   // The wheel zooms about the pointer, as does a pinch on a trackpad (a wheel with ctrl), until the end of the
   // zoom, past which the wheel scrolls the page again, so the map doesn't trap it.
@@ -947,6 +1125,7 @@ function createMap() {
 
 // The map filling the screen: the browser's own full screen where it has one for the page, else fixed over the
 // page, which stops scrolling under it, as on a phone. Its views grow to fill what its caption and controls leave.
+/** @param {boolean} on */
 async function setMapFull(on) {
   const figure = state.map.figure;
   if (on && document.fullscreenEnabled && figure.requestFullscreen) {
@@ -958,6 +1137,7 @@ async function setMapFull(on) {
   showMapFull(on);
 }
 
+/** @param {boolean} on */
 function showMapFull(on) {
   const map = state.map;
   state.mapFull = on;
@@ -976,6 +1156,7 @@ function showMapFull(on) {
 }
 
 // Two pointers' middle and how far apart they are, or null for fewer.
+/** @param {HouseMap["pointers"]} pointers @returns {Fingers | null} */
 function fingers(pointers) {
   const [a, b] = [...pointers.values()];
   return b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, apart: Math.hypot(a.x - b.x, a.y - b.y) } : null;
@@ -999,7 +1180,7 @@ function renderMapViews() {
 // The scale, coldest to warmest: the gradient the rooms are colored from
 // (drawn by the stylesheet), with temperatures below it.
 function scaleLegend() {
-  const [low, high] = [TEMP_STOPS[0], TEMP_STOPS.at(-1)];
+  const [low, high] = [TEMP_STOPS[0], /** @type {number} */ (TEMP_STOPS.at(-1))];
   const ticks = TEMP_TICKS.map((t) => el("span", { style: `left: ${((t - low) / (high - low)) * 100}%` }, String(t)));
   return el(
     "div",
@@ -1013,6 +1194,7 @@ function scaleLegend() {
 // A reading's color on the scale, from its value as shown, to a tenth: a
 // blend of the two nearest stops in OKLab, as the legend's gradient blends
 // them. With it, the ink with more APCA contrast on it, for its label.
+/** @param {Reading} reading */
 function tempColor(reading) {
   const stops = (state.tempStops ??= TEMP_STOPS.map((_, i) => {
     return oklab(getComputedStyle(document.documentElement).getPropertyValue(`--temp-${i}`).trim());
@@ -1025,12 +1207,15 @@ function tempColor(reading) {
   return { fill: `#${rgb.map((c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`, ink };
 }
 
+/** @template {string | null} E @param {Room} sensor @param {E} empty @returns {string | E} */
 function roomFill(sensor, empty) {
   return sensor.reading ? tempColor(sensor.reading).fill : empty;
 }
 
 // From "#rrggbb" to OKLab [L, a, b] (Björn Ottosson's matrices).
+/** @param {string} hex */
 function oklab(hex) {
+  /** @param {number} c */
   const linear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
   const [r, g, b] = [1, 3, 5].map((i) => linear(parseInt(hex.slice(i, i + 2), 16) / 255));
   const [l, m, s] = [
@@ -1046,12 +1231,14 @@ function oklab(hex) {
 }
 
 // From OKLab back to sRGB, each channel from 0 to 1.
+/** @param {number[]} lab */
 function srgb([L, a, b]) {
   const [l, m, s] = [
     L + 0.3963377774 * a + 0.2158037573 * b,
     L - 0.1055613458 * a - 0.0638541728 * b,
     L - 0.0894841775 * a - 1.291485548 * b,
   ].map((v) => v ** 3);
+  /** @param {number} c */
   const gamma = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
   return [
     4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
@@ -1062,7 +1249,9 @@ function srgb([L, a, b]) {
 
 // APCA 0.0.98G lightness contrast (Lc) of text on a background, both sRGB
 // from 0 to 1. Negative means light text on a dark background.
+/** @param {number[]} text @param {number[]} background */
 function apca(text, background) {
+  /** @param {number[]} rgb */
   const y = ([r, g, b]) => {
     const v = 0.2126729 * r ** 2.4 + 0.7151522 * g ** 2.4 + 0.072175 * b ** 2.4;
     return v >= 0.022 ? v : v + (0.022 - v) ** 1.414;
@@ -1073,6 +1262,7 @@ function apca(text, background) {
   return Math.abs(c) < 0.1 ? 0 : (c - Math.sign(c) * 0.027) * 100;
 }
 
+/** @param {Reading} reading */
 function isStale(reading) {
   return Date.now() / 1000 - reading.ts > STALE_AFTER;
 }
@@ -1086,16 +1276,22 @@ function indoors() {
 // each area's (with no sensor). Unless every room has a plan, each floor's
 // rooms go in a row instead, with the floors stacked in house order, and areas
 // are left out.
+/** @returns {HouseBox[]} */
 function houseBoxes() {
+  /**
+   * @type {(place: Room | Area, sensor: Room | null) =>
+   *   (plan: Omit<HouseBox, "place" | "sensor" | "name" | "floor">) => HouseBox}
+   */
   const box = (place, sensor) => (plan) => ({ place, sensor, name: place.name, floor: place.floor, ...plan });
   const rooms = indoors();
   if (rooms.every((s) => s.plan)) {
     return [
-      ...rooms.flatMap((s) => [s.plan].flat().map(box(s, s))),
+      ...rooms.flatMap((s) => [/** @type {Plans} */ (s.plan)].flat().map(box(s, s))), // every room has one
       ...state.areas.flatMap((a) => [a.plan].flat().map(box(a, null))),
     ];
   }
   const floors = [...new Set(rooms.map((s) => s.floor))];
+  /** @type {Record<string, number>} */
   const placed = {};
   return rooms.map((sensor) => {
     const k = (placed[sensor.floor] = (placed[sensor.floor] ?? -1) + 1);
@@ -1107,15 +1303,19 @@ function houseBoxes() {
 // The outline of boxes from above, grown by d, as loops of [x, y] corners:
 // the edges between covered and uncovered cells of the grid their sides
 // make, each loop going clockwise on screen.
+/** @param {Rect[]} boxes @param {number} [d] */
 function unionOutline(boxes, d = 0) {
   const rects = boxes.map((r) => [r.x - d, r.y - d, r.x + r.width + d, r.y + r.depth + d]);
   const xs = [...new Set(rects.flatMap((r) => [r[0], r[2]]))].sort((a, b) => a - b);
   const ys = [...new Set(rects.flatMap((r) => [r[1], r[3]]))].sort((a, b) => a - b);
+  /** @param {number} i @param {number} j */
   const covered = (i, j) => {
     const [x, y] = [(xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2]; // NaN, so uncovered, off the grid
     return rects.some(([x0, y0, x1, y1]) => x0 < x && x < x1 && y0 < y && y < y1);
   };
+  /** @type {Map<string, number[][]>} */
   const edges = new Map(); // from each grid corner, the outline edges leaving it
+  /** @param {number[]} from @param {number[]} to */
   const edge = (from, to) => edges.set(from.join(), [...(edges.get(from.join()) ?? []), to]);
   for (let i = 0; i < xs.length - 1; i++) {
     for (let j = 0; j < ys.length - 1; j++) {
@@ -1126,13 +1326,14 @@ function unionOutline(boxes, d = 0) {
       if (!covered(i - 1, j)) edge([i, j + 1], [i, j]);
     }
   }
+  // Every corner an edge leads to has one leaving it, as each loop closes.
   const loops = [];
   for (const start of edges.keys()) {
     const loop = [];
-    for (let at = start; edges.get(at).length; ) {
+    for (let at = start; /** @type {number[][]} */ (edges.get(at)).length; ) {
       const [i, j] = at.split(",").map(Number);
       loop.push([xs[i], ys[j]]);
-      at = edges.get(at).pop().join();
+      at = /** @type {number[]} */ (/** @type {number[][]} */ (edges.get(at)).pop()).join();
     }
     if (loop.length) loops.push(loop);
   }
@@ -1165,7 +1366,8 @@ function drawMap() {
   if (model) {
     map.layout = drawModel(width, fill);
     const by = state.modelCoverageBy === "water" ? "how much water the sprinkler heads put on them in an hour of each zone" : "how many sprinkler heads reach them";
-    const coverage = modelCoverageShown(state.modelScene) ? ` The lawn and beds are shaded by ${by}, as the key below says.` : "";
+    // drawModel has built the scene.
+    const coverage = modelCoverageShown(/** @type {Scene | NoScene} */ (state.modelScene)) ? ` The lawn and beds are shaded by ${by}, as the key below says.` : "";
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
       + `Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.${coverage}`);
   } else {
@@ -1176,7 +1378,7 @@ function drawMap() {
       + `Arrow keys step through the rooms${view === "3d" ? ", and with shift turn and tilt it" : ""}; the room cards above list every reading.`);
     map.layout = view === "3d" ? draw3d(map.svg, width, fill) : drawPlan(map.svg, width, fill);
     map.svg.setAttribute("viewBox", `0 0 ${width} ${map.layout.height}`);
-    map.svg.setAttribute("height", map.layout.height);
+    map.svg.setAttribute("height", String(map.layout.height));
   }
   renderOutside();
   drawMapFocus();
@@ -1190,7 +1392,7 @@ function drawMap() {
 function renderOutside() {
   const weather = state.mapView !== "model" && state.sensors.find((s) => s.outside && s.reading);
   state.map.svg.style.background = weather
-    ? `color-mix(in oklab, ${tempColor(weather.reading).fill} 30%, var(--surface))`
+    ? `color-mix(in oklab, ${tempColor(/** @type {Reading} */ (weather.reading)).fill} 30%, var(--surface))`
     : "";
   state.map.outside.replaceChildren(...state.sensors.filter((s) => s.outside).map((sensor) => {
     const reading = sensor.reading;
@@ -1209,13 +1411,13 @@ function renderOutside() {
 // The focused room's outline and readout. Drawn apart from the rooms, so
 // focusing one (a tap included) leaves the elements under the pointer alone.
 function drawMapFocus() {
-  const { focus, outlines, highlight } = state.map.layout;
+  const { focus, outlines, highlight } = /** @type {MapLayout} */ (state.map.layout); // once drawn
   if (highlight) {
     highlight(state.mapFocus); // the detailed view, which draws the focused part lit up
     renderMapTooltip();
     return;
   }
-  focus.replaceChildren(...(outlines[state.mapFocus] ?? []).map((points) => svg("polygon", {
+  focus.replaceChildren(...(state.mapFocus === null ? [] : outlines[state.mapFocus] ?? []).map(/** @param {string} points */ (points) => svg("polygon", {
     points,
     fill: "none",
     stroke: "var(--text-primary)",
@@ -1227,6 +1429,7 @@ function drawMapFocus() {
 
 // One plan per floor, side by side when they fit, all at the same scale,
 // inset from the edges of the map's background.
+/** @param {SVGSVGElement} root @param {number} width @param {number | null} [fill] @returns {RoomsLayout} */
 function drawPlan(root, width, fill = null) {
   const boxes = houseBoxes();
   const house = extent(boxes);
@@ -1234,6 +1437,7 @@ function drawPlan(root, width, fill = null) {
   const [gap, head, pad] = [24, 24, 12];
   // The floors in columns, as many as fit at 240 px or more each, each no taller than 300 px; or filling a height,
   // in however many columns show them largest, each centered in its place.
+  /** @param {number} columns */
   const layout = (columns) => {
     const rows = Math.ceil(floors.length / columns);
     const cell = (width - 2 * pad - gap * (columns - 1)) / columns;
@@ -1246,11 +1450,13 @@ function drawPlan(root, width, fill = null) {
   const needed = 2 * pad + rows * (head + house.depth * scale) + (rows - 1) * gap;
   const height = fill ?? needed;
   const [inset, drop] = fill ? [(cell - house.width * scale) / 2, (fill - needed) / 2] : [0, 0];
+  /** @type {[Record<string, MapRect>, Record<string, string[]>]} */
   const [anchors, outlines] = [{}, {}];
 
   floors.forEach((floor, f) => {
     const left = pad + (f % columns) * (cell + gap) + inset;
     const top = pad + Math.floor(f / columns) * (head + house.depth * scale + gap) + head + drop;
+    /** @param {HouseBox} r @returns {MapRect} */
     const place = (r) => ({
       x: left + (r.x - house.x) * scale,
       y: top + (r.y - house.y) * scale,
@@ -1262,6 +1468,7 @@ function drawPlan(root, width, fill = null) {
     // The whole house's outline, so each plan shows where its floor sits:
     // every room's edge, filled over so only the outside edge shows.
     const outline = svg("g", { "aria-hidden": "true" });
+    /** @param {MapRect} box @param {number} d */
     const grow = (box, d) => ({ x: box.x - d, y: box.y - d, width: box.width + 2 * d, height: box.height + 2 * d });
     for (const r of boxes) outline.append(svg("rect", { ...grow(place(r), 0.5), fill: "none", stroke: "var(--axis)", "stroke-width": 2 }));
     for (const r of boxes) outline.append(svg("rect", { ...grow(place(r), 0.5), fill: "var(--surface)" }));
@@ -1270,7 +1477,9 @@ function drawPlan(root, width, fill = null) {
     // The areas, then the rooms. A room's pieces are filled a little past
     // their edges, so no seam shows between them, and each room or area is
     // walled as one shape and labeled in its largest piece.
+    /** @param {number[]} point */
     const corner = ([x, y]) => `${left + (x - house.x) * scale},${top + (y - house.y) * scale}`;
+    /** @param {HouseBox[]} pieces @param {number} [d] */
     const shape = (pieces, d = 0) => unionOutline(pieces, d / scale).map((loop) => loop.map(corner).join(" "));
     const onFloor = boxes.filter((r) => r.floor === floor);
     for (const p of new Set([...onFloor.filter((r) => !r.sensor), ...onFloor.filter((r) => r.sensor)].map((r) => r.place))) {
@@ -1296,6 +1505,7 @@ function drawPlan(root, width, fill = null) {
 }
 
 // The room's name, temperature and humidity, as many as fit inside it.
+/** @param {SVGGElement} group @param {Room} sensor @param {MapRect} box */
 function roomLabel(group, sensor, box) {
   const reading = sensor.reading;
   const room = box.width - 8;
@@ -1305,9 +1515,12 @@ function roomLabel(group, sensor, box) {
     { kind: "value", text: reading ? `${fahrenheit(reading.temperature_c).toFixed(1)}°` : "–", size: 20, weight: 600 },
     { kind: "humidity", text: reading?.humidity != null ? `${Math.round(reading.humidity)}%` : "", size: 12, weight: 400 },
   ];
+  /** @param {{size: number}} line */
   const lead = (line) => Math.round(line.size * 1.3);
+  /** @param {{size: number}[]} shown */
   const total = (shown) => shown.reduce((sum, line) => sum + lead(line), 0);
   let shown = lines.filter((line) => line.text);
+  /** @param {unknown[]} shown */
   const padding = (shown) => (shown.length > 1 ? 12 : 4); // a line alone can sit closer to the walls
   for (const kind of ["humidity", "name", "value"]) {
     if (total(shown) + padding(shown) <= box.height) break;
@@ -1333,7 +1546,7 @@ function roomLabel(group, sensor, box) {
         text.remove();
         break;
       }
-      text.setAttribute("font-size", size - 1);
+      text.setAttribute("font-size", String(size - 1));
     }
     y += lead(line);
   }
@@ -1342,7 +1555,9 @@ function roomLabel(group, sensor, box) {
 // A room's name on one line if it fits, shrunk as far as 10px. Or else on
 // two lines, broken between words where the wider half is narrowest, if both
 // halves fit at full size.
+/** @param {SVGGElement} group @param {string} name @param {number} room */
 function nameLines(group, name, room) {
+  /** @param {string} text @param {number} [size] */
   const width = (text, size = 12) => {
     const node = svg("text", { "font-size": size, "font-weight": 600 });
     node.textContent = text;
@@ -1355,13 +1570,14 @@ function nameLines(group, name, room) {
   const words = name.split(" ");
   const [best] = words.slice(1)
     .map((_, k) => [words.slice(0, k + 1).join(" "), words.slice(k + 1).join(" ")])
-    .map((halves) => [halves, Math.max(...halves.map(width))])
+    .map((halves) => /** @type {[string[], number]} */ ([halves, Math.max(...halves.map(width))]))
     .sort((a, b) => a[1] - b[1]);
   return best && best[1] <= room ? best[0] : [name];
 }
 
 // The house seen from any direction, each room a box: turned by
 // state.mapAngle, and tilted by state.mapTilt from straight below to straight above.
+/** @param {SVGSVGElement} root @param {number} width @param {number | null} [fill] @returns {RoomsLayout} */
 function draw3d(root, width, fill = null) {
   const boxes = houseBoxes();
   const house = extent(boxes);
@@ -1378,6 +1594,7 @@ function draw3d(root, width, fill = null) {
   const scale = Math.min(width - 2 * pad, fill ? fill - 2 * pad : 480) / (2 * radius);
   const height = fill ?? Math.ceil(2 * radius * scale + 2 * pad);
   const [ox, oy] = [width / 2, height / 2];
+  /** @type {Project} */
   const project = (x, y, z) => {
     const [dx, dy, dz] = [x - cx, y - cy, z - cz];
     const across = dx * toward[1] - dy * toward[0];
@@ -1387,17 +1604,18 @@ function draw3d(root, width, fill = null) {
 
   const order = paintOrder(boxes, view);
   const faces = new Map(order.map((r) => [r, boxFaces(r, project, view)]));
+  /** @param {Face} face */
   const pointList = (face) => face.points.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ");
   for (const r of order) {
     const group = svg("g", r.sensor ? { "data-sensor": r.sensor.id } : {});
     const fill = r.sensor && roomFill(r.sensor, null);
-    for (const face of faces.get(r)) {
+    for (const face of /** @type {Face[]} */ (faces.get(r))) {
       const polygon = svg("polygon", { points: pointList(face), "stroke-linejoin": "round" });
       if (fill) {
         // Walls are shaded darker the more they turn away to the right.
         polygon.style.fill = face.shade ? `color-mix(in oklab, ${fill} ${100 - face.shade}%, black)` : fill;
         polygon.setAttribute("stroke", "var(--surface)");
-        polygon.setAttribute("stroke-width", 1.5);
+        polygon.setAttribute("stroke-width", "1.5");
       } else {
         // No sensor, or no reading yet: an empty frame, not a color on the scale.
         polygon.setAttribute("fill", "none");
@@ -1411,24 +1629,32 @@ function draw3d(root, width, fill = null) {
   // The focus outline goes over every room, so a hidden room shows through, but under the labels.
   const focus = svg("g", { "pointer-events": "none" });
   root.append(focus);
+  /** @type {Record<string, string[]>} */
   const outlines = {};
-  for (const r of order.filter((r) => r.sensor)) (outlines[r.sensor.id] ??= []).push(...faces.get(r).map(pointList));
+  for (const r of order.filter((r) => r.sensor)) (outlines[/** @type {Room} */ (r.sensor).id] ??= [])
+    .push(.../** @type {Face[]} */ (faces.get(r)).map(pointList));
 
   // Each label goes on the first part of the room nothing in front hides: the
   // middle of a top, then of the wall facing the viewer most, then nearer
   // their edges. A room hidden from this angle gets no label.
+  /** @type {Map<Room | Area, [HouseBox, {facing: number, at: Spot}[], Spot]>} */
   const candidates = new Map(); // for each room or area: [its first box, [{facing, at}], its top's middle]
   order.forEach((r, k) => {
-    const hiding = order.slice(k + 1).flatMap((other) => faces.get(other).map((face) => face.points));
-    const entry = candidates.get(r.place) ?? [r, [], project(...faces.get(r).at(-1).center)];
-    entry[1].push(...faces.get(r)
+    const hiding = order.slice(k + 1).flatMap((other) => /** @type {Face[]} */ (faces.get(other)).map((face) => face.points));
+    // A box shows at least one face from any angle: a wall, its top or its floor.
+    const entry = candidates.get(r.place)
+      ?? [r, [], project(.../** @type {Face} */ (/** @type {Face[]} */ (faces.get(r)).at(-1)).center)];
+    entry[1].push(.../** @type {Face[]} */ (faces.get(r))
       .flatMap((face) => LABEL_SPOTS.map(([u, v]) => ({ facing: face.facing, at: along(face.points, u, v) })))
       .filter(({ at }) => !hiding.some((polygon) => inside(at, polygon))));
     candidates.set(r.place, entry);
   });
+  /** @type {LabelSpots[]} */
   const spots = [...candidates.values()].map(([r, visible, top]) => [r, visible.sort((a, b) => b.facing - a.facing).map(({ at }) => at), top]);
-  const rooms = order.filter((r) => r.sensor).flatMap((r) => faces.get(r).map((face) => face.points));
-  const anchors = placeChips(root, spots, rooms, false) ?? placeChips(root, spots.reverse(), rooms, true);
+  const rooms = order.filter((r) => r.sensor).flatMap((r) => /** @type {Face[]} */ (faces.get(r)).map((face) => face.points));
+  // Compact, every room gets an anchor, so none is null.
+  const anchors = placeChips(root, spots, rooms, false)
+    ?? /** @type {Record<string, MapRect>} */ (placeChips(root, spots.reverse(), rooms, true));
   return { height, anchors, outlines, focus };
 }
 
@@ -1436,13 +1662,20 @@ function draw3d(root, width, fill = null) {
 // leaving out any that still collide: the readout and room cards have them.
 // Area names go last, only beside full labels, at the first of their visible
 // spots clear of the rooms and the other labels.
+/**
+ * @param {SVGSVGElement} root @param {LabelSpots[]} spots @param {Spot[][]} rooms @param {boolean} compact
+ * @returns {Record<string, MapRect> | null}
+ */
 function placeChips(root, spots, rooms, compact) {
   const layer = svg("g");
   root.append(layer);
+  /** @type {[Record<string, MapRect>, MapRect[]]} */
   const [anchors, placed] = [{}, []];
+  /** @param {MapRect} a @param {MapRect} b */
   const apart = (a, b) => a.x + a.width + 4 <= b.x || b.x + b.width + 4 <= a.x
     || a.y + a.height + 4 <= b.y || b.y + b.height + 4 <= a.y;
-  for (const [{ sensor }, [spot], top] of spots.filter(([r]) => r.sensor)) {
+  for (const [{ sensor }, [spot], top] of /** @type {RoomSpots[]} */ (spots.filter(([r]) => r.sensor))) {
+    /** @param {Spot} p @returns {MapRect} */
     const point = (p) => ({ x: p[0] - 1, y: p[1] - 1, width: 2, height: 2 });
     if (!spot) {
       anchors[sensor.id] = point(top); // the readout still points at it
@@ -1460,26 +1693,32 @@ function placeChips(root, spots, rooms, compact) {
       return null;
     }
   }
+  /** @param {MapRect} box */
   const clear = (box) => [0, 0.5, 1].every((u) => [0, 0.5, 1].every((v) => {
     return !rooms.some((polygon) => inside([box.x + u * box.width, box.y + v * box.height], polygon));
   }));
   for (const [area, visible] of compact ? [] : spots.filter(([r]) => !r.sensor)) {
     if (!visible.length) continue;
-    const [label, box] = areaLabel(layer, area.name, [0, 0]);
+    const [label, box] = /** @type {[SVGTextElement, MapRect]} */ (areaLabel(layer, area.name, [0, 0])); // with room to spare
+    /** @param {Spot} point */
     const at = ([x, y]) => ({ ...box, x: box.x + x, y: box.y + y });
     const spot = visible.find((p) => clear(at(p)) && placed.every((other) => apart(at(p), other)));
     if (!spot) {
       label.remove();
       continue;
     }
-    label.setAttribute("x", spot[0]);
-    label.setAttribute("y", spot[1]);
+    label.setAttribute("x", String(spot[0]));
+    label.setAttribute("y", String(spot[1]));
     placed.push(at(spot));
   }
   return anchors;
 }
 
 // The name of a part of the house with no sensor, in muted text; none if it won't fit.
+/**
+ * @param {SVGElement} root @param {string} name @param {Spot} at @param {number} [room]
+ * @returns {[SVGTextElement, MapRect] | [null, null]}
+ */
 function areaLabel(root, name, [x, y], room = Infinity) {
   const text = svg("text", { x, y, dy: "0.35em", "text-anchor": "middle", class: "area-name" });
   text.textContent = name;
@@ -1496,9 +1735,13 @@ function areaLabel(root, name, [x, y], room = Infinity) {
 // one on the viewer's side along it, so the higher one from above and the
 // lower from below. If two axes disagree, the boxes can't overlap on screen,
 // so their order doesn't matter, and ordering them anyway could make a cycle.
+/** @param {HouseBox[]} boxes @param {number[]} view */
 function paintOrder(boxes, view) {
+  /** @param {HouseBox} a @param {HouseBox} b */
   const behind = (a, b) => {
+    /** @type {boolean[]} */
     const votes = [];
+    /** @param {number} lo1 @param {number} hi1 @param {number} lo2 @param {number} hi2 @param {number} viewer */
     const axis = (lo1, hi1, lo2, hi2, viewer) => {
       if (viewer && hi1 <= lo2) votes.push(viewer > 0);
       else if (viewer && hi2 <= lo1) votes.push(viewer < 0);
@@ -1520,6 +1763,7 @@ function paintOrder(boxes, view) {
 // The faces of a room's box the viewer can see: the walls facing them, and
 // its top from above or its floor from below. A ceiling with a drop slopes
 // down to that wall, from its full height at the wall across from it.
+/** @param {HouseBox} r @param {Project} project @param {number[]} view */
 function boxFaces(r, project, view) {
   const [x0, x1, y0, y1] = [r.x, r.x + r.width, r.y, r.y + r.depth];
   const z0 = r.elevation;
@@ -1531,6 +1775,7 @@ function boxFaces(r, project, view) {
     { normal: [0, 1], ends: [[x0, y1], [x1, y1]] },
     { normal: [-1, 0], ends: [[x0, y0], [x0, y1]] },
   ];
+  /** @type {Face[]} */
   const faces = [];
   const across = Math.hypot(view[0], view[1]) || 1;
   for (const { normal: [nx, ny], ends: [[ax, ay], [bx, by]] } of walls) {
@@ -1565,10 +1810,12 @@ function boxFaces(r, project, view) {
 }
 
 // A point on a projected four-cornered face, u along its first edge and v up its second.
+/** @param {Spot[]} corners @param {number} u @param {number} v */
 function along([a, b, c, d], u, v) {
-  return [0, 1].map((i) => (1 - v) * ((1 - u) * a[i] + u * b[i]) + v * ((1 - u) * d[i] + u * c[i]));
+  return /** @type {Spot} */ ([0, 1].map((i) => (1 - v) * ((1 - u) * a[i] + u * b[i]) + v * ((1 - u) * d[i] + u * c[i])));
 }
 
+/** @param {Spot} point @param {Spot[]} polygon */
 function inside([px, py], polygon) {
   let hit = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -1579,6 +1826,10 @@ function inside([px, py], polygon) {
 }
 
 // A label on a surface-colored chip, so it reads whatever it sits on.
+/**
+ * @param {SVGGElement} root @param {Room} sensor @param {Spot} at @param {boolean} compact
+ * @returns {[SVGGElement, MapRect]}
+ */
 function roomChip(root, sensor, [x, y], compact) {
   const reading = sensor.reading;
   const group = svg("g", { "data-sensor": sensor.id });
@@ -1597,15 +1848,17 @@ function roomChip(root, sensor, [x, y], compact) {
   const width = Math.max(value.getComputedTextLength(), compact ? 0 : name.getComputedTextLength()) + (compact ? 12 : 16);
   const height = compact ? 22 : 38;
   const box = { x: x - width / 2, y: y - height / 2, width, height };
-  for (const [key, v] of Object.entries(box)) rect.setAttribute(key, v);
+  for (const [key, v] of Object.entries(box)) rect.setAttribute(key, String(v));
   return [group, box];
 }
 
+/** @param {number} degrees */
 function clampTilt(degrees) {
   return Math.max(-90, Math.min(90, degrees));
 }
 
 // Turn and tilt the 3D view by these degrees, or back to the first view, zoomed out, without them.
+/** @param {number | null} turn @param {number | null} tilt */
 function moveMap(turn, tilt) {
   state.mapAngle = turn == null ? MAP_HOME.angle : state.mapAngle + turn;
   state.mapTilt = tilt == null ? MAP_HOME.tilt : clampTilt(state.mapTilt + tilt);
@@ -1613,23 +1866,29 @@ function moveMap(turn, tilt) {
   drawMap();
 }
 
+/** @param {PointerEvent} event */
 function mapPointerHover(event) {
   const { layout, canvas } = state.map;
   if (layout?.pick) {
     const box = canvas.getBoundingClientRect();
     return setMapFocus(layout.pick(event.clientX - box.left, event.clientY - box.top));
   }
-  const room = event.target.closest?.("[data-sensor]");
-  setMapFocus(room ? room.dataset.sensor : null);
+  // A room's group or chip on the map, an SVG element with its sensor's id.
+  const room = /** @type {SVGElement | null | undefined} */ (/** @type {Element} */ (event.target).closest?.("[data-sensor]"));
+  setMapFocus(room ? /** @type {string} */ (room.dataset.sensor) : null);
 }
 
 // The arrow keys step through the rooms, or the detailed view's parts. With shift they turn the 3D and detailed
 // views, as the buttons below them do, a step a press: left and right turn it, up and down tilt it. Plus and
 // minus zoom the detailed view in and out, = as plus so it needs no shift, but with ctrl or cmd they're left to
 // zoom the page.
+/** @param {KeyboardEvent} event */
 function mapKey(event) {
+  /** @type {Record<string, number>} */
   const moves = { ArrowLeft: -1, ArrowRight: 1 };
+  /** @type {Record<string, [number, number]>} */
   const turns = { ArrowLeft: [-MAP_KEY_TURN, 0], ArrowRight: [MAP_KEY_TURN, 0], ArrowUp: [0, MAP_KEY_TURN], ArrowDown: [0, -MAP_KEY_TURN] };
+  /** @type {Record<string, number>} */
   const zooms = { "+": MAP_KEY_ZOOM, "=": MAP_KEY_ZOOM, "-": 1 / MAP_KEY_ZOOM, _: 1 / MAP_KEY_ZOOM };
   if (event.key === "Escape") return setMapFocus(null);
   if (event.key in zooms && state.mapView === "model" && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -1640,6 +1899,7 @@ function mapKey(event) {
     event.preventDefault();
     return moveMap(...turns[event.key]);
   }
+  /** @type {(string | null)[]} */
   const ids = state.map.layout?.keys ?? indoors().map((s) => s.id); // outside has no place to focus
   if (!(event.key in moves) || !ids.length) return;
   event.preventDefault();
@@ -1647,6 +1907,7 @@ function mapKey(event) {
   setMapFocus(ids[i < 0 ? 0 : (i + moves[event.key] + ids.length) % ids.length]);
 }
 
+/** @param {string | null} id */
 function setMapFocus(id) {
   if (id === state.mapFocus) return;
   state.mapFocus = id;
@@ -1661,9 +1922,12 @@ function renderMapTooltip() {
     tooltip.hidden = true;
     return;
   }
-  const item = sensor ? null : layout.item(state.mapFocus);
+  // Anchored, so drawn: a room in the floor plan or 3D view, or a part of the detailed view.
+  const item = sensor ? null : /** @type {DrawnModelLayout} */ (layout).item(state.mapFocus);
   const box = item && state.litterBoxes.find((b) => b.name === item.name && item.kind === MODEL_KINDS["litter box"]);
-  tooltip.replaceChildren(...(sensor ? roomReadout(sensor) : [...modelReadout(item), ...(box ? litterBoxReadout(box) : [])]));
+  tooltip.replaceChildren(...(sensor
+    ? roomReadout(sensor)
+    : [...modelReadout(/** @type {Item} */ (item)), ...(box ? litterBoxReadout(box) : [])]));
   tooltip.hidden = false;
   // Beside the room if there's room, else below it, else above it.
   const [w, h, gap] = [tooltip.offsetWidth, tooltip.offsetHeight, 8];
@@ -1672,13 +1936,14 @@ function renderMapTooltip() {
   if (left < 0) {
     left = Math.min(Math.max(0, anchor.x + (anchor.width - w) / 2), plot.clientWidth - w);
     top = anchor.y + anchor.height + gap;
-    if (top + h > layout.height) top = Math.max(0, anchor.y - h - gap);
+    if (top + h > /** @type {MapLayout} */ (layout).height) top = Math.max(0, anchor.y - h - gap);
   }
   tooltip.style.left = `${left}px`;
-  tooltip.style.top = `${Math.max(0, Math.min(top, layout.height - h))}px`;
+  tooltip.style.top = `${Math.max(0, Math.min(top, /** @type {MapLayout} */ (layout).height - h))}px`;
 }
 
 // A room's readout: its name and level, latest reading and how old it is.
+/** @param {Room} sensor */
 function roomReadout(sensor) {
   const reading = sensor.reading;
   const rows = [el("div", { class: "head" }, el("strong", {}, sensor.name), " ", el("span", {}, `${sensor.floor} level`))];
@@ -1713,13 +1978,18 @@ function drawAll() {
 
 async function loadSensors() {
   const response = await fetch("/api/sensors");
+  /** @type {House} */
   const house = await response.json();
+  // Each sensor becomes a room, its latest reading set just below and its card made in renderRooms, as each vacuum's
+  // and litter box's card is.
   ({
     sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null,
     vacuums: state.vacuums = [],
-  } = house);
+  } = /** @type {House & {sensors: Room[], vacuums: VacuumCard[]}} */ (house));
   state.litterBoxes = Object.entries(house.litter_boxes ?? {}).map(([name, latest]) => {
-    return { name, where: state.details?.fixtures.find((f) => f.name === name)?.room ?? null, latest };
+    return /** @type {LitterBox} */ ({
+      name, where: state.details?.fixtures.find((f) => f.name === name)?.room ?? null, latest,
+    });
   });
   for (const sensor of state.sensors) {
     sensor.latest = sensor.reading;
@@ -1735,6 +2005,7 @@ async function loadHistory() {
   const request = ++state.historyRequest;
   state.charts.forEach((c) => c.figure.classList.add("is-loading"));
   const response = await fetch(`/api/history?hours=${state.hours}${state.hideSimulated ? "&simulated=0" : ""}`);
+  /** @type {HistoryData} */
   const history = await response.json();
   if (request !== state.historyRequest) return; // a newer range was picked meanwhile
   state.history = history;
@@ -1745,6 +2016,7 @@ async function loadHistory() {
   }
 }
 
+/** @param {Reading} reading */
 function onReading(reading) {
   const sensor = state.sensors.find((s) => s.id === reading.sensor_id);
   if (!sensor) return;
@@ -1770,10 +2042,11 @@ function onReading(reading) {
   }
 }
 
+/** @param {"live" | "reconnecting"} status @param {string} label */
 function setConnection(status, label) {
-  const node = document.getElementById("connection");
+  const node = /** @type {HTMLElement} */ (document.getElementById("connection"));
   node.className = `connection is-${status}`;
-  node.querySelector(".label").textContent = label;
+  /** @type {HTMLElement} */ (node.querySelector(".label")).textContent = label;
 }
 
 function connect() {
@@ -1795,7 +2068,7 @@ function connect() {
 }
 
 function renderRanges() {
-  const group = document.getElementById("ranges");
+  const group = /** @type {HTMLElement} */ (document.getElementById("ranges"));
   group.replaceChildren(...RANGES.map(({ label, hours }) => {
     const button = el("button", { type: "button", "aria-pressed": String(hours === state.hours) }, label);
     button.addEventListener("click", () => {
@@ -1815,7 +2088,7 @@ async function main() {
     const saved = Number(localStorage.getItem("house-monitor-hours"));
     if (RANGES.some((r) => r.hours === saved)) state.hours = saved;
     const view = localStorage.getItem("house-monitor-map-view");
-    if (MAP_VIEWS.some((v) => v.id === view)) state.mapView = view;
+    if (MAP_VIEWS.some((v) => v.id === view)) state.mapView = /** @type {MapView} */ (view);
     state.modelCut = localStorage.getItem("house-monitor-model-cut") ?? state.modelCut; // checked when drawn
     state.modelTrees = localStorage.getItem("house-monitor-model-trees") !== "false";
     state.modelCoverage = localStorage.getItem("house-monitor-model-coverage") === "true";
@@ -1824,11 +2097,11 @@ async function main() {
   } catch {}
   renderSimulatedToggle();
   state.map = createMap();
-  document.getElementById("map").append(state.map.figure);
+  /** @type {HTMLElement} */ (document.getElementById("map")).append(state.map.figure);
   renderMapViews();
   renderRanges();
   state.charts = CHARTS.map(createChart);
-  document.getElementById("charts").append(...state.charts.map((c) => c.figure));
+  /** @type {HTMLElement} */ (document.getElementById("charts")).append(...state.charts.map((c) => c.figure));
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     state.tempStops = null; // the theme's colors
     state.modelScene = null;
@@ -1842,8 +2115,8 @@ async function main() {
     drawMapSoon(); // the readout's age, and rooms going stale
   }, 1000);
   setInterval(drawAll, 60 * 1000); // slide the time axis even when no reading arrives
-  new ResizeObserver(drawAll).observe(document.getElementById("charts"));
-  new ResizeObserver(drawMapSoon).observe(document.getElementById("map"));
+  new ResizeObserver(drawAll).observe(/** @type {HTMLElement} */ (document.getElementById("charts")));
+  new ResizeObserver(drawMapSoon).observe(/** @type {HTMLElement} */ (document.getElementById("map")));
   showMapFull(false);
   document.addEventListener("fullscreenchange", () => showMapFull(document.fullscreenElement === state.map.figure));
   document.addEventListener("keydown", (event) => {

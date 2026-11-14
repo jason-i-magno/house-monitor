@@ -102,7 +102,13 @@ source ──► Hub ──► Store (SQLite)
 
 Readings are stored in the sensors' own units (°C and percent relative humidity); the page converts to °F.
 
-## Checking the map
+## Checking the page
+
+The page's JavaScript is typed in JSDoc comments, so it runs as it's written, with no build, and TypeScript checks it, with Node:
+
+```sh
+npx -p typescript@7.0.2 tsc -p .   # type-check app.js and model.js, as tsconfig.json sets
+```
 
 Two tools in `tools/` help check changes to the house map, with Node 22 or newer:
 

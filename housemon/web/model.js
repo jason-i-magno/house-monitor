@@ -1,4 +1,297 @@
+// @ts-check
 "use strict";
+
+// --- The house as /api/sensors sends it -------------------------------------
+//
+// Types for the type checker (tsconfig.json), in JSDoc, so the page needs no
+// build: the house as server.house_json sends it, which this file and app.js
+// share. What each field means is in the dataclass it comes from, readings.py's
+// and details.py's, by the same name.
+
+/** @typedef {"left" | "right" | "back" | "front"} Side */
+/**
+ * A place's plan, or one piece of a place in pieces, with its share of the wall on each side (layout.py).
+ * @typedef {{
+ *   x: number, y: number, width: number, depth: number, elevation: number, height: number,
+ *   drop: [Side, number] | null, sides: Record<Side, number>,
+ * }} Plan
+ */
+/** @typedef {Plan | Plan[]} Plans a place's plan, a list of its pieces for one in pieces, as an L */
+/**
+ * @typedef {{
+ *   sensor_id: string, ts: number, temperature_c: number, humidity: number | null,
+ *   battery: number | null, rssi: number | null, simulated: boolean,
+ * }} Reading
+ */
+/**
+ * A sensor and the room it's in: an outside one has no plan, and without plans for all of them, none has one.
+ * @typedef {{
+ *   id: string, name: string, floor: string, plan: Plans | null, heated: boolean, outside: boolean, reading: Reading | null,
+ * }} Sensor
+ */
+/** @typedef {{name: string, floor: string, plan: Plans}} Area */
+/**
+ * A litter box's state, with what its status says and whether it needs seeing to.
+ * @typedef {{
+ *   name: string, ts: number, status: string, cycles: number, drawer: number, seen: number | null, simulated: boolean,
+ *   text: string, attention: boolean,
+ * }} LitterBoxState
+ */
+/** @typedef {{name: string, left: number, replace: boolean}} VacuumPart */
+/** @typedef {{progress: number | null, minutes: number | null, area: number | null}} VacuumClean */
+/**
+ * @typedef {{
+ *   id: string, name: string, state: string, battery: number | null, ts: number, error: boolean, problem: string | null,
+ *   dock: string[], parts: VacuumPart[], clean: VacuumClean | null,
+ * }} Vacuum
+ */
+/** @typedef {[number, number]} Point a point on the plan, x and y in feet */
+/** @typedef {"white" | "steel" | "black" | "grille" | "brick" | "stone" | "wood" | "mirror" | "trim" | "window-border"} Finish */
+/**
+ * A door, window or vent in a room's wall, or a shed's, its offset and width resolved to numbers.
+ * @typedef {{
+ *   name: string, kind: "door" | "window" | "sliding door" | "garage door" | "opening" | "vent", room: string,
+ *   wall: Side, offset: number, width: number, height: number, sill: number, known: boolean, finish: Finish | null,
+ *   panes: [number, number] | null,
+ * }} Opening
+ */
+/**
+ * @typedef {{
+ *   name: string, room: string, x: number, y: number, width: number, depth: number, door: Side, known: boolean,
+ *   finish: Finish | null,
+ * }} Closet
+ */
+/**
+ * A fixture, its x and y resolved against the walls it stands against.
+ * @typedef {{
+ *   name: string,
+ *   kind: "appliance" | "vent" | "plumbing" | "fireplace" | "half wall" | "railing" | "backflow" | "valve box"
+ *     | "controller" | "gas meter" | "attic vent" | "litter box",
+ *   room: string | null, x: number, y: number, width: number, depth: number, height: number, lift: number,
+ *   finish: Finish, known: boolean, against: Side[], whisker: string | null, faces: Side | null,
+ *   cabinet: "left" | "right" | null,
+ * }} Fixture
+ */
+/**
+ * @typedef {{
+ *   name: string, kind: "porch" | "patio" | "deck" | "driveway" | "walk" | "bed", x: number, y: number,
+ *   width: number, depth: number, height: number,
+ *   paving: "concrete" | "flagstone" | "wood" | "gravel" | "mulch" | "carpet" | "dirt",
+ *   cutouts: [number, number, number, number][], outline: Point[] | null, railings: Side[],
+ *   edging: "stone" | "brick" | null, known: boolean,
+ * }} Ground
+ */
+/** @typedef {"green" | "light" | "dark"} Leaves */
+/** @typedef {"yellow" | "orange" | "red"} Fall */
+/**
+ * @typedef {{
+ *   name: string, kind: "deciduous" | "evergreen", x: number, y: number, height: number, spread: number, ring: number,
+ *   edging: "stone" | "brick" | null, crown: "round" | "vase" | "spreading" | "pyramid", clearance: number | null,
+ *   lean: [number, number], leaves: Leaves, fall: Fall, flowers: "white" | "pink" | null,
+ *   blooms: "spring" | "summer", stems: number, fork: number, trunk: number | null, bark: "brown" | "gray" | "white",
+ *   known: boolean,
+ * }} Tree
+ */
+/**
+ * @typedef {{
+ *   name: string, points: Point[], height: number, width: number, leaves: Leaves, fall: Fall, known: boolean,
+ * }} Hedge
+ */
+/** @typedef {{x: number, y: number, arc: [number, number] | null, radius: number | null}} Head */
+/**
+ * A zone of sprinklers, each head a Head, as the server sends it even for one given as just its point.
+ * @typedef {{
+ *   name: string, heads: Head[], kind: "rotor" | "spray", radius: number | null, known: boolean,
+ * }} Sprinklers
+ */
+/**
+ * @typedef {{
+ *   name: string, x: number, y: number, width: number, depth: number, wall: number, peak: number, ridge: "x" | "y",
+ *   known: boolean,
+ * }} Shed
+ */
+/**
+ * A fence, each gate its middle on the fence and its width.
+ * @typedef {{
+ *   name: string, points: Point[], height: number, gates: [number, number, number][], kind: "wood" | "chain link",
+ *   known: boolean,
+ * }} Fence
+ */
+/**
+ * A flight of steps, its x and y resolved against the walls it stands against.
+ * @typedef {{
+ *   name: string, x: number, y: number, width: number, depth: number, bottom: number, top: number, up: Side,
+ *   room: string | null, paving: Ground["paving"], count: number | null, banisters: Side[], banister: number,
+ *   known: boolean, against: Side[],
+ * }} Steps
+ */
+/**
+ * @typedef {{
+ *   name: string, x: number, y: number, known: boolean, kind: "pipe" | "chimney", width: number | null,
+ *   height: number | null, finish: Finish | null,
+ * }} RoofVent
+ */
+/** @typedef {{room: string, wall: Side, finish: "siding" | "paneling" | "stone"}} Cladding */
+/**
+ * @typedef {{
+ *   name: string, x: number, y: number, width: number, depth: number, eave: number, peak: number,
+ *   ridge: "x" | "y" | null, drop: Side | null, underside: number | null, outline: Point[] | null, known: boolean,
+ * }} Roof
+ */
+/** @typedef {{name: string, down: Side, between: [number, number], fall: number, known: boolean}} Slope */
+/**
+ * What the detailed view draws (details.py's Details), each house color light and dark.
+ * @typedef {{
+ *   lot: Point[], grade: number, slopes: Slope[], example: boolean,
+ *   finishes: Partial<Record<string, {floor: "carpet" | "wood" | "tile" | "concrete" | "dirt", walls: "paint" | "drywall" | "concrete"}>>,
+ *   colors: Partial<Record<string, [string, string]>>, claddings: Cladding[], roofs: Roof[], roof_vents: RoofVent[],
+ *   openings: Opening[], closets: Closet[], fixtures: Fixture[], grounds: Ground[], trees: Tree[], hedges: Hedge[],
+ *   sheds: Shed[], fences: Fence[], steps: Steps[], sprinklers: Sprinklers[], window_border: number,
+ * }} Details
+ */
+/**
+ * The house, from /api/sensors: its sensors with their latest readings, areas, details, the walls' thickness in feet,
+ * each litter box's latest state by name (null before its first), and what each robot vacuum is doing.
+ * @typedef {{
+ *   sensors: Sensor[], areas: Area[], details: Details | null, wall: number,
+ *   litter_boxes: Record<string, LitterBoxState | null>, vacuums: Vacuum[],
+ * }} House
+ */
+
+// --- The detailed view's own types: the scene modelScene builds, and the geometry drawn from it
+
+/** @typedef {number[]} Vec a point or a direction in feet: x and y on the plan, and in 3D, z up */
+/** @typedef {number[]} RGB a color, its red, green and blue from 0 to 1 */
+/** @typedef {Record<string, RGB>} ModelColors the color of each of MODEL_TOKENS */
+/** @typedef {{top: RGB, bottom: RGB, sides: RGB[]}} Faces a solid's colors, its top's, bottom's and each side's */
+/** @typedef {RGB | Faces} Colors a solid's colors: one for all, or for each face */
+/** @typedef {{x: number, y: number, width: number, depth: number}} Rect on the plan, from its back-left corner */
+/** @typedef {Rect & {elevation: number, height: number, drop?: [Side, number] | null}} Box a plan, up to its ceiling */
+/** @typedef {{axis: "x" | "y", line: number, k: number, a: number, b: number}} SideLine a plan's side (SIDE_LINES) */
+/** @typedef {"spring" | "summer" | "fall" | "winter"} Season */
+/** @typedef {"heads" | "water"} Measure what the sprinklers' coverage shows: heads reaching each spot, or water */
+/** @typedef {Omit<Details, "example"> & {example?: boolean}} SceneDetails the details, or for none, a lawn */
+/**
+ * A place's piece in the scene: its ceiling's height at x, y (top), whether it stands on the ground, how far down its
+ * walls go (base), the stretches of each side that have walls, and how far each side's wall stands in its plan (slab).
+ * @typedef {Plan & {
+ *   top: (x: number, y: number) => number, ground: boolean, base: number, walls: Record<string, number[][]>,
+ *   slab: Record<string, number[]>,
+ * }} Piece
+ */
+/**
+ * A room or area in the scene: its sensor, if it's a room, its pieces, and its floor's and walls' finishes.
+ * @typedef {{
+ *   key: string, name: string, floor: string, plan: Plans, sensor?: Sensor, pieces: Piece[],
+ *   finish: {floor: string, walls: string}, item: Item,
+ * }} Place
+ */
+/**
+ * A part of the scene, as picking, the readout and the list know it: its box, x0, y0, z0, x1, y1, z1, and the level
+ * it's on, if any; whether it shows only with the whole house, or comes and goes with the trees; for a room or area,
+ * its place; and for sprinklers, the ids of a zone's heads, the point it's centered on, and what it waters.
+ * @typedef {{
+ *   id: number, key: string, name: string, kind: string, group?: string | null, where?: string, known?: boolean,
+ *   level: number | null, bbox: number[], whole?: boolean, tree?: boolean, place?: Place, sensor?: Sensor,
+ *   center?: Vec, water?: Water, ids?: number[], falls?: string,
+ * }} Item
+ */
+/**
+ * A sprinkler head in the scene: the top of the ground it stands in, its arc as its first direction and how far round,
+ * how far it throws, whether that's a guess, and the inches of water an hour it puts on its area.
+ * @typedef {{
+ *   x: number, y: number, top: number, arc: number[] | null, radius: number, guessed: boolean, rate: number,
+ * }} SceneHead
+ */
+/** @typedef {{heads: SceneHead[], of: string}} Water what a zone or head waters, and whose it is */
+/** @typedef {Opening & SideLine & {s0: number, s1: number, z0: number, z1: number, item: Item}} WallOpening */
+/**
+ * A door, window or vent in a room's wall: its place and the piece it's in, whether it goes through the wall, and
+ * whether to the outside, and the closet it's the doors of, if one's set into the wall there.
+ * @typedef {WallOpening & {
+ *   place: Place, piece: Piece, through: boolean, exterior: boolean, closet?: SceneCloset,
+ * }} SceneOpening
+ */
+/**
+ * A closet or fixture as the house file places it.
+ * @typedef {{
+ *   name: string, room: string | null, x: number, y: number, width: number, depth: number, known: boolean,
+ *   lift?: number, height?: number,
+ * }} Thing
+ */
+/**
+ * A closet or fixture placed: its place and piece, if it's in a room, and its box on the plan and up from its floor.
+ * @template T
+ * @typedef {T & {
+ *   place: Place | null, piece: Piece | null, x0: number, y0: number, x1: number, y1: number, z0: number, z1: number,
+ *   item: Item,
+ * }} InRoom
+ */
+/** @typedef {InRoom<Closet> & {place: Place, piece: Piece}} SceneCloset a closet, always in a room */
+/** @typedef {InRoom<Fixture>} SceneFixture */
+/** @typedef {Ground & {low: number, top: number, item: Item}} SceneGround standing from the lowest ground under it */
+/** @typedef {Tree & {ground: number, item: Item}} SceneTree with the height of the ground at its trunk */
+/** @typedef {Hedge & {item: Item}} SceneHedge */
+/** @typedef {Shed & {low: number, base: number, item: Item, openings: WallOpening[]}} SceneShed its floor at base */
+/**
+ * A fence, each gate its middle and width.
+ * @typedef {Omit<Fence, "gates"> & {item: Item, gates: {x: number, y: number, width: number, item: Item}[]}} SceneFence
+ */
+/** @typedef {Omit<Sprinklers, "heads"> & {heads: SceneHead[], item: Item, headItems: Item[]}} SceneSprinklers */
+/** @typedef {Steps & {item: Item}} SceneSteps */
+/** @typedef {Slope & {item: Item}} SceneSlope */
+/** @typedef {Roof & {item: Item, color?: undefined}} SceneRoof */
+/**
+ * A shed's roof, a gable in its own color.
+ * @typedef {Rect & {
+ *   ridge: "x" | "y", eave: number, peak: number, item: Item, color: RGB, outline?: undefined, underside?: undefined,
+ *   drop?: undefined,
+ * }} ShedRoof
+ */
+/** @typedef {RoofVent & {width: number, height: number, z: number, item: Item}} SceneRoofVent on a roof at z */
+/** @typedef {{box: number[], w: number, h: number, counts: Uint8Array}} Coverage a grid of the sprinklers' coverage */
+/**
+ * What the detailed view draws: everything in the house and around it, placed, each part an item; the levels, each
+ * floor at its highest; how low the scene goes, how far it reaches from its center, and how far in the house fits.
+ * @typedef {{
+ *   details: SceneDetails, places: Place[], pieces: [Place, Piece][], openings: SceneOpening[],
+ *   closets: SceneCloset[], fixtures: SceneFixture[], grounds: SceneGround[], trees: SceneTree[],
+ *   hedges: SceneHedge[], sheds: SceneShed[], fences: SceneFence[], steps: SceneSteps[],
+ *   sprinklers: SceneSprinklers[], roofs: SceneRoof[], roofVents: SceneRoofVent[], lot: Point[], lawn: Item,
+ *   slopes: SceneSlope[], cladding: Record<string, string>, items: Item[], levels: [string, number][],
+ *   bottom: number, radius: number, center: Vec, houseCenter: Vec, fit: number, colors: ModelColors, wall: number,
+ *   coverage?: Map<string, Coverage>, note?: undefined,
+ * }} Scene
+ */
+/**
+ * In place of a scene, why there's none, with none of a scene's things.
+ * @typedef {{
+ *   note: "The detailed view needs every room's plan.", levels?: undefined, trees?: undefined, hedges?: undefined,
+ *   sprinklers?: undefined, fit?: undefined,
+ * }} NoScene
+ */
+/**
+ * The detailed view's layout, as drawModel returns it: its height, the keys arrow keys step through, each one's item,
+ * and how to light one up, find its middle, pick what's at a point, and place the readout by it; with only a note
+ * drawn, no items or middles.
+ * @typedef {{
+ *   height: number, keys: string[], item?: (key: string | null) => Item | undefined,
+ *   highlight: (key: string | null) => void, centerOf?: (key: string) => Vec | false,
+ *   pick: (x: number, y: number) => string | null,
+ *   anchorOf: (key: string | null) => {x: number, y: number, width: number, height: number} | null,
+ * }} ModelLayout
+ */
+/** @typedef {(s: number[], d: number[], z: number[], color: RGB) => void} Part a slab of an opening's: along, in, up */
+/**
+ * A run of wall, as wallRun draws it.
+ * @typedef {SideLine & {
+ *   s0: number, s1: number, base: number, raw0: number, raw1: number, cap: number, zs: number[],
+ *   holes: {s0: number, s1: number, z0: number, z1: number}[], depth: (z: number) => number[] | null,
+ *   inner: RGB, outer: (z: number) => RGB, trim0?: ((z: number) => number) | null,
+ *   trim1?: ((z: number) => number) | null, end0?: (z: number) => RGB, end1?: (z: number) => RGB,
+ *   floorAt?: (z: number, depth: number[]) => {z: number, color: RGB}, topColor?: RGB | null,
+ * }} WallRun
+ */
 
 // --- House map: the detailed view -------------------------------------------
 //
@@ -68,24 +361,29 @@ const MODEL_KINDS = {
 const MODEL_GROUPS = ["Doors and windows", "Vents", "Appliances", "Plumbing", "Fireplaces", "Half walls", "Railings", "Closets", "Steps", "Roof", "Yard", "Sprinklers"];
 // Each side of a plan as a line: the axis it runs along, where it is across
 // that axis, which way is inward (k), and where it starts and ends.
+/** @type {Record<Side, (p: Rect) => SideLine>} */
 const SIDE_LINES = {
   back: (p) => ({ axis: "x", line: p.y, k: 1, a: p.x, b: p.x + p.width }),
   front: (p) => ({ axis: "x", line: p.y + p.depth, k: -1, a: p.x, b: p.x + p.width }),
   left: (p) => ({ axis: "y", line: p.x, k: 1, a: p.y, b: p.y + p.depth }),
   right: (p) => ({ axis: "y", line: p.x + p.width, k: -1, a: p.y, b: p.y + p.depth }),
 };
+/** @type {Record<Side, Side>} */
 const OPPOSITE = { back: "front", front: "back", left: "right", right: "left" };
 
 // The point d feet inward of a side's line at s along it.
+/** @param {SideLine} side @param {number} s @param {number} d @returns {[number, number]} */
 function linePoint({ axis, line, k }, s, d) {
   return axis === "x" ? [s, line + k * d] : [line + k * d, s];
 }
 
+/** @param {Rect} a @param {Rect} b */
 function planOverlap(a, b) {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.depth && b.y < a.y + a.depth;
 }
 
 // What's left of [a, b] once the spans are taken out.
+/** @param {number[]} span @param {number[][]} spans */
 function subtract([a, b], spans) {
   let left = [[a, b]];
   for (const [c, d] of spans) {
@@ -95,6 +393,7 @@ function subtract([a, b], spans) {
 }
 
 // The piece of a place other than `except` holding the point, between its base and ceiling, if any.
+/** @param {[Place, Piece][]} pieces @param {number} x @param {number} y @param {number} z @param {Place} except */
 function occupiedAt(pieces, x, y, z, except) {
   return pieces.find(([q, p]) => {
     const inPlan = q !== except && p.x < x && x < p.x + p.width && p.y < y && y < p.y + p.depth;
@@ -103,6 +402,7 @@ function occupiedAt(pieces, x, y, z, except) {
 }
 
 // The box around boxes in feet: x, y, width, depth, and its low and high elevations.
+/** @param {Box[]} boxes */
 function extent(boxes) {
   const x = Math.min(...boxes.map((r) => r.x));
   const y = Math.min(...boxes.map((r) => r.y));
@@ -118,18 +418,20 @@ function extent(boxes) {
 
 // A plan's ceiling, as its height above the main floor at x, y: its full
 // height, sloping down to its drop's wall.
+/** @param {Box} r @returns {(x: number, y: number) => number} */
 function ceilingOf(r) {
   const [side, feet] = r.drop ?? ["front", 0];
-  const toSide = { // how far across the room toward the low wall, from 0 to 1
+  const toSide = /** @type {Record<Side, (x: number, y: number) => number>} */ ({ // how far across the room toward the low wall, from 0 to 1
     left: (x) => (r.x + r.width - x) / r.width,
     right: (x) => (x - r.x) / r.width,
     back: (x, y) => (r.y + r.depth - y) / r.depth,
     front: (x, y) => (y - r.y) / r.depth,
-  }[side];
+  })[side];
   return (x, y) => r.elevation + r.height - feet * toSide(x, y);
 }
 
 // For a source with no details: the rooms on a lawn, nothing below the ground.
+/** @param {Box[]} pieces @returns {Pick<Details, "lot" | "grade" | "finishes">} */
 function modelFallback(pieces) {
   const h = extent(pieces);
   const [x0, y0, x1, y1] = [h.x - 10, h.y - 10, h.x + h.width + 10, h.y + h.depth + 10];
@@ -137,6 +439,7 @@ function modelFallback(pieces) {
 }
 
 // Whether a point on the plan is inside a polygon, its corners in order.
+/** @param {number[]} point @param {number[][]} points */
 function inPolygon([x, y], points) {
   let hit = false;
   points.forEach(([x1, y1], i) => {
@@ -147,19 +450,23 @@ function inPolygon([x, y], points) {
 }
 
 // Whether a roof section covers x, y on the plan, within its rectangle and any outline.
+/** @param {Roof} r @param {number} x @param {number} y */
 function onRoof(r, x, y) {
   return r.x < x && x < r.x + r.width && r.y < y && y < r.y + r.depth && (!r.outline || inPolygon([x, y], r.outline));
 }
 
 // A rectangle on the plan as a polygon, and a ground's shape: its outline, or its rectangle.
+/** @param {number} x @param {number} y @param {number} w @param {number} d */
 function rectShape(x, y, w, d) {
   return [[x, y], [x + w, y], [x + w, y + d], [x, y + d]];
 }
+/** @param {Ground} g */
 function groundShape(g) {
   return g.outline ?? rectShape(g.x, g.y, g.width, g.depth);
 }
 
 // How far down a slope the ground at x, y on the plan is, from 0 at its top to 1 at its foot (details.Slope.share).
+/** @param {Slope} s @param {number} x @param {number} y */
 function slopeShare(s, x, y) {
   const [a, b] = s.between;
   const f = Math.min(Math.max(((s.down === "back" || s.down === "front" ? y : x) - a) / (b - a), 0), 1);
@@ -167,26 +474,31 @@ function slopeShare(s, x, y) {
 }
 
 // How high the ground is at x, y on the plan: the grade, less what the slopes fall by there (details.Details.ground).
+/** @param {SceneDetails} details @param {number} x @param {number} y */
 function groundAt(details, x, y) {
   return details.slopes.reduce((z, s) => z - s.fall * slopeShare(s, x, y), details.grade);
 }
 
 // The lines across the lot the ground bends along, where the slopes start and end: the x's and the y's they're at.
+/** @param {SceneDetails} details */
 function groundBends(details) {
+  /** @param {boolean} x */
   const along = (x) => details.slopes.filter((s) => (s.down === "left" || s.down === "right") === x).flatMap((s) => s.between);
   return { xs: along(true), ys: along(false) };
 }
 
 // The points on the plan from a to b where the ground under the line between them bends, with a and b: between each
 // two, it runs straight.
+/** @param {SceneDetails} details @param {number[]} a @param {number[]} b @returns {[number, number][]} */
 function bendsAlong(details, a, b) {
   const { xs, ys } = groundBends(details);
-  const ts = [[0, xs], [1, ys]].flatMap(([k, lines]) => lines.map((v) => (v - a[k]) / (b[k] - a[k])).filter((t) => t > 1e-9 && t < 1 - 1e-9));
+  const ts = /** @type {[number, number[]][]} */ ([[0, xs], [1, ys]]).flatMap(([k, lines]) => lines.map((v) => (v - a[k]) / (b[k] - a[k])).filter((t) => t > 1e-9 && t < 1 - 1e-9));
   return [0, ...[...new Set(ts)].sort((u, v) => u - v), 1].map((t) => [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
 }
 
 // The lowest and highest the ground is under a polygon on the plan: at its corners, where its edges cross the lines it
 // bends along, or where those cross inside it.
+/** @param {SceneDetails} details @param {number[][]} shape */
 function groundRange(details, shape) {
   const { xs, ys } = groundBends(details);
   const spots = shape.flatMap((a, i) => bendsAlong(details, a, shape[(i + 1) % shape.length]));
@@ -196,12 +508,14 @@ function groundRange(details, shape) {
 }
 
 // A raised ground's top: level, its height over the highest the ground is under it.
+/** @param {SceneDetails} details @param {Ground} g */
 function raisedTop(details, g) {
   return groundRange(details, groundShape(g))[1] + g.height;
 }
 
 // How high the ground is under a thing over x, y, w wide and d deep on the plan: the top of a raised ground at its
 // middle, as a bed's, its paving's where it's edged, else the highest the ground is under it, where it slopes.
+/** @param {SceneDetails} details @param {number} x @param {number} y @param {number} [w] @param {number} [d] */
 function groundTop(details, x, y, w = 0, d = 0) {
   const [cx, cy] = [x + w / 2, y + d / 2];
   const g = details.grounds.find((g) => g.height > 0 && g.x < cx && cx < g.x + g.width && g.y < cy && cy < g.y + g.depth && (!g.outline || inPolygon([cx, cy], g.outline)));
@@ -210,12 +524,13 @@ function groundTop(details, x, y, w = 0, d = 0) {
 }
 
 // The height of a roof section's top at x, y on the plan.
+/** @param {Roof} r @param {number} x @param {number} y */
 function roofTop(r, x, y) {
   if (r.ridge) {
     const [u, u0, u1] = r.ridge === "x" ? [y, r.y, r.y + r.depth] : [x, r.x, r.x + r.width];
     return r.eave + (r.peak - r.eave) * (1 - Math.abs(u - (u0 + u1) / 2) / ((u1 - u0) / 2));
   }
-  const down = { left: (r.x + r.width - x) / r.width, right: (x - r.x) / r.width, back: (r.y + r.depth - y) / r.depth, front: (y - r.y) / r.depth }[r.drop];
+  const down = { left: (r.x + r.width - x) / r.width, right: (x - r.x) / r.width, back: (r.y + r.depth - y) / r.depth, front: (y - r.y) / r.depth }[/** @type {Side} */ (r.drop)]; // a shed roof's, as it has no ridge
   return r.peak - (r.peak - r.eave) * down;
 }
 
@@ -224,29 +539,40 @@ function roofTop(r, x, y) {
 // The scene from the house as /api/sensors sends it: its rooms inside, its areas, its details (or null), the
 // thickness of its walls, and colors(details), the color of each of MODEL_TOKENS. It needs nothing of the page, so
 // tools can build it outside a browser (tools/scan.mjs).
+/**
+ * @param {{
+ *   rooms: Sensor[], areas: Area[], details: Details | null, wall?: number,
+ *   colors: (details: SceneDetails) => ModelColors,
+ * }} house
+ * @returns {Scene | NoScene}
+ */
 function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors }) {
   if (!rooms.length || !rooms.every((s) => s.plan)) return { note: "The detailed view needs every room's plan." };
-  const raw = [...rooms, ...areas].flatMap((q) => [q.plan].flat());
+  const raw = [...rooms, ...areas].flatMap((q) => [/** @type {Plans} */ (q.plan)].flat()); // every room has one by now
+  /** @type {SceneDetails} */
   const details = {
-    finishes: {}, colors: {}, slopes: [], claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [], window_border: 0,
+    colors: {}, slopes: [], claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [], window_border: 0,
     ...(given ?? modelFallback(raw)),
   };
+  /** @type {Item[]} */
   const items = [];
+  /** @param {Omit<Item, "id"> & {id?: number}} item */
   const add = (item) => {
     item.id = items.length + 1; // 0 is nothing, in the picking buffer
     if (details.example) item.known = true; // a made-up house has nothing to check
-    items.push(item);
-    return item;
+    items.push(/** @type {Item} */ (item));
+    return /** @type {Item} */ (item);
   };
 
   const places = [
-    ...rooms.map((s) => ({ key: s.id, name: s.name, floor: s.floor, plan: s.plan, sensor: s })),
+    ...rooms.map((s) => ({ key: s.id, name: s.name, floor: s.floor, plan: /** @type {Plans} */ (s.plan), sensor: s })),
     ...areas.map((a, k) => ({ key: `area:${k}`, name: a.name, floor: a.floor, plan: a.plan })),
-  ].map((q) => ({
+  ].map((q) => /** @type {Place} */ ({
     ...q,
     pieces: [q.plan].flat().map((p) => ({ ...p, top: ceilingOf(p) })),
     finish: { floor: "wood", walls: "paint", ...details.finishes[q.name] },
   }));
+  /** @type {[Place, Piece][]} */
   const pieces = places.flatMap((q) => q.pieces.map((p) => [q, p]));
   for (const [q, p] of pieces) {
     // Its walls go down to the top of whatever's under it, or to its foundation's footing.
@@ -263,7 +589,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     }));
     // How much of its wall on each side stands in its plan, as the server sends it (layout.py): every wall one
     // thickness, a run of them in line standing wholly on one side of its line, or half on each.
-    p.slab = Object.fromEntries(Object.keys(SIDE_LINES).map((side) => {
+    p.slab = Object.fromEntries(/** @type {Side[]} */ (Object.keys(SIDE_LINES)).map((side) => {
       const share = p.sides?.[side] ?? 1;
       return [side, [(share - 1) * wall, share * wall]];
     }));
@@ -272,38 +598,46 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     const box = extent(q.pieces);
     q.item = add({ key: q.key, name: q.name, kind: q.sensor ? "Room" : "Area", place: q, sensor: q.sensor, level: q.pieces[0].elevation, bbox: [box.x, box.y, box.low, box.x + box.width, box.y + box.depth, box.high] });
   }
+  /** @param {string} name */
   const named = (name) => places.find((q) => q.name === name);
 
   const openings = details.openings.flatMap((o, i) => {
     const q = named(o.room);
     if (!q) return [];
-    const out = { left: (p) => p.x, right: (p) => -(p.x + p.width), back: (p) => p.y, front: (p) => -(p.y + p.depth) }[o.wall];
+    const out = /** @type {Record<Side, (p: Piece) => number>} */ ({ left: (p) => p.x, right: (p) => -(p.x + p.width), back: (p) => p.y, front: (p) => -(p.y + p.depth) })[o.wall];
     const p = q.pieces.reduce((best, piece) => (out(piece) < out(best) ? piece : best));
     const side = SIDE_LINES[o.wall](p);
     const [s0, z0] = [side.a + o.offset, p.elevation + o.sill];
-    const opening = { ...o, ...side, place: q, piece: p, s0, s1: s0 + o.width, z0, z1: z0 + o.height, through: o.kind !== "vent" };
+    const opening = /** @type {SceneOpening} */ ({ ...o, ...side, place: q, piece: p, s0, s1: s0 + o.width, z0, z1: z0 + o.height, through: o.kind !== "vent" });
     const [x, y] = linePoint(side, (opening.s0 + opening.s1) / 2, -0.01);
     opening.exterior = !occupiedAt(pieces, x, y, (z0 + opening.z1) / 2, q);
     const [a, b] = [linePoint(side, opening.s0, 0), linePoint(side, opening.s1, 0)];
     opening.item = add({ key: `opening:${i}`, name: o.name, kind: MODEL_KINDS[o.kind], group: o.kind === "vent" ? "Vents" : "Doors and windows", where: `${o.room}, ${o.wall} wall`, known: o.known, level: p.elevation, bbox: [Math.min(a[0], b[0]), Math.min(a[1], b[1]), z0, Math.max(a[0], b[0]), Math.max(a[1], b[1]), opening.z1] });
     return [opening];
   });
+  /**
+   * @template {Thing} T
+   * @param {T} thing @param {number} i @param {string} prefix @param {string} kind @param {string} group
+   * @returns {InRoom<T>[]}
+   */
   const inRoom = (thing, i, prefix, kind, group) => {
     const q = thing.room != null ? named(thing.room) : null;
     if (thing.room != null && !q) return [];
     const first = q?.pieces[0];
     const [x, y] = first ? [first.x + thing.x, first.y + thing.y] : [thing.x, thing.y];
     // The piece it stands in: the one its rectangle is in, else the first it stands across, else the first.
+    /** @param {Piece} o */
     const within = (o) => o.x - 1e-6 <= x && x + thing.width <= o.x + o.width + 1e-6 && o.y - 1e-6 <= y && y + thing.depth <= o.y + o.depth + 1e-6;
+    /** @param {Piece} o */
     const across = (o) => planOverlap(o, { x, y, width: thing.width, depth: thing.depth });
     const p = q ? q.pieces.find(within) ?? q.pieces.find(across) ?? first : null;
     const z = p ? p.elevation : groundTop(details, x, y, thing.width ?? 0, thing.depth ?? 0);
-    const resolved = { ...thing, place: q, piece: p, x0: x, y0: y, x1: x + thing.width, y1: y + thing.depth, z0: z + (thing.lift ?? 0) };
+    const resolved = /** @type {InRoom<T>} */ ({ ...thing, place: q, piece: p, x0: x, y0: y, x1: x + thing.width, y1: y + thing.depth, z0: z + (thing.lift ?? 0) });
     resolved.z1 = resolved.z0 + (thing.height ?? MODEL_CLOSET_HEIGHT);
     resolved.item = add({ key: `${prefix}:${i}`, name: thing.name, kind, group, where: q ? q.name : "Outside", known: thing.known, level: p ? p.elevation : null, bbox: [x, y, resolved.z0, resolved.x1, resolved.y1, resolved.z1] });
     return [resolved];
   };
-  const closets = details.closets.flatMap((c, i) => inRoom(c, i, "closet", "Closet", "Closets"));
+  const closets = /** @type {SceneCloset[]} */ (details.closets.flatMap((c, i) => inRoom(c, i, "closet", "Closet", "Closets"))); // each in its room
   // A closet set into its room's wall opens through a door in that wall, which is drawn as its doors.
   for (const c of closets) {
     const p = c.piece;
@@ -314,8 +648,12 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       if (o.place === c.place && o.wall === c.door && o.kind === "door" && o.s0 >= lo - 1e-6 && o.s1 <= hi + 1e-6) o.closet = c;
     }
   }
-  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], { vent: "Vents", "attic vent": "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" }[f.kind] ?? "Appliances"));
+  const fixtures = details.fixtures.flatMap((f, i) => inRoom(f, i, "fixture", MODEL_KINDS[f.kind], /** @type {Partial<Record<Fixture["kind"], string>>} */ ({ vent: "Vents", "attic vent": "Vents", plumbing: "Plumbing", "gas meter": "Plumbing", fireplace: "Fireplaces", "half wall": "Half walls", railing: "Railings", backflow: "Sprinklers", "valve box": "Sprinklers", controller: "Sprinklers" })[f.kind] ?? "Appliances"));
   for (const f of fixtures) if (f.kind === "attic vent") f.item.whole = true; // high on the wall, shown with the roof
+  /**
+   * @param {string} key @param {{name: string, known: boolean}} thing @param {string} kind @param {string | null} group
+   * @param {number[]} bbox @param {Partial<Item>} [more]
+   */
   const outside = (key, thing, kind, group, bbox, more = {}) => add({ key, name: thing.name, kind, group, where: "Outside", known: thing.known, level: null, bbox, ...more });
   // Each standing on the ground where it is: a raised one level, its top its height over the highest ground under it,
   // and its sides down to the lowest (low).
@@ -369,7 +707,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   // round from it, in degrees, null for all the way round) as far as it says, else as its zone's do, else as far as
   // its kind does, by guess; `water` is what a zone or head waters, for the coverage shown while it's focused.
   const sprinklers = details.sprinklers.map((z, i) => {
-    const heads = z.heads.map((h) => ({
+    const heads = z.heads.map((h) => /** @type {SceneHead} */ ({
       x: h.x, y: h.y, top: groundTop(details, h.x, h.y),
       arc: h.arc && [h.arc[0], (((h.arc[1] - h.arc[0]) % 360) + 360) % 360],
       radius: h.radius ?? z.radius ?? MODEL_THROW[z.kind],
@@ -381,7 +719,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       h.rate = z.kind === "spray" ? MODEL_SPRAY_RATE : (MODEL_INCHES_AN_HOUR * MODEL_ROTOR_FLOW) / area;
     }
     const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
-    const [xs, ys, zs] = ["x", "y", "top"].map((k) => heads.map((h) => h[k]));
+    const [xs, ys, zs] = /** @type {("x" | "y" | "top")[]} */ (["x", "y", "top"]).map((k) => heads.map((h) => h[k]));
     const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, Math.min(...zs) - 0.1, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
     const [mx, my] = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2];
     const middle = heads.reduce((a, b) => (Math.hypot(b.x - mx, b.y - my) < Math.hypot(a.x - mx, a.y - my) ? b : a));
@@ -392,7 +730,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       const box = [h.x - 0.3, h.y - 0.3, h.top - 0.1, h.x + 0.3, h.y + 0.3, h.top + 0.2];
       return outside(`sprinkler:${i}:${k}`, head, z.kind === "spray" ? "Spray head" : "Rotor", "Sprinklers", box, { where: z.name, center: [h.x, h.y, h.top + 0.1], water });
     });
-    item.ids = [headItems[0].id, headItems.at(-1).id];
+    item.ids = [headItems[0].id, /** @type {Item} */ (headItems.at(-1)).id]; // a zone has a head or more
     return { ...z, heads, item, headItems };
   });
   const roofs = details.roofs.map((r, i) => ({ ...r, item: add({ key: `roof:${i}`, name: r.name, kind: "Roof", group: "Roof", where: "Roof", known: r.known, level: null, whole: true, bbox: [r.x, r.y, r.eave - MODEL_ROOF_DEPTH, r.x + r.width, r.y + r.depth, r.peak] }) }));
@@ -426,7 +764,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   });
 
   // The levels, highest first, each at its highest floor's elevation: a garage a step down is on the main floor's.
-  const levels = [...places.reduce((m, q) => m.set(q.floor, Math.max(m.get(q.floor) ?? -Infinity, q.pieces[0].elevation)), new Map())]
+  const levels = [...places.reduce((m, q) => m.set(q.floor, Math.max(m.get(q.floor) ?? -Infinity, q.pieces[0].elevation)), /** @type {Map<string, number>} */ (new Map()))]
     .sort((a, b) => b[1] - a[1]);
   const bottom = Math.min(lowest, ...pieces.map(([, p]) => p.base)) - 1.5;
   const high = Math.max(...items.map((item) => item.bbox[5]));
@@ -451,6 +789,7 @@ function pageModelScene() {
 }
 
 // The theme's colors, but where the house has its own, like its siding, as [r, g, b] from 0 to 1.
+/** @param {SceneDetails} details @returns {ModelColors} */
 function modelColors(details) {
   return Object.fromEntries(MODEL_TOKENS.map((token) => {
     const own = details.colors[token]?.[matchMedia("(prefers-color-scheme: dark)").matches ? 1 : 0];
@@ -461,12 +800,14 @@ function modelColors(details) {
 
 // Whether an item shows when cut away to `mode`: a level, or "outside" for
 // the whole house, with its roof, and its trees unless they're hidden.
+/** @param {Scene} scene @param {string} mode @param {boolean} [trees] @returns {(item: Item) => boolean} */
 function modelShows(scene, mode, trees = true) {
   const level = mode === "outside" ? Infinity : (scene.levels.find(([floor]) => floor === mode)?.[1] ?? Infinity);
   return (item) => (trees || !item.tree) && (item.whole ? mode === "outside" : item.level == null || item.level <= level + 1e-6);
 }
 
 // The middle of an item, or of what shows of it when its walls are cut away, or the point it's centered on.
+/** @param {Item} item @param {string} mode @returns {Vec} */
 function modelCenter(item, mode) {
   if (item.center) return item.center;
   const [x0, y0, z0, x1, y1, z1] = item.bbox;
@@ -477,9 +818,11 @@ function modelCenter(item, mode) {
 // --- Geometry: triangles, each vertex its position, normal, color and the id of what it's part of
 
 function modelMesh() {
+  /** @type {number[][]} */
   const [data, wet] = [[], []];
   // A flat polygon, its normal (Newell's) pointing away from the center of the solid it's a face of. The lawn's
   // and planted beds' tops are `watered`, kept apart to come last, so they can be drawn by the sprinklers' coverage.
+  /** @param {Vec[]} points @param {RGB} color @param {number} id @param {Vec} center @param {boolean} [watered] */
   const face = (points, color, id, center, watered = false) => {
     let [nx, ny, nz] = [0, 0, 0];
     points.forEach((p, i) => {
@@ -499,6 +842,7 @@ function modelMesh() {
     }
   };
   // A convex solid from its faces, each [points, color].
+  /** @param {[Vec[], RGB][]} faces @param {number} id */
   const solid = (faces, id) => {
     const all = faces.flatMap(([points]) => points);
     const center = [0, 1, 2].map((k) => all.reduce((sum, p) => sum + p[k], 0) / all.length);
@@ -506,21 +850,26 @@ function modelMesh() {
   };
   return { data, wet, face, solid };
 }
+/** @typedef {ReturnType<typeof modelMesh>} Mesh the triangles of a view, and how to add faces and solids to them */
 
 // Colors for a six-sided solid's faces: one for all, or {top, bottom, sides: [four]}.
+/** @param {Colors} colors @returns {Faces} */
 function faceColors(colors) {
-  return Array.isArray(colors) && typeof colors[0] === "number" ? { top: colors, bottom: colors, sides: [colors, colors, colors, colors] } : colors;
+  return Array.isArray(colors) && typeof colors[0] === "number" ? { top: colors, bottom: colors, sides: [colors, colors, colors, colors] } : /** @type {Faces} */ (colors);
 }
 
 // A six-sided solid from its four bottom corners, in order around, and the four top corners over them.
+/** @param {Mesh} mesh @param {Vec[]} bottom @param {Vec[]} top @param {Colors} colors @param {number} id */
 function hexa(mesh, bottom, top, colors, id) {
   const c = faceColors(colors);
+  /** @type {[Vec[], RGB][]} */
   const faces = [[bottom, c.bottom], [top, c.top]];
   for (let i = 0; i < 4; i++) faces.push([[bottom[i], bottom[(i + 1) % 4], top[(i + 1) % 4], top[i]], c.sides[i]]);
   mesh.solid(faces, id);
 }
 
 // sides: back, right, front, left
+/** @param {Mesh} mesh @param {Vec} from @param {Vec} to @param {Colors} colors @param {number} id */
 function box(mesh, [x0, y0, z0], [x1, y1, z1], colors, id) {
   hexa(mesh, [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], colors, id);
 }
@@ -528,7 +877,12 @@ function box(mesh, [x0, y0, z0], [x1, y1, z1], colors, id) {
 // A piece of wall, or something set in it: from s0 to s1 along the side's
 // line, d0 to d1 inward of it, from zb up to h0 at s0 and h1 at s1. Its sides
 // are its outside face, its s1 end, its inside face and its s0 end.
+/**
+ * @param {Mesh} mesh @param {SideLine} side @param {number[]} s @param {number[]} d @param {number} zb
+ * @param {number[]} h @param {Colors} colors @param {number} id
+ */
 function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
+  /** @param {number} s @param {number} d @param {number} z */
   const at = (s, d, z) => [...linePoint(side, s, d), z];
   hexa(mesh, [at(s0, d0, zb), at(s1, d0, zb), at(s1, d1, zb), at(s0, d1, zb)], [at(s0, d0, h0), at(s1, d0, h1), at(s1, d1, h1), at(s0, d1, h0)], colors, id);
 }
@@ -550,8 +904,11 @@ function slab(mesh, side, [s0, s1], [d0, d1], zb, [h0, h1], colors, id) {
 // of the back and front walls across its ends, or run on past them where
 // those are less than 0, as a back or front wall does to meet a side wall
 // standing outside its room's plan.
+/** @param {Mesh} mesh @param {ModelColors} C @param {WallRun} w @param {number} id */
 function wallRun(mesh, C, w, id) {
+  /** @param {number} s */
   const raw = (s) => w.raw0 + ((w.raw1 - w.raw0) * (s - w.s0)) / (w.s1 - w.s0);
+  /** @param {number} s */
   const top = (s) => Math.min(raw(s), w.cap);
   const highest = Math.max(top(w.s0), top(w.s1));
   const zs = [...new Set([w.base, highest, w.cap, ...w.zs, ...w.holes.flatMap((h) => [h.z0, h.z1])])]
@@ -571,6 +928,7 @@ function wallRun(mesh, C, w, id) {
       const [s0, s1] = [i === 0 ? w.s0 + t0 : Math.max(sList[i], w.s0 + t0), i === sList.length - 2 ? w.s1 - t1 : Math.min(sList[i + 1], w.s1 - t1)];
       if (s1 - s0 < 1e-6) continue;
       // A hole takes the cell, but for where it runs on past the run's ends to close a corner, which no hole reaches.
+      /** @param {{s0: number, s1: number}} h */
       const within = (h) => h.s0 <= Math.max(s0, w.s0) + 1e-6 && Math.min(s1, w.s1) <= h.s1 + 1e-6;
       const holed = w.holes.some((h) => within(h) && h.z0 <= za + 1e-6 && zc <= h.z1 + 1e-6);
       for (const [sa, sb] of holed ? [[s0, w.s0], [w.s1, s1]].filter(([a, b]) => b - a > 1e-6) : [[s0, s1]]) {
@@ -590,7 +948,7 @@ function wallRun(mesh, C, w, id) {
         const end1 = sb >= w.s1 - 1e-6 && w.end1 ? w.end1(z) : w.inner;
         const above = j + 2 < zs.length ? w.depth((zc + zs[j + 2]) / 2) : null;
         const bared = !above || above[0] > depth[0] + 1e-6 || above[1] < depth[1] - 1e-6; // stepping in over it, as a top
-        const colors = { bottom: w.inner, top: underFloor ? w.topColor : atTop ? C.cut : threshold ? floor.color : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
+        const colors = { bottom: w.inner, top: underFloor ? /** @type {RGB} */ (w.topColor) : atTop ? C.cut : threshold ? floor.color : sill ? C.sash : bared ? C.cut : w.inner, sides: [w.outer(z), end1, w.inner, end0] };
         slab(mesh, w, [sa, sb], depth, za, [ha, hb], colors, id);
       }
     }
@@ -600,6 +958,10 @@ function wallRun(mesh, C, w, id) {
 // How high a place's wall on a side's line stands at s along it, cut away to `mode`: all the way, or 4 ft over
 // its floor. Under a room shown, sitting on it, as a lower level under an upper one, it stands all the way, so
 // the walls run on up to that room's without a gap.
+/**
+ * @param {Scene} scene @param {Place} q @param {Piece} p @param {SideLine} line @param {number} s @param {string} mode
+ * @param {Vec} view
+ */
 function wallCap(scene, q, p, line, s, mode, view) {
   const [x, y] = linePoint(line, s, -0.01);
   if (mode === "outside" || (!occupiedAt(scene.pieces, x, y, p.elevation + 2, q) && standsWhole(scene, line, s, view))) return Infinity;
@@ -612,6 +974,10 @@ function wallCap(scene, q, p, line, s, mode, view) {
 
 // The place's piece beyond a side's line at s along it and height z whose wall is on that line, the other side
 // of the wall between the two, and that side's line: [place, piece, side, line], or null.
+/**
+ * @param {Scene} scene @param {Place} q @param {SideLine} line @param {Side} side @param {number} s @param {number} z
+ * @returns {[Place, Piece, Side, SideLine] | null}
+ */
 function wallBeyond(scene, q, line, side, s, z) {
   const [x, y] = linePoint(line, s, -0.01);
   const beyond = occupiedAt(scene.pieces, x, y, z, q);
@@ -626,6 +992,10 @@ function wallBeyond(scene, q, line, side, s, z) {
 // lower level's is under a higher one's; standing as tall, each stands its own side of it. A place under a room
 // shown, as a crawlspace under a floor, stands whole (wallCap), so it stands the wall between it and a place beside
 // it cut lower, up to that floor.
+/**
+ * @param {Scene} scene @param {Place} q @param {Piece} p @param {Side} side @param {number} s @param {number} z
+ * @param {string} mode @param {Vec} view
+ */
 function wallSpan(scene, q, p, side, s, z, mode, view) {
   const line = SIDE_LINES[side](p);
   const all = p.slab[side];
@@ -640,6 +1010,7 @@ function wallSpan(scene, q, p, side, s, z, mode, view) {
 
 // Whether a wall stands whole when cut away: an outside wall at the back as
 // seen, with none of the house beyond it to hide, at s along its side's line.
+/** @param {Scene} scene @param {SideLine} line @param {number} s @param {Vec} view */
 function standsWhole(scene, line, s, view) {
   const outward = line.axis === "x" ? [0, -line.k] : [-line.k, 0];
   if (outward[0] * view[0] + outward[1] * view[1] > 1e-6) return false; // it faces the viewer
@@ -650,16 +1021,18 @@ function standsWhole(scene, line, s, view) {
   });
 }
 
+/** @param {Mesh} mesh @param {Scene} scene @param {Place} q @param {Piece} p @param {string} mode @param {Vec} view */
 function placeWalls(mesh, scene, q, p, mode, view) {
   const C = scene.colors;
   const inner = C[q.finish.walls];
+  /** @param {number[][]} spans @param {number} s */
   const covers = (spans, s) => spans.some(([a, b]) => a - 1e-6 <= s && s <= b + 1e-6);
-  for (const [side, sideLine] of Object.entries(SIDE_LINES)) {
+  for (const [side, sideLine] of /** @type {[Side, (p: Rect) => SideLine][]} */ (Object.entries(SIDE_LINES))) {
     const line = sideLine(p);
     for (const [a, b] of p.walls[side]) {
       // Left and right walls stop at the back and front walls, which run past them.
       const across = line.axis === "y"
-        ? [["back", a, p.y], ["front", b, p.y + p.depth]].map(([end, s, at]) => (Math.abs(s - at) < 1e-6 && covers(p.walls[end], line.line) ? end : null))
+        ? /** @type {[Side, number, number][]} */ ([["back", a, p.y], ["front", b, p.y + p.depth]]).map(([end, s, at]) => (Math.abs(s - at) < 1e-6 && covers(p.walls[end], line.line) ? end : null))
         : [null, null];
       const edges = scene.pieces.filter(([o]) => o !== q).flatMap(([, o]) => (line.axis === "x" ? [o.x, o.x + o.width] : [o.y, o.y + o.depth]));
       const ss = [...new Set([a, b, ...edges.filter((s) => s > a && s < b)])].sort((u, v) => u - v);
@@ -668,18 +1041,22 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const mid = (sa + sb) / 2;
         const [fx, fy] = linePoint(line, mid, -0.01); // just past the wall
         const whole = wallCap(scene, q, p, line, mid, mode, view) === Infinity;
+        /** @param {number} s */
         const raw = (s) => p.top(...linePoint(line, s, 0));
         const zs = [p.elevation];
+        /** @param {number} x @param {number} y */
         const beyond = (x, y) => {
           for (const [o, b2] of scene.pieces) {
             if (o !== q && b2.x < x && x < b2.x + b2.width && b2.y < y && y < b2.y + b2.depth) zs.push(b2.base, b2.top(x, y), b2.elevation + MODEL_CUT);
           }
         };
         beyond(fx, fy);
+        /** @param {number} z */
         const depth = (z) => wallSpan(scene, q, p, side, mid, z, mode, view);
         // A left or right wall stops short of a wall across an end by as much of it as stands in the plan, where any
         // of it stands, so it runs on through the corner over where that wall is cut away, as an inside wall does under
         // an outside wall standing whole, and the corner isn't left open.
+        /** @param {Side | null} end @returns {((z: number) => number) | null} */
         const trim = (end) => {
           if (!end) return null;
           const across = SIDE_LINES[end](p);
@@ -697,6 +1074,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         // A back or front wall runs on past an end as far as the wall across it there stands outside the room's
         // plan, all of a wall between two places, so the corner is closed, as high as that one stands, but where
         // the place beyond has its own wall in line with this one standing there.
+        /** @param {"left" | "right"} end @returns {((z: number) => number) | null} */
         const extend = (end) => {
           if (!covers(p.walls[end], line.line)) return null;
           const s = line.line + line.k * 0.01;
@@ -724,6 +1102,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
           .filter((o) => o.s0 < sb && sa < o.s1 && o.z0 < highest && p.base < o.z1)
           .map((o) => ({ s0: Math.max(o.s0, sa), s1: Math.min(o.s1, sb), z0: o.z0, z1: o.z1 }));
         // The outside face of the wall on a side, at height z, with x, y just past it.
+        /** @param {Side} wallSide @param {number} x @param {number} y @returns {(z: number) => RGB} */
         const outside = (wallSide, x, y) => (z) => {
           const there = occupiedAt(scene.pieces, x, y, z, q);
           if (there) return C[there[0].finish.walls]; // the wall's face in the place beyond, where it stands that side
@@ -732,6 +1111,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         };
         // An end at the room's corner is part of the outside face of the wall around the corner, so it's
         // colored as that is just past it, across the middle of this wall.
+        /** @param {number} s @param {[Side, number]} end */
         const corner = (s, [endSide, at]) => {
           if (Math.abs(s - at) > 1e-6) return null;
           const out = endSide === "left" || endSide === "back" ? -0.01 : 0.01;
@@ -740,9 +1120,11 @@ function placeWalls(mesh, scene, q, p, mode, view) {
           beyond(x, y);
           return outside(endSide, x, y);
         };
+        /** @type {[Side, number][]} */
         const ends = line.axis === "x" ? [["left", p.x], ["right", p.x + p.width]] : [["back", p.y], ["front", p.y + p.depth]];
         // An end partway along, where what's beyond the wall changes and so may how far out it stands, is part of
         // the face of whatever it stands out into there: the outside face, or a place's beyond, or else its own.
+        /** @param {number} s @param {number} dir @returns {(z: number) => RGB} */
         const along = (s, dir) => {
           beyond(...linePoint(line, s + dir * 0.01, -scene.wall / 4));
           return (z) => {
@@ -759,6 +1141,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
         const topColor = over ? C[over[0].finish.floor] : null;
         // The floor a sill at height z lies in the plane of: its room's, or, standing wholly past its side, as it can
         // for the place beyond (wallSpan), that place's.
+        /** @param {number} z @param {number[]} depth */
         const floorAt = (z, [, d1]) => {
           const there = d1 <= 1e-6 && wallBeyond(scene, q, line, side, mid, z - 0.01);
           return there ? { z: there[1].elevation, color: C[there[0].finish.floor] } : { z: p.elevation, color: C[q.finish.floor] };
@@ -768,6 +1151,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
     }
   }
   // The floor, its edges just inside the walls it has.
+  /** @param {Side} side */
   const e = (side) => (p.walls[side].length ? 0.01 : 0);
   const sides = Array(4).fill(inner);
   const floor = [p.x + e("left"), p.y + e("back"), p.x + p.width - e("right"), p.y + p.depth - e("front")];
@@ -777,6 +1161,7 @@ function placeWalls(mesh, scene, q, p, mode, view) {
 }
 
 // What fills a door or window from outside, or a vent's grilles, cut away with its wall.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneOpening} o @param {string} mode @param {Vec} view */
 function openingPanels(mesh, scene, o, mode, view) {
   const C = scene.colors;
   const mid = (o.s0 + o.s1) / 2;
@@ -786,9 +1171,12 @@ function openingPanels(mesh, scene, o, mode, view) {
   const cap = Math.max(wallCap(scene, o.place, o.piece, o, mid, mode, view), shown ? wallCap(scene, beyond[0], beyond[1], beyond[3], mid, mode, view) : -Infinity);
   const [s0, s1, z0, z1] = [o.s0, o.s1, o.z0, Math.min(o.z1, cap)];
   if (z1 <= z0 + 1e-6) return;
+  /** @type {Part} */
   const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
   const [d0, d1] = o.piece.slab[o.wall];
+  /** @param {number} f */
   const depth = (f) => d0 + f * (d1 - d0);
+  /** @param {number} f0 @param {number} f1 */
   const across = (f0, f1) => [depth(f0), depth(f1)];
   if (o.kind === "vent") {
     part([s0, s1], [d1, d1 + 0.04], [z0, z1], C.grille);
@@ -796,13 +1184,13 @@ function openingPanels(mesh, scene, o, mode, view) {
     return;
   }
   if (o.closet) { // a closet's doors, set into the wall, meeting in the middle, white or in its finish or the closet's
-    part([s0, s1], across(0.35, 0.65), [z0, z1], C[o.finish ?? o.closet.finish] ?? C.white);
+    part([s0, s1], across(0.35, 0.65), [z0, z1], C[o.finish ?? o.closet.finish ?? "white"] ?? C.white);
     part([(s0 + s1) / 2 - 0.03, (s0 + s1) / 2 + 0.03], across(0.3, 0.7), [z0, z1 - 0.01], C.seam); // just under their tops
     return;
   }
   if (o.kind === "opening") return; // a doorway with no door stands open
   if (!o.exterior) { // a door inside, closed, in white unless it has a finish
-    if (o.kind === "door") doorPanel(part, C, o, [s0, s1, z0, z1], across, C[o.finish] ?? C.white);
+    if (o.kind === "door") doorPanel(part, C, o, [s0, s1, z0, z1], across, C[o.finish ?? "white"] ?? C.white);
     return;
   }
   doorOrWindow(part, C, o, [s0, s1, z0, z1], depth);
@@ -822,9 +1210,14 @@ function openingPanels(mesh, scene, o, mode, view) {
 // its seams, or a window's or sliding door's glass in a frame, split down the middle if it's wide. The glass
 // stops just inside the frame's edges, so the two never share a face, which would flicker where it shows:
 // atop a level cut away, or on a shed.
+/**
+ * @param {Part} part @param {ModelColors} C @param {WallOpening} o @param {number[]} span
+ * @param {(f: number) => number} d
+ */
 function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
+  /** @param {number} f0 @param {number} f1 */
   const across = (f0, f1) => [d(f0), d(f1)];
-  if (o.kind === "door") return doorPanel(part, C, o, [s0, s1, z0, z1], across, C[o.finish] ?? C.door);
+  if (o.kind === "door") return doorPanel(part, C, o, [s0, s1, z0, z1], across, C[o.finish ?? "door"] ?? C.door);
   if (o.kind === "garage door") {
     part([s0, s1], across(0.35, 0.65), [z0, z1], C["garage-door"]);
     for (const f of [0.25, 0.5, 0.75]) { // its panels' seams
@@ -846,6 +1239,10 @@ function doorOrWindow(part, C, o, [s0, s1, z0, z1], d) {
 // A door's panel from s0 to s1 and z0 to z1, its depths across(f0, f1) as doorOrWindow's, in color, with a
 // window high in it if it has panes, o.panes across and down: the panel around the window, set in from its sides,
 // and the glass, just inside the panel's edges, behind muntins between the panes in the panel's color.
+/**
+ * @param {Part} part @param {ModelColors} C @param {WallOpening} o @param {number[]} span
+ * @param {(f0: number, f1: number) => number[]} across @param {RGB} color
+ */
 function doorPanel(part, C, o, [s0, s1, z0, z1], across, color) {
   const panel = across(0.35, 0.65);
   const [ws0, ws1, wz0, wz1] = [o.s0 + 0.15 * (o.s1 - o.s0), o.s1 - 0.15 * (o.s1 - o.s0), o.z1 - 0.27 * o.height, o.z1 - 0.08 * o.height];
@@ -869,14 +1266,17 @@ function doorPanel(part, C, o, [s0, s1, z0, z1], across, color) {
 
 // A floor's rectangle, x0, y0, x1, y1, in cells around its stairwells: wherever a flight in a room climbs to
 // this floor from below.
+/** @param {Scene} scene @param {Piece} p @param {number[]} rect @returns {number[][]} */
 function stairwells(scene, p, [x0, y0, x1, y1]) {
   const holes = scene.steps
     .filter((t) => t.room != null && Math.abs(t.top - p.elevation) < 1e-6 && t.bottom < t.top)
     .map((t) => [Math.max(t.x, x0), Math.max(t.y, y0), Math.min(t.x + t.width, x1), Math.min(t.y + t.depth, y1)])
     .filter(([a, b, c, d]) => c > a + 1e-6 && d > b + 1e-6);
   if (!holes.length) return [[x0, y0, x1, y1]];
+  /** @param {number} lo @param {number} hi @param {number[]} edges */
   const cuts = (lo, hi, edges) => [...new Set([lo, hi, ...edges.filter((v) => v > lo && v < hi)])].sort((u, v) => u - v);
   const [xs, ys] = [cuts(x0, x1, holes.flatMap((h) => [h[0], h[2]])), cuts(y0, y1, holes.flatMap((h) => [h[1], h[3]]))];
+  /** @type {number[][]} */
   const cells = [];
   for (let i = 0; i + 1 < xs.length; i++) {
     for (let j = 0; j + 1 < ys.length; j++) {
@@ -889,23 +1289,27 @@ function stairwells(scene, p, [x0, y0, x1, y1]) {
 
 // A closet's walls, but where it's against its room's, with doors across one side, white or in its finish. It can
 // stand across its room's pieces, against the walls of any of them.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneCloset} c @param {string} mode */
 function closetWalls(mesh, scene, c, mode) {
   const C = scene.colors;
   const [p, t] = [c.piece, MODEL_CLOSET_WALL];
   // Each side, and the stretches of it against its room's walls: its pieces' walls on the same line.
-  const sides = Object.fromEntries(Object.entries(SIDE_LINES).map(([side, sideLine]) => {
+  /** @type {Record<string, SideLine & {against: {s0: number, s1: number, piece: Piece}[]}>} */
+  const sides = Object.fromEntries(/** @type {[Side, (p: Rect) => SideLine][]} */ (Object.entries(SIDE_LINES)).map(([side, sideLine]) => {
     const w = sideLine({ x: c.x0, y: c.y0, width: c.x1 - c.x0, depth: c.y1 - c.y0 });
     const against = c.place.pieces
       .flatMap((o) => (Math.abs(sideLine(o).line - w.line) > 1e-6 ? [] : o.walls[side].map(([s0, s1]) => ({ s0: Math.max(s0, w.a), s1: Math.min(s1, w.b), piece: o }))))
       .filter((r) => r.s1 - r.s0 > 1e-6);
     return [side, { ...w, against }];
   }));
+  /** @param {Side} side @param {number} s */
   const wallAt = (side, s) => sides[side].against.find((r) => r.s0 - 1e-6 <= s && s <= r.s1 + 1e-6);
   const paint = C[c.place.finish.walls];
   const cap = Math.min(p.elevation + MODEL_CLOSET_HEIGHT, mode === "outside" ? Infinity : p.elevation + MODEL_CUT);
   for (const [side, w] of Object.entries(sides)) {
     // End to end, inside the room's wall at an end whose side is against one there, else to the closet's own, the
     // left and right ones between its back and front; and but where it's against the room's.
+    /** @type {Side[]} */
     const [lo, hi] = w.axis === "x" ? ["left", "right"] : ["back", "front"];
     const own = w.axis === "y" ? t : 0;
     const [r0, r1] = [wallAt(lo, w.line), wallAt(hi, w.line)];
@@ -914,6 +1318,7 @@ function closetWalls(mesh, scene, c, mode) {
     const doors = { s0: a + 0.3, s1: b - 0.3, z0: p.elevation, z1: p.elevation + MODEL_CLOSET_DOOR };
     let hung = false;
     for (const [s0, s1] of subtract([a, b], w.against.map((r) => [r.s0, r.s1]))) {
+      /** @param {number} s */
       const raw = (s) => p.top(...linePoint(w, s, 0));
       const holes = side === c.door && s0 <= doors.s0 && doors.s1 <= s1 ? [doors] : [];
       hung ||= holes.length > 0;
@@ -921,7 +1326,7 @@ function closetWalls(mesh, scene, c, mode) {
     }
     if (hung) {
       const z1 = Math.min(doors.z1, cap);
-      slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C[c.finish] ?? C.white, c.item.id);
+      slab(mesh, w, [doors.s0, doors.s1], [0.3 * t, 0.7 * t], doors.z0, [z1, z1], C[c.finish ?? "white"] ?? C.white, c.item.id);
       const mid = (doors.s0 + doors.s1) / 2; // where the two doors meet
       slab(mesh, w, [mid - 0.03, mid + 0.03], [0.25 * t, 0.75 * t], doors.z0, [z1 - 0.01, z1 - 0.01], C.seam, c.item.id); // just under their tops
     }
@@ -929,6 +1334,7 @@ function closetWalls(mesh, scene, c, mode) {
 }
 
 // A polygon's area, positive if its corners go counterclockwise with y up.
+/** @param {number[][]} points */
 function polygonArea(points) {
   return points.reduce((sum, [x1, y1], i) => {
     const [x2, y2] = points[(i + 1) % points.length];
@@ -937,6 +1343,7 @@ function polygonArea(points) {
 }
 
 // The part of a polygon inside a rectangle (Sutherland-Hodgman).
+/** @param {number[][]} points @param {number} x0 @param {number} y0 @param {number} x1 @param {number} y1 */
 function clipToRect(points, x0, y0, x1, y1) {
   let out = points;
   for (const [k, v, sign] of [[0, x0, 1], [0, x1, -1], [1, y0, 1], [1, y1, -1]]) {
@@ -957,13 +1364,16 @@ function clipToRect(points, x0, y0, x1, y1) {
 }
 
 // A simple polygon cut into triangles, by clipping off its ears.
+/** @param {number[][]} points */
 function triangulate(points) {
   let left = points.filter((p, i) => {
     const q = points[(i + 1) % points.length];
     return Math.hypot(p[0] - q[0], p[1] - q[1]) > 1e-9;
   });
   const sign = Math.sign(polygonArea(left));
+  /** @param {number[]} a @param {number[]} b @param {number[]} c */
   const turn = (a, b, c) => sign * ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+  /** @type {number[][][]} */
   const triangles = [];
   while (left.length > 3) {
     const n = left.length;
@@ -987,23 +1397,32 @@ function triangulate(points) {
 // footprint shows as slab. Paving that runs past the lot stops at its edge.
 // Its top is cut where it bends too, where slopes start and end, so each
 // cell lies flat on it, and the lawn on a slope is the slope's.
+/** @param {Mesh} mesh @param {Scene} scene @param {(item: Item) => boolean} shows */
 function earth(mesh, scene, shows) {
   const C = scene.colors;
   const [details, lot, b] = [scene.details, scene.lot, scene.bottom];
+  /** @param {number} x @param {number} y */
   const ground = (x, y) => groundAt(details, x, y);
   const bends = groundBends(details);
   const [lx0, ly0, , lx1, ly1] = scene.lawn.bbox;
   const rects = [...scene.pieces.map(([, p]) => p), ...scene.grounds.filter((g) => !g.outline)];
+  /** @param {number} lo @param {number} hi @param {number[]} edges */
   const breaks = (lo, hi, edges) => [...new Set([lo, hi, ...edges.map((v) => Math.min(Math.max(v, lo), hi))])].sort((u, v) => u - v);
   const cutouts = scene.grounds.flatMap((g) => g.cutouts ?? []);
   const xs = breaks(lx0, lx1, [...rects.flatMap((r) => [r.x, r.x + r.width]), ...cutouts.flatMap(([x, , w]) => [x, x + w]), ...lot.map((p) => p[0]), ...bends.xs]);
   const ys = breaks(ly0, ly1, [...rects.flatMap((r) => [r.y, r.y + r.depth]), ...cutouts.flatMap(([, y, , d]) => [y, y + d]), ...lot.map((p) => p[1]), ...bends.ys]);
+  /** @param {Rect} r @param {number} x @param {number} y */
   const inside = (r, x, y) => r.x < x && x < r.x + r.width && r.y < y && y < r.y + r.depth;
+  /** @param {number} x @param {number} y */
   const onSlope = (x, y) => scene.slopes.find((s) => {
     const [a, b] = s.between;
     const v = s.down === "back" || s.down === "front" ? y : x;
     return a < v && v < b;
   });
+  /**
+   * Each cell's shape, its top's height at x, y, its color and part, and whether sprinklers water it.
+   * @type {({shape: number[][], top: (x: number, y: number) => number, color: RGB, id: number, wet: boolean} | null)[][]}
+   */
   const cells = xs.slice(0, -1).map((_, i) => ys.slice(0, -1).map((_, j) => {
     const shape = clipToRect(lot, xs[i], ys[j], xs[i + 1], ys[j + 1]);
     if (shape.length < 3 || Math.abs(polygonArea(shape)) < 1e-4) return null; // outside the lot
@@ -1029,6 +1448,7 @@ function earth(mesh, scene, shows) {
     for (const triangle of triangulate(cell.shape)) mesh.face(triangle.map(([x, y]) => [x, y, z(x, y)]), cell.color, cell.id, center, cell.wet);
     // Steps down to lower neighbors, under the house, a hair inside this cell, so a wall on the edge covers them.
     const [a0, a1, b0, b1] = [x0 + 0.005, x1 - 0.005, y0 + 0.005, y1 - 0.005];
+    /** @type {[number, number, number[][]][]} */
     const neighbors = [[i - 1, j, [[a0, y0], [a0, y1]]], [i + 1, j, [[a1, y0], [a1, y1]]], [i, j - 1, [[x0, b0], [x1, b0]]], [i, j + 1, [[x0, b1], [x1, b1]]]];
     for (const [ni, nj, [[ax, ay], [bx, by]]] of neighbors) {
       const low = cells[ni]?.[nj]?.top;
@@ -1038,7 +1458,7 @@ function earth(mesh, scene, shows) {
     }
   }));
   // A flat ground cut to an outline lies just over the lawn.
-  for (const g of scene.grounds.filter((g) => g.outline && !(g.height > 0))) drape(mesh, details, g.outline, [null, 0.03], paving(C, g), g.item.id, watered(g));
+  for (const g of scene.grounds.filter((g) => g.outline && !(g.height > 0))) drape(mesh, details, /** @type {Point[]} */ (g.outline), [null, 0.03], paving(C, g), g.item.id, watered(g));
   // The lot's sides, down to its bottom.
   const sign = Math.sign(polygonArea(lot));
   lot.forEach(([ax, ay], i) => {
@@ -1058,11 +1478,17 @@ function earth(mesh, scene, shows) {
 
 // A flat polygon laid on the ground, `lift` over it, cut where the ground bends so each piece lies flat on it: a flat
 // ground cut to an outline, or a flat ring of mulch. With `sink`, it has sides, down to that far under the ground.
+/**
+ * @param {Mesh} mesh @param {SceneDetails} details @param {number[][]} shape @param {[number | null, number]} heights
+ * @param {RGB} color @param {number} id @param {boolean} [wet]
+ */
 function drape(mesh, details, shape, [sink, lift], color, id, wet = false) {
   const { xs, ys } = groundBends(details);
   const [x0, y0, x1, y1] = [Math.min(...shape.map((p) => p[0])), Math.min(...shape.map((p) => p[1])), Math.max(...shape.map((p) => p[0])), Math.max(...shape.map((p) => p[1]))];
+  /** @param {number} lo @param {number} hi @param {number[]} lines */
   const cut = (lo, hi, lines) => [lo, ...[...new Set(lines)].filter((v) => lo < v && v < hi).sort((u, v) => u - v), hi];
   const [cx, cy] = [cut(x0, x1, xs), cut(y0, y1, ys)];
+  /** @param {number} x @param {number} y @param {number} dz */
   const z = (x, y, dz) => groundAt(details, x, y) + dz;
   for (let i = 0; i + 1 < cx.length; i++) for (let j = 0; j + 1 < cy.length; j++) {
     const piece = cx.length === 2 && cy.length === 2 ? shape : clipToRect(shape, cx[i], cy[j], cx[i + 1], cy[j + 1]);
@@ -1082,9 +1508,15 @@ function drape(mesh, details, shape, [sink, lift], color, id, wet = false) {
 }
 
 // A vertical prism around x, y: n sides, radius r, from z0 to z1; a cone if `point`.
+/**
+ * @param {Mesh} mesh @param {number[]} at @param {number} r @param {number} z0 @param {number} z1 @param {RGB} color
+ * @param {number} id @param {boolean} [point] @param {number} [n]
+ */
 function round(mesh, [x, y], r, z0, z1, color, id, point = false, n = 8) {
+  /** @param {number} z */
   const ring = (z) => Array.from({ length: n }, (_, i) => [x + r * Math.cos((2 * Math.PI * i) / n), y + r * Math.sin((2 * Math.PI * i) / n), z]);
   const bottom = ring(z0);
+  /** @type {[Vec[], RGB][]} */
   const faces = [[bottom, color]];
   const top = point ? null : ring(z1);
   if (top) faces.push([top, color]);
@@ -1096,29 +1528,41 @@ function round(mesh, [x, y], r, z0, z1, color, id, point = false, n = 8) {
 }
 
 // A round from a to b in any direction, n sides, radius r0 at a and r1 at b: a tree's stem or limb.
+/**
+ * @param {Mesh} mesh @param {Vec} a @param {Vec} b @param {number} r0 @param {number} r1 @param {RGB} color
+ * @param {number} id @param {number} [n]
+ */
 function limb(mesh, a, b, r0, r1, color, id, n = 6) {
+  /** @param {Vec} p @param {Vec} q */
   const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  /** @param {Vec} p */
   const unit = (p) => p.map((c) => c / Math.hypot(...p));
   const w = unit(b.map((c, k) => c - a[k]));
   const u = unit(cross(w, Math.abs(w[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]));
   const v = cross(w, u);
+  /** @param {Vec} p @param {number} r */
   const ring = (p, r) => Array.from({ length: n }, (_, i) => {
     const angle = (2 * Math.PI * i) / n;
     return p.map((c, k) => c + r * (Math.cos(angle) * u[k] + Math.sin(angle) * v[k]));
   });
   const [ends, tips] = [ring(a, r0), ring(b, r1)];
+  /** @type {[Vec[], RGB][]} */
   const faces = [[ends, color], [tips, color]];
   for (let i = 0; i < n; i++) faces.push([[ends[i], ends[(i + 1) % n], tips[(i + 1) % n], tips[i]], color]);
   mesh.solid(faces, id);
 }
 
 // The unit sphere in triangles: an icosahedron, each face split in four, and those again as many times as asked.
+/** @param {number} splits */
 function icosphere(splits) {
   const g = (1 + Math.sqrt(5)) / 2;
+  /** @param {Vec} v */
   const unit = (v) => v.map((c) => c / Math.hypot(...v));
+  /** @param {Vec} u @param {Vec} v */
   const mid = (u, v) => unit(u.map((x, k) => (x + v[k]) / 2));
   const corners = [[-1, g, 0], [1, g, 0], [-1, -g, 0], [1, -g, 0], [0, -1, g], [0, 1, g], [0, -1, -g], [0, 1, -g], [g, 0, -1], [g, 0, 1], [-g, 0, -1], [-g, 0, 1]].map(unit);
   const faces = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  /** @param {Vec[][]} triangles */
   const split = (triangles) => triangles.flatMap(([p, q, r]) => {
     const [pq, qr, rp] = [mid(p, q), mid(q, r), mid(r, p)];
     return [[p, pq, rp], [pq, q, qr], [rp, qr, r], [pq, qr, rp]];
@@ -1143,10 +1587,12 @@ const MODEL_LEAVES = { green: "leaves", light: "leaves-light", dark: "leaves-dar
 const MODEL_FALLS = { yellow: "fall-yellow", orange: "fall-orange", red: "fall-red" };
 const MODEL_FLOWERS = { white: "flowers-white", pink: "flowers-pink" };
 const MODEL_BARKS = { brown: "trunk", gray: "bark-gray", white: "bark-white" };
+/** @type {Season[]} */
 const MODEL_SEASONS = ["spring", "summer", "fall", "winter"];
 
 // The season the trees show on a date, in the northern hemisphere: spring from March, summer from June, fall from
 // September and winter from December.
+/** @param {Date} date */
 function seasonOf(date) {
   return MODEL_SEASONS[Math.floor(((date.getMonth() + 10) % 12) / 3)];
 }
@@ -1162,6 +1608,7 @@ const MODEL_LUMP = 0.22; // how far a crown's hollows sink between its lumps, as
 const MODEL_CROWN_GAP = 1; // feet a crown keeps clear of the house and sheds
 
 // Numbers from 0 to 1, the same ones for the same seed, so a tree is drawn alike every time.
+/** @param {number} seed */
 function seeded(seed) {
   let s = (Math.abs(Math.round(seed)) % 2147483646) + 1;
   return () => (s = (s * 16807) % 2147483647) / 2147483647;
@@ -1171,18 +1618,22 @@ function seeded(seed) {
 // x, y as far as it must to keep `gap` clear of the house and sheds, off the plans of their rooms (and their walls)
 // or over their roofs, so a crown can stand off a wall under the eaves and reach over the roof above them. A
 // point with a clear way to it stays put, as does one at a height where x, y itself isn't clear.
+/** @param {Scene} scene @param {Vec} center @param {number} reach @param {number} gap @returns {(p: Vec) => Vec} */
 function clearOfBuildings(scene, [cx, cy], reach, gap) {
   const solids = [
     ...scene.pieces.map(([, p]) => ({ x0: p.x - scene.wall, y0: p.y - scene.wall, x1: p.x + p.width + scene.wall, y1: p.y + p.depth + scene.wall, top: p.top })),
-    ...scene.roofs.map((r) => ({ x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.depth, top: (x, y) => (onRoof(r, x, y) ? roofTop(r, x, y) : -Infinity) })),
+    ...scene.roofs.map((r) => ({ x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.depth, top: /** @param {number} x @param {number} y */ (x, y) => (onRoof(r, x, y) ? roofTop(r, x, y) : -Infinity) })),
     ...scene.sheds.map((b) => ({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.depth, top: () => b.base + b.peak })),
   ].filter((s) => s.x0 - gap < cx + reach && cx - reach < s.x1 + gap && s.y0 - gap < cy + reach && cy - reach < s.y1 + gap);
+  /** @param {number} v @param {number} a @param {number} b */
   const within = (v, a, b) => Math.min(Math.max(v, a + 1e-6), b - 1e-6);
   // Within gap of one: over it or beside it, and under its top at its nearest point, plus gap.
+  /** @param {Vec} p */
   const blocked = ([x, y, z]) => solids.some((s) =>
     s.x0 - gap < x && x < s.x1 + gap && s.y0 - gap < y && y < s.y1 + gap && z < s.top(within(x, s.x0, s.x1), within(y, s.y0, s.y1)) + gap);
   if (!solids.length) return (p) => p;
   return (p) => {
+    /** @param {number} f */
     const at = (f) => [cx + f * (p[0] - cx), cy + f * (p[1] - cy), p[2]];
     const n = Math.ceil(Math.hypot(p[0] - cx, p[1] - cy) / 0.5); // out half a foot at a time
     if (blocked(at(0))) return p;
@@ -1197,11 +1648,13 @@ function clearOfBuildings(scene, [cx, cy], reach, gap) {
 
 // A tree as it is in a season: a deciduous one in leaf, or in winter bare; an evergreen the same all year.
 // Its heights are from the ground at its trunk (ground), where it slopes.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneTree} t @param {Season} [season] */
 function tree(mesh, scene, t, season = "summer") {
   const [C, details, ground, id] = [scene.colors, scene.details, t.ground, t.item.id];
   const bark = C[MODEL_BARKS[t.bark]] ?? C.trunk;
   const [R, H, stems, fork] = [t.spread / 2, t.height, t.stems ?? 1, t.fork ?? 0];
   const stem = (t.trunk ?? Math.max(stems > 1 ? 0.4 : 0.7, (t.spread * 0.06) / Math.sqrt(stems))) / 2; // each one's radius
+  /** @param {number} r */
   const ring = (r) => Array.from({ length: 16 }, (_, i) => [t.x + r * Math.cos((Math.PI * i) / 8), t.y + r * Math.sin((Math.PI * i) / 8)]);
   if (t.ring > 0 && t.edging) { // a raised ring of stone or brick, filled with mulch, level from the lowest ground under it
     const [low, high] = groundRange(details, ring(t.ring));
@@ -1231,12 +1684,16 @@ function tree(mesh, scene, t, season = "summer") {
     const [z, angle] = [random() * 2 - 1, random() * 2 * Math.PI];
     return [Math.sqrt(1 - z * z) * Math.cos(angle), Math.sqrt(1 - z * z) * Math.sin(angle), z];
   }).concat([[0, 0, 1]]);
+  /** @param {Vec} v @param {Vec} d */
   const near = (v, d) => Math.exp(-((v[0] - d[0]) ** 2 + (v[1] - d[1]) ** 2 + (v[2] - d[2]) ** 2) / 0.2);
+  /** @param {Vec} v */
   const lump = (v) => 1 - MODEL_LUMP + MODEL_LUMP * Math.min(1, bumps.reduce((sum, d) => sum + near(v, d), 0));
   // A point of the unit ball on the crown, before its lumps: its height, and its share of R across, the ball
   // made as much wider as its taper narrows it where it's widest, so it reaches its spread.
+  /** @param {number} vz */
   const narrow = (vz) => 1 - (Math.abs(shape.taper) * (1 - Math.sign(shape.taper) * vz)) / 2;
   const widest = Math.max(...Array.from({ length: 41 }, (_, i) => Math.sqrt(1 - (i / 20 - 1) ** 2) * narrow(i / 20 - 1)));
+  /** @param {Vec} v */
   const stretch = ([, , vz]) => {
     const below = vz < 0;
     const g = Math.abs(vz) ** (below ? shape.below : shape.above);
@@ -1245,6 +1702,7 @@ function tree(mesh, scene, t, season = "summer") {
   const [cx, cy] = [t.x + (t.lean?.[0] ?? 0), t.y + (t.lean?.[1] ?? 0)]; // its middle, off the trunk if it leans
   const center = [cx, cy, middle];
   const clear = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP);
+  /** @param {Vec} v */
   const place = (v) => {
     const [z, across] = stretch(v);
     const m = lump(v);
@@ -1256,6 +1714,7 @@ function tree(mesh, scene, t, season = "summer") {
     const [z, across] = stretch([0, 0, vz]);
     return [z, Math.sqrt(1 - vz * vz) * across * R * (1 - MODEL_LUMP)];
   });
+  /** @param {number} z */
   const inside = (z) => {
     const i = profile.findIndex(([pz]) => pz >= z);
     if (i <= 0) return i === 0 ? profile[0][1] : 0;
@@ -1267,13 +1726,16 @@ function tree(mesh, scene, t, season = "summer") {
   // under its middle, and each one's limbs up from its fork into the crown, ending further from the buildings
   // than its leaves. Bare, a stem running on into the crown shows, on up as a leader.
   const bare = season === "winter";
+  /** @type {[Vec, number][]} */
   const ends = []; // where a bare tree's branches can start, and how thick it is there: [point, radius]
   const clearer = clearOfBuildings(scene, center, R, MODEL_CROWN_GAP + 1.5);
   const turn = random() * 2 * Math.PI;
   const top = fork > 0 ? ground + fork : z0 + 0.4 * (z1 - z0);
   for (let k = 0; k < stems; k++) {
     const angle = turn + (2 * Math.PI * k) / stems + (random() - 0.5) * 0.6;
+    /** @param {number} r @param {number} [a] */
     const out = (r, a = angle) => [t.x + r * Math.cos(a), t.y + r * Math.sin(a)];
+    /** @param {number} r @param {number} [a] */
     const under = (r, a = angle) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
     const splay = stems > 1 ? Math.min(R * (fork > 0 ? 0.12 : 0.35), 0.6 * inside(top)) : 0;
     const head = [...(fork > 0 ? out : under)(splay), top];
@@ -1299,10 +1761,15 @@ function tree(mesh, scene, t, season = "summer") {
   // it; all of them ending further from the buildings than its leaves would, and left off where that would cut one
   // back by more than half, so a tree beside a wall is bare on that side.
   if (bare) {
+    /** @param {Vec} p @param {Vec} q */
     const far = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    /** @param {Vec} p @param {number} f */
     const inward = (p, f) => p.map((c, k) => center[k] + f * (c - center[k]));
+    /** @param {Vec} v */
     const unit = (v) => v.map((c) => c / Math.hypot(...v));
+    /** @param {Vec} p */
     const reach = (p) => Math.hypot(p[0] - cx, p[1] - cy);
+    /** @param {Vec} p */
     const out = (p) => {
       const kept = clearer(p);
       return reach(kept) < 0.5 * reach(p) ? null : kept;
@@ -1328,7 +1795,7 @@ function tree(mesh, scene, t, season = "summer") {
 
   // In leaf, its leaves in their season (leafColor), its facets a little lighter or darker in turn.
   const color = leafColor(C, t, season);
-  const flower = C[MODEL_FLOWERS[t.flowers]] ?? C["flowers-white"];
+  const flower = C[MODEL_FLOWERS[t.flowers ?? "white"]] ?? C["flowers-white"];
   const blooming = Boolean(t.flowers) && season === (t.blooms ?? "spring");
   MODEL_BALL.forEach((triangle, i) => {
     const shade = 0.92 + 0.16 * (((i * 37) % 11) / 10);
@@ -1355,11 +1822,16 @@ function tree(mesh, scene, t, season = "summer") {
 // The color of facet i of a tree's crown, or a hedge's leaves, in a season: its leaves fresher in spring, half a new
 // leaf's green, and in the fall its fall color, but for a few facets not yet turned; in bloom, if it flowers, every
 // third facet paled toward its flowers' color, thick with them.
+/**
+ * @param {ModelColors} C @param {{leaves: Leaves, fall: Fall, flowers?: Tree["flowers"], blooms?: Tree["blooms"]}} t
+ * @param {Season} season @returns {(i: number) => RGB}
+ */
 function leafColor(C, t, season) {
   const leaves = C[MODEL_LEAVES[t.leaves]] ?? C.leaves;
   const fall = C[MODEL_FALLS[t.fall]] ?? C["fall-yellow"];
-  const flower = C[MODEL_FLOWERS[t.flowers]] ?? C["flowers-white"];
+  const flower = C[MODEL_FLOWERS[t.flowers ?? "white"]] ?? C["flowers-white"];
   const blooming = Boolean(t.flowers) && season === (t.blooms ?? "spring");
+  /** @param {RGB} a @param {RGB} b @param {number} f */
   const mix = (a, b, f) => a.map((c, k) => c + f * (b[k] - c));
   return (i) => {
     const green = season === "spring" ? mix(leaves, C["leaves-spring"], 0.5) : leaves;
@@ -1373,8 +1845,10 @@ function leafColor(C, t, season) {
 // wide and tall as the hedge, give or take, and lumpy, their sizes and lumps seeded from where it starts so it's
 // drawn the same every time, in its leaves' colors for the season. Bare in winter, a wall of stems: thin shoots up
 // from the ground, two a foot, leaning a little this way and that, standing from just under it.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneHedge} h @param {Season} season */
 function hedge(mesh, scene, h, season) {
   const [C, details, id] = [scene.colors, scene.details, h.item.id];
+  /** @param {Vec} p */
   const ground = (p) => groundAt(details, p[0], p[1]);
   const random = seeded(h.points[0][0] * 7919 + h.points[0][1] * 104729);
   const color = leafColor(C, h, season);
@@ -1383,6 +1857,7 @@ function hedge(mesh, scene, h, season) {
     const length = Math.hypot(x2 - x1, y2 - y1);
     const [ux, uy] = [(x2 - x1) / length, (y2 - y1) / length]; // along it
     const [vx, vy] = [-uy, ux]; // across it
+    /** @param {number} along @param {number} across @param {number} z */
     const at = (along, across, z) => [x1 + ux * along + vx * across, y1 + uy * along + vy * across, z];
     if (season === "winter") {
       const count = Math.max(2, Math.round(length * 2));
@@ -1404,6 +1879,7 @@ function hedge(mesh, scene, h, season) {
       const low = groundRange(details, rectShape(mx - reach, my - reach, 2 * reach, 2 * reach))[0]; // the lowest under it
       const middle = at(along, across, low + c * 0.96); // its foot just under the ground
       const [p, q] = [random() * 6, random() * 6];
+      /** @param {Vec} v */
       const lump = ([px, py, pz]) => 1 + 0.18 * Math.sin(5 * px + p) * Math.sin(4 * py + q) * Math.cos(3 * pz);
       MODEL_SHRUB.forEach((triangle, i) => {
         const points = triangle.map((v) => {
@@ -1421,6 +1897,7 @@ function hedge(mesh, scene, h, season) {
 // or a shed's four, run along its length. Its slopes in roofing, its gable
 // ends and any tall side, as a high one over a lower roof, in siding, but for
 // trim along the top of the side, and its fascia and soffit in trim.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneRoof | ShedRoof} r */
 function roofSection(mesh, scene, r) {
   const C = scene.colors;
   if (r.outline) return roofOutline(mesh, scene, r);
@@ -1429,11 +1906,14 @@ function roofSection(mesh, scene, r) {
   const along = r.ridge ?? (r.drop === "left" || r.drop === "right" ? "y" : "x");
   const [u0, u1] = along === "x" ? [r.y, r.y + r.depth] : [r.x, r.x + r.width];
   const [a, b] = along === "x" ? [r.x, r.x + r.width] : [r.y, r.y + r.depth];
+  /** @type {number[][]} */
   let profile; // across the roof: [u, z] around its cross-section
   if (r.ridge) profile = [[u0, low], [u1, low], [u1, r.eave], [(u0 + u1) / 2, r.peak], [u0, r.eave]];
   else if (r.drop === "right" || r.drop === "front") profile = [[u0, low], [u1, low], [u1, r.eave], [u0, r.peak]];
   else profile = [[u0, low], [u1, low], [u1, r.peak], [u0, r.eave]];
+  /** @param {number} u @param {number} z @param {number} s */
   const at = (u, z, s) => (along === "x" ? [s, u, z] : [u, s, z]);
+  /** @type {[Vec[], RGB][]} */
   const faces = [[profile.map(([u, z]) => at(u, z, a)), C.siding], [profile.map(([u, z]) => at(u, z, b)), C.siding]];
   profile.forEach(([u, z], i) => {
     const [u2, z2] = profile[(i + 1) % profile.length];
@@ -1458,11 +1938,13 @@ function roofSection(mesh, scene, r) {
 }
 
 // What a porch, patio, deck, walk, bed or flight of steps is paved with.
+/** @param {ModelColors} C @param {{paving: Ground["paving"]}} g */
 function paving(C, g) {
   return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck, gravel: C.gravel, mulch: C.mulch, carpet: C.carpet, dirt: C.dirt }[g.paving] ?? C.concrete;
 }
 
 // Whether sprinklers water a ground, as they do the lawn: a planted bed, in mulch, not one of gravel.
+/** @param {Ground} g */
 function watered(g) {
   return g.kind === "bed" && g.paving === "mulch";
 }
@@ -1471,18 +1953,21 @@ function watered(g) {
 // underside, and upright sides, with trim along the sloped edges but those
 // it shares with another section, where the two meet in a valley, and along
 // the top of a tall side that's level, as a roof section's is.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneRoof} r */
 function roofOutline(mesh, scene, r) {
   const C = scene.colors;
   const low = r.underside ?? r.eave - MODEL_ROOF_DEPTH;
-  const points = r.outline;
+  const points = /** @type {Point[]} */ (r.outline); // only one with an outline comes here
   const n = points.length;
   const top = points.map(([x, y]) => [x, y, roofTop(r, x, y)]);
   const bottom = points.map(([x, y]) => [x, y, low]);
+  /** @type {[Vec[], RGB][]} */
   const faces = [[top, C.roof], [bottom, C.trim]];
   points.forEach((_, i) => {
     const j = (i + 1) % n;
     const tall = Math.max(top[i][2], top[j][2]) - low > MODEL_ROOF_DEPTH + 0.05;
     if (tall && Math.abs(top[i][2] - top[j][2]) < 1e-6) { // level along its top: siding, with trim along it
+      /** @param {Vec} p */
       const under = (p) => [p[0], p[1], p[2] - MODEL_TRIM];
       faces.push([[bottom[i], bottom[j], under(top[j]), under(top[i])], C.siding]);
       faces.push([[under(top[i]), under(top[j]), top[j], top[i]], C.trim]);
@@ -1491,8 +1976,9 @@ function roofOutline(mesh, scene, r) {
     faces.push([[bottom[i], bottom[j], top[j], top[i]], tall ? C.siding : C.trim]);
   });
   mesh.solid(faces, r.item.id);
+  /** @param {Vec} p @param {Vec} q */
   const key = (p, q) => [p, q].map((v) => v.map((c) => c.toFixed(2)).join()).sort().join(" ");
-  const shared = new Set(scene.roofs.filter((o) => o !== r && o.outline).flatMap((o) => o.outline.map((p, i) => key(p, o.outline[(i + 1) % o.outline.length]))));
+  const shared = new Set(/** @type {(SceneRoof & {outline: Point[]})[]} */ (scene.roofs.filter((o) => o !== r && o.outline)).flatMap((o) => o.outline.map((p, i) => key(p, o.outline[(i + 1) % o.outline.length]))));
   const sign = Math.sign(polygonArea(points));
   const middle = [points.reduce((t, p) => t + p[0], 0) / n, points.reduce((t, p) => t + p[1], 0) / n, (low + r.peak) / 2];
   points.forEach((p, i) => {
@@ -1501,6 +1987,7 @@ function roofOutline(mesh, scene, r) {
     const [ex, ey] = [points[j][0] - p[0], points[j][1] - p[1]];
     const length = Math.hypot(ex, ey);
     const [ox, oy] = [(sign * ey * 0.03) / length, (-sign * ex * 0.03) / length]; // just outside
+    /** @param {Vec} q @param {number} dz */
     const at = (q, dz) => [q[0] + ox, q[1] + oy, q[2] + dz];
     mesh.face([at(top[i], 0), at(top[j], 0), at(top[j], -MODEL_TRIM), at(top[i], -MODEL_TRIM)], C.trim, r.item.id, middle);
   });
@@ -1512,6 +1999,7 @@ function roofOutline(mesh, scene, r) {
 // opens, level 3 ft over that floor, over a wall down the stairwell's side in
 // the wall color of the room it opens into; no higher than cap, where the
 // view is cut away.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneSteps} t @param {number} [cap] */
 function stepsFlight(mesh, scene, t, cap = Infinity) {
   const C = scene.colors;
   const n = t.count ?? Math.max(1, Math.round((t.top - t.bottom) / 0.6));
@@ -1531,7 +2019,9 @@ function stepsFlight(mesh, scene, t, cap = Infinity) {
   const color = t.room == null ? paving(C, t) : C.white;
   const [low, high] = { left: [x1, x0], right: [x0, x1], back: [y1, y0], front: [y0, y1] }[t.up];
   const axis = t.up === "left" || t.up === "right" ? "x" : "y"; // the axis it climbs along
+  /** @param {number} v */
   const tread = (v) => t.bottom + ((v - low) / (high - low)) * (t.top - t.bottom);
+  /** @type {((v: number) => number)[]} */
   const [base, top] = well ? [() => t.top, () => t.top + 3] : [tread, (v) => tread(v) + 3];
   const b = t.banister;
   for (const side of t.banisters) {
@@ -1549,6 +2039,7 @@ function stepsFlight(mesh, scene, t, cap = Infinity) {
 // edging, its sides are a low wall of stone or brick 0.4 ft thick instead, with its paving filled in a
 // little below the wall's top.
 // Where the ground slopes, it's level, from the lowest ground under it.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneGround} g */
 function raisedGround(mesh, scene, g) {
   const [C, low, top, id] = [scene.colors, g.low, g.top, g.item.id];
   const shape = groundShape(g);
@@ -1562,6 +2053,7 @@ function raisedGround(mesh, scene, g) {
     if (length < 1e-9) return;
     const [dx, dy] = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
     const [ix, iy] = [-sign * dy, sign * dx]; // inward
+    /** @param {number} s @param {number} d @param {number} z */
     const at = (s, d, z) => [a[0] + dx * s + ix * d, a[1] + dy * s + iy * d, z];
     if (!g.edging) {
       mesh.face([at(0, 0, low), at(length, 0, low), at(length, 0, top), at(0, 0, top)], paving(C, g), id, at(length / 2, 1, low));
@@ -1570,6 +2062,7 @@ function raisedGround(mesh, scene, g) {
     // At a corner turning in, the wall runs on its thickness past it, to close the corner inside.
     const turnsIn = sign * ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) < -1e-9;
     const [end, t] = [length + (turnsIn ? 0.4 : 0), 0.4];
+    /** @param {number} z */
     const corners = (z) => [at(0, 0, z), at(end, 0, z), at(end, t, z), at(0, t, z)];
     hexa(mesh, corners(low), corners(top), C[g.edging] ?? C.stone, id);
   });
@@ -1577,6 +2070,7 @@ function raisedGround(mesh, scene, g) {
 
 // A ground's railings, in its paving, 3 ft over its top along each side it lists: posts about every 6 ft, a
 // top and a bottom rail, and balusters between them.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneGround} g */
 function railings(mesh, scene, g) {
   const color = paving(scene.colors, g);
   const [z0, z1] = [g.top, g.top + 3];
@@ -1584,6 +2078,7 @@ function railings(mesh, scene, g) {
     const across = side === "back" || side === "front"; // runs along x
     const [a0, a1] = across ? [g.x, g.x + g.width] : [g.y, g.y + g.depth];
     const line = { back: g.y + 0.15, front: g.y + g.depth - 0.15, left: g.x + 0.15, right: g.x + g.width - 0.15 }[side];
+    /** @param {number} s0 @param {number} s1 @param {number} h0 @param {number} h1 @param {number} half */
     const bar = (s0, s1, h0, h1, half) => box(mesh, across ? [s0, line - half, h0] : [line - half, s0, h0], across ? [s1, line + half, h1] : [line + half, s1, h1], color, g.item.id);
     bar(a0, a1, z1 - 0.2, z1, 0.15);
     bar(a0, a1, z0 + 0.25, z0 + 0.4, 0.08);
@@ -1598,6 +2093,7 @@ function railings(mesh, scene, g) {
 
 // A shed: walls in siding under a gable roof, its eaves a little past them, and its doors and windows.
 // Where the ground slopes, it's level, its floor at the highest ground under it, its walls down to the lowest.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneShed} b */
 function shed(mesh, scene, b) {
   const [C, base, over] = [scene.colors, b.base, 0.5];
   box(mesh, [b.x, b.y, b.low], [b.x + b.width, b.y + b.depth, base + b.wall], C.siding, b.item.id);
@@ -1605,6 +2101,7 @@ function shed(mesh, scene, b) {
   roofSection(mesh, scene, { ...span, ridge: b.ridge, eave: base + b.wall + MODEL_ROOF_DEPTH, peak: base + b.peak, item: b.item, color: C["shed-roof"] });
   // Its doors and windows, standing just out from its walls.
   for (const o of b.openings) {
+    /** @type {Part} */
     const part = (s, d, [za, zb], color) => slab(mesh, o, s, d, za, [zb, zb], color, o.item.id);
     if (o.kind === "vent") part([o.s0, o.s1], [-0.04, 0], [o.z0, o.z1], C.grille);
     else if (o.kind === "opening") part([o.s0, o.s1], [-0.02, 0], [o.z0, o.z1], C.black); // a dark doorway
@@ -1617,6 +2114,7 @@ function shed(mesh, scene, b) {
 // A fence: wood boards between posts, or chain link, steel posts with a top rail and its mesh, a diamond
 // lattice of wires, between them. Each gate is a panel of the same between posts of its own. Its heights are over
 // the ground, so where that slopes, it does too, each post standing level.
+/** @param {Mesh} mesh @param {Scene} scene @param {SceneFence} f */
 function fence(mesh, scene, f) {
   const [C, details, id] = [scene.colors, scene.details, f.item.id];
   const chain = f.kind === "chain link";
@@ -1628,24 +2126,40 @@ function fence(mesh, scene, f) {
     const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
     if (length < 1e-6) return;
     const [dx, dy] = [(q[0] - p[0]) / length, (q[1] - p[1]) / length];
+    /** @param {number} t */
     const ground = (t) => groundAt(details, p[0] + dx * t, p[1] + dy * t);
+    /** @param {number} t @param {number} side @param {number} z */
     const at = (t, side, z) => [p[0] + dx * t - dy * half * side, p[1] + dy * t + dx * half * side, ground(t) + z]; // side: -1 or 1, across
     const bends = bendsAlong(details, p, q).slice(1, -1).map(([x, y]) => Math.hypot(x - p[0], y - p[1])); // where the ground under it bends
+    /**
+     * @param {number} t0 @param {number} t1 @param {number} z0 @param {number} z1 @param {RGB} color
+     * @param {number} itemId
+     */
     const run = (t0, t1, z0, z1, color, itemId) => {
       const cuts = [t0, ...bends.filter((t) => t0 < t && t < t1), t1];
       for (let k = 0; k + 1 < cuts.length; k++) {
+        /** @param {number} z */
         const corners = (z) => [at(cuts[k], -1, z), at(cuts[k + 1], -1, z), at(cuts[k + 1], 1, z), at(cuts[k], 1, z)];
         hexa(mesh, corners(z0), corners(z1), color, itemId);
       }
     };
     // A wire slanting up from ta at za to tb at zb, its ends square to it, so where two wires meet, their ends
     // cross rather than lying in one plane.
+    /**
+     * @param {number} ta @param {number} za @param {number} tb @param {number} zb @param {RGB} color
+     * @param {number} itemId
+     */
     const wire = (ta, za, tb, zb, color, itemId) => {
       const k = 0.05 * Math.sign((zb - za) * (tb - ta)); // rising to the right, or to the left
+      /** @param {number} t @param {number} z */
       const corners = (t, z) => [at(t - 0.05, -1, z + k), at(t + 0.05, -1, z - k), at(t + 0.05, 1, z - k), at(t - 0.05, 1, z + k)];
       hexa(mesh, corners(ta, za), corners(tb, zb), color, itemId);
     };
     // Boards, or chain link: a rail along its top, and a gate's bottom and sides, with the mesh between.
+    /**
+     * @param {number} t0 @param {number} t1 @param {number} z0 @param {number} z1 @param {RGB} color
+     * @param {number} itemId @param {boolean} [gate]
+     */
     const panel = (t0, t1, z0, z1, color, itemId, gate = false) => {
       if (!chain) return run(t0, t1, z0, z1, color, itemId);
       const rail = 0.12;
@@ -1690,15 +2204,26 @@ function fence(mesh, scene, f) {
 // A railing along an axis, x or y, from s0 to s1 and across d0 to d1: a handrail as wide along top(s), a rail
 // along base(s), posts at its ends and about every 6 ft from base to a little over the handrail, and poles about
 // every 5 in between, each part no higher than cap. base and top are straight lines along it.
+/**
+ * @param {Mesh} mesh @param {RGB} color @param {number} id @param {"x" | "y"} axis @param {number[]} s @param {number[]} d
+ * @param {(s: number) => number} base @param {(s: number) => number} top @param {number} [cap]
+ */
 function railing(mesh, color, id, axis, [s0, s1], [d0, d1], base, top, cap = Infinity) {
+  /** @param {number} s @param {number} d @param {number} z */
   const at = (s, d, z) => (axis === "x" ? [s, d, z] : [d, s, z]);
   // A bar from sa to sb across da to db, between lo(s) and hi(s), cut where either crosses cap.
+  /**
+   * @param {number} sa @param {number} sb @param {number} da @param {number} db @param {(s: number) => number} lo
+   * @param {(s: number) => number} hi
+   */
   const bar = (sa, sb, da, db, lo, hi) => {
+    /** @param {(s: number) => number} f */
     const cross = (f) => { const [fa, fb] = [f(sa), f(sb)]; return (fa - cap) * (fb - cap) < 0 ? [sa + ((cap - fa) / (fb - fa)) * (sb - sa)] : []; };
     const cuts = [sa, ...cross(lo), ...cross(hi), sb].sort((u, v) => u - v);
     for (let i = 0; i + 1 < cuts.length; i++) {
       const [u0, u1] = [cuts[i], cuts[i + 1]];
       if (u1 - u0 < 1e-6 || lo((u0 + u1) / 2) >= cap) continue;
+      /** @param {number} u @param {(s: number) => number} f */
       const z = (u, f) => Math.min(cap, f(u));
       const ends = [[u0, da], [u1, da], [u1, db], [u0, db]];
       hexa(mesh, ends.map(([u, d]) => at(u, d, z(u, lo))), ends.map(([u, d]) => at(u, d, Math.max(z(u, lo), z(u, hi)))), color, id);
@@ -1719,14 +2244,20 @@ function railing(mesh, color, id, axis, [s0, s1], [d0, d1], base, top, cap = Inf
 // A backflow preventer along its longer side, in its finish: a pipe up out of the ground at each end, its feet
 // sunk a little, so they're not in the plane of the ground or a bed's paving, and across between them at the top,
 // with a valve near each end, its handle dark, and the preventer's bell between them.
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneFixture} f */
 function backflow(mesh, C, f) {
   const [color, dark, id] = [C[f.finish] ?? C.steel, C.black, f.item.id];
   const along = f.x1 - f.x0 >= f.y1 - f.y0 ? "x" : "y";
   const [[s0, s1], [d0, d1]] = along === "x" ? [[f.x0, f.x1], [f.y0, f.y1]] : [[f.y0, f.y1], [f.x0, f.x1]];
+  /** @param {number} s @param {number} d */
   const at = (s, d) => (along === "x" ? [s, d] : [d, s]);
   const [mid, r] = [(d0 + d1) / 2, Math.min(0.07, (d1 - d0) / 4)];
   const top = f.z1 - r;
   for (const s of [s0 + r, s1 - r]) round(mesh, at(s, mid), r, f.z0 - 0.15, top + r, color, id);
+  /**
+   * @param {number} a @param {number} b @param {number} da @param {number} db @param {number} z0 @param {number} z1
+   * @param {RGB} c
+   */
   const bar = (a, b, da, db, z0, z1, c) => box(mesh, [...(along === "x" ? [a, da] : [da, a]), z0], [...(along === "x" ? [b, db] : [db, b]), z1], c, id);
   bar(s0 + r, s1 - r, mid - r, mid + r, top - r, top + r, color);
   for (const s of [s0 + (s1 - s0) * 0.25, s0 + (s1 - s0) * 0.75]) {
@@ -1746,9 +2277,11 @@ function backflow(mesh, C, f) {
 // (litterBox).
 // A register set in the corner of its floor and the wall it stands against, its grille sloping from the floor out
 // in the room up to the wall, as high as its height.
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneFixture} f */
 function cornerRegister(mesh, C, f) {
   const wall = f.against[0];
   // The point u of the way along the wall and v of the way out from it, at height z.
+  /** @param {number} u @param {number} v @param {number} z */
   const at = (u, v, z) => {
     if (wall === "left" || wall === "right") return [wall === "left" ? f.x0 + v * (f.x1 - f.x0) : f.x1 - v * (f.x1 - f.x0), f.y0 + u * (f.y1 - f.y0), z];
     return [f.x0 + u * (f.x1 - f.x0), wall === "back" ? f.y0 + v * (f.y1 - f.y0) : f.y1 - v * (f.y1 - f.y0), z];
@@ -1765,13 +2298,14 @@ function cornerRegister(mesh, C, f) {
 
 // A roof vent from just under the roof up to its height over it: a pipe, or a chimney, its flue under its cap,
 // wider by MODEL_CHIMNEY_CAP, with two dark slots standing just proud all round it.
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneRoofVent} v */
 function roofVent(mesh, C, v) {
   const [x, y, w, top, id] = [v.x, v.y, v.width / 2, v.z + v.height, v.item.id];
   if (v.kind !== "chimney") {
-    box(mesh, [x - w, y - w, v.z - 0.5], [x + w, y + w, top], C[v.finish] ?? C.black, id);
+    box(mesh, [x - w, y - w, v.z - 0.5], [x + w, y + w, top], C[v.finish ?? "black"] ?? C.black, id);
     return;
   }
-  const [color, [out, tall]] = [C[v.finish] ?? C.steel, MODEL_CHIMNEY_CAP];
+  const [color, [out, tall]] = [C[v.finish ?? "steel"] ?? C.steel, MODEL_CHIMNEY_CAP];
   const [cap, base] = [w + out, Math.max(v.z, top - tall)];
   box(mesh, [x - w, y - w, v.z - 0.5], [x + w, y + w, base], color, id);
   box(mesh, [x - cap, y - cap, base], [x + cap, y + cap, top], color, id);
@@ -1783,6 +2317,7 @@ function roofVent(mesh, C, v) {
 
 // An attic vent: its box, against the house's wall, and its slats across it, every 0.2 ft up it, standing just out
 // from its faces along the wall (the one against the wall hidden in it).
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneFixture} f */
 function atticVent(mesh, C, f) {
   const color = C[f.finish] ?? C.white;
   box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], color, f.item.id);
@@ -1796,24 +2331,26 @@ function atticVent(mesh, C, f) {
 // The wall a fixture stands nearest, which a fireplace's firebox and a litter box's entry face away from: the one it
 // stands against, or of two, as in a corner, the one across the way it's longer, so it faces out along its length;
 // else the one of its piece it's nearest.
+/** @param {SceneFixture} f @returns {Side} */
 function nearestWall(f) {
   if (f.against?.length) {
     const along = f.y1 - f.y0 > f.x1 - f.x0 ? ["back", "front"] : ["left", "right"];
     return f.against.find((side) => along.includes(side)) ?? f.against[0];
   }
-  const p = f.piece;
+  const p = /** @type {Piece} */ (f.piece); // a fixture in a room, if against none of its walls
   const gaps = { left: f.x0 - p.x, right: p.x + p.width - f.x1, back: f.y0 - p.y, front: p.y + p.depth - f.y1 };
-  return Object.keys(gaps).reduce((a, b) => (gaps[b] < gaps[a] ? b : a));
+  return /** @type {Side[]} */ (Object.keys(gaps)).reduce((a, b) => (gaps[b] < gaps[a] ? b : a));
 }
 
 // A litter box, as a Litter-Robot is: its base, the lower third, and its globe sitting in it, a drum lying across
 // the way its entry faces, its own `faces` or away from the wall nearest it (nearestWall; toward the front out in
 // the yard), as wide as the box across and up to its top, with its entry a dark disc standing just out from the
 // drum's end, its back inside it. One in a cabinet is the cabinet (litterCabinet).
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneFixture} f */
 function litterBox(mesh, C, f) {
   const color = C[f.finish] ?? C.white;
   const id = f.item.id;
-  const faces = f.faces ?? (f.piece ? { left: "right", right: "left", back: "front", front: "back" }[nearestWall(f)] : "front");
+  const faces = f.faces ?? (f.piece ? /** @type {Record<Side, Side>} */ ({ left: "right", right: "left", back: "front", front: "back" })[nearestWall(f)] : "front");
   if (f.cabinet) {
     litterCabinet(mesh, C, f, faces);
     return;
@@ -1825,6 +2362,7 @@ function litterBox(mesh, C, f) {
   const z = f.z1 - r;
   const [cx, cy] = [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2];
   // a point along the way it faces, from its back (0) to its entry (1), at the drum's height
+  /** @param {number} k @param {number} [out] */
   const at = (k, out = 0) => {
     if (faces === "left" || faces === "right") return [faces === "right" ? f.x0 + k * (f.x1 - f.x0) + out : f.x1 - k * (f.x1 - f.x0) - out, cy, z];
     return [cx, faces === "front" ? f.y0 + k * (f.y1 - f.y0) + out : f.y1 - k * (f.y1 - f.y0) - out, z];
@@ -1836,17 +2374,20 @@ function litterBox(mesh, C, f) {
 // A litter box's cabinet, made to look like furniture: its body in its finish, and on the side it faces, over a
 // toe kick, two doors, panels standing just out from it with a dark slit between them and a knob each by it, and at
 // the end of that side `cabinet` says, as you face it, a column of two open shelves, dark, the cat's way in.
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneFixture} f @param {Side} faces */
 function litterCabinet(mesh, C, f, faces) {
   const color = C[f.finish] ?? C.wood;
   const id = f.item.id;
   box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], color, id);
   // A point on its front, s of the way across it from its left end as you face it, at height z, out from it.
+  /** @param {number} s @param {number} z @param {number} out */
   const point = (s, z, out) => ({
     right: [f.x1 + out, f.y1 - s * (f.y1 - f.y0), z],
     left: [f.x0 - out, f.y0 + s * (f.y1 - f.y0), z],
     front: [f.x0 + s * (f.x1 - f.x0), f.y1 + out, z],
     back: [f.x1 - s * (f.x1 - f.x0), f.y0 - out, z],
   })[faces];
+  /** @param {number[]} s @param {number[]} z @param {number[]} out @param {RGB} panelColor */
   const panel = ([s0, s1], [z0, z1], [out0, out1], panelColor) => {
     const [a, b] = [point(s0, z0, out0), point(s1, z1, out1)];
     box(mesh, a.map((v, k) => Math.min(v, b[k])), a.map((v, k) => Math.max(v, b[k])), panelColor, id);
@@ -1865,6 +2406,7 @@ function litterCabinet(mesh, C, f, faces) {
   for (const [z0, z1] of [[kick, middle - 0.04], [middle + 0.04, top]]) panel([shelves[0] + m, shelves[1] - m], [z0, z1], [-0.01, 0.015], C.black);
 }
 
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneFixture} f */
 function fixture(mesh, C, f) {
   if (f.kind === "litter box") {
     litterBox(mesh, C, f);
@@ -1900,13 +2442,14 @@ function fixture(mesh, C, f) {
   }
   if (f.kind === "half wall") {
     const cap = Math.max(f.z0, f.z1 - 0.15);
-    box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, cap], C[f.place?.finish.walls] ?? C.paint, f.item.id);
+    box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, cap], C[f.place?.finish.walls ?? "paint"] ?? C.paint, f.item.id);
     box(mesh, [f.x0, f.y0, cap], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
     return;
   }
   box(mesh, [f.x0, f.y0, f.z0], [f.x1, f.y1, f.z1], C[f.finish] ?? C.white, f.item.id);
   if (f.kind !== "fireplace" || !f.piece) return;
   const wall = nearestWall(f);
+  /** @param {number} a @param {number} b */
   const middle = (a, b) => [a + 0.2 * (b - a), b - 0.2 * (b - a)];
   const [z0, z1] = [f.z0 + 0.15 * (f.z1 - f.z0), f.z0 + 0.6 * (f.z1 - f.z0)];
   const t = 0.03;
@@ -1922,6 +2465,7 @@ function fixture(mesh, C, f) {
 }
 
 // The scene's triangles, cut away to `mode` and seen along `view`, its trees shown or not and in a season.
+/** @param {Scene} scene @param {string} mode @param {Vec} view @param {{trees?: boolean, season?: Season}} [options] */
 function buildModel(scene, mode, view, { trees = true, season = "summer" } = {}) {
   const mesh = modelMesh();
   const C = scene.colors;
@@ -2013,11 +2557,25 @@ void main() {
   gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
 }`;
 
+/**
+ * The detailed view's WebGL: its context and uniforms, how many triangles are in its buffer and from which on are the
+ * lawn's and beds' tops, what they were built for, the colors it lights up and shades coverage in, the buffer picking
+ * draws into, and the coverage grid's texture, with the scene and key it was last filled for.
+ * @typedef {{
+ *   gl: WebGLRenderingContext, uniforms: Record<string, WebGLUniformLocation | null>, count: number, wet: number,
+ *   built: string | null, scene: Scene | null, focusColor: RGB, coverage: boolean, coverageColors: Float32Array,
+ *   pick: {w: number, h: number, buffer: WebGLFramebuffer | null} | null,
+ *   counts: {texture: WebGLTexture | null, scene: Scene | null, key: string | null},
+ * }} ModelGL
+ */
+
+/** @param {HTMLCanvasElement} canvas @returns {ModelGL | null} */
 function modelGL(canvas) {
   const gl = canvas.getContext("webgl", { antialias: true });
   if (!gl) return null;
+  /** @param {number} type @param {string} source */
   const shader = (type, source) => {
-    const s = gl.createShader(type);
+    const s = /** @type {WebGLShader} */ (gl.createShader(type)); // null only from a lost context
     gl.shaderSource(s, source);
     gl.compileShader(s);
     return s;
@@ -2030,7 +2588,7 @@ function modelGL(canvas) {
   gl.useProgram(program);
   const buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  [["position", 3, 0], ["normal", 3, 3], ["color", 3, 6], ["id", 1, 9]].forEach(([name, size, offset]) => {
+  /** @type {[string, number, number][]} */ ([["position", 3, 0], ["normal", 3, 3], ["color", 3, 6], ["id", 1, 9]]).forEach(([name, size, offset]) => {
     const at = gl.getAttribLocation(program, name);
     gl.enableVertexAttribArray(at);
     gl.vertexAttribPointer(at, size, gl.FLOAT, false, 40, offset * 4);
@@ -2042,16 +2600,29 @@ function modelGL(canvas) {
   const texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, new Uint8Array(1));
-  for (const [name, value] of [["MIN_FILTER", "NEAREST"], ["MAG_FILTER", "NEAREST"], ["WRAP_S", "CLAMP_TO_EDGE"], ["WRAP_T", "CLAMP_TO_EDGE"]]) {
-    gl.texParameteri(gl.TEXTURE_2D, gl[`TEXTURE_${name}`], gl[value]);
+  /** @typedef {["MIN_FILTER" | "MAG_FILTER" | "WRAP_S" | "WRAP_T", "NEAREST" | "CLAMP_TO_EDGE"]} TextureParameter */
+  for (const [name, value] of /** @type {TextureParameter[]} */ ([["MIN_FILTER", "NEAREST"], ["MAG_FILTER", "NEAREST"], ["WRAP_S", "CLAMP_TO_EDGE"], ["WRAP_T", "CLAMP_TO_EDGE"]])) {
+    gl.texParameteri(gl.TEXTURE_2D, gl[/** @type {`TEXTURE_${typeof name}`} */ (`TEXTURE_${name}`)], gl[value]);
   }
   gl.uniform1i(uniforms.counts, 0);
-  return { gl, uniforms, count: 0, wet: 0, built: null, pick: null, counts: { texture, scene: null, key: null } };
+  return /** @type {ModelGL} */ ({ gl, uniforms, count: 0, wet: 0, built: null, pick: null, counts: { texture, scene: null, key: null } }); // the rest when first drawn
 }
 
 // The camera for the 3D view's turn and tilt, centered on `target`: the
 // directions across and up the screen and toward the viewer, and the matrix
 // from feet to clip space, its depth always across the whole scene.
+/**
+ * The camera's directions, matrix and light, what it's centered on and at what scale, and its view's size in px.
+ * @typedef {{
+ *   view: Vec, matrix: Float32Array, across: Vec, up: Vec, target: Vec, scale: number, width: number,
+ *   height: number, light: Vec, project: (p: Vec) => number[],
+ * }} ModelCamera
+ */
+
+/**
+ * @param {Scene} scene @param {number} width @param {number} height @param {number} scale @param {Vec} target
+ * @returns {ModelCamera}
+ */
 function modelCamera(scene, width, height, scale, target) {
   const [turn, tilt] = [state.mapAngle, state.mapTilt].map((d) => (d * Math.PI) / 180);
   const toward = [Math.sin(turn), Math.cos(turn)];
@@ -2060,9 +2631,10 @@ function modelCamera(scene, width, height, scale, target) {
   const across = [toward[1], -toward[0], 0];
   const up = [-toward[0] * sin, -toward[1] * sin, cos];
   const c = target;
+  /** @param {Vec} u @param {Vec} v */
   const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
   const [kx, ky, kz] = [(2 * scale) / width, (2 * scale) / height, -1 / scene.radius];
-  const rows = [[across, kx, c], [up, ky, c], [view, kz, scene.center]].map(([v, k, from]) => [...v.map((x) => x * k), -dot(v, from) * k]);
+  const rows = /** @type {[Vec, number, Vec][]} */ ([[across, kx, c], [up, ky, c], [view, kz, scene.center]]).map(([v, k, from]) => [...v.map((x) => x * k), -dot(v, from) * k]);
   const matrix = new Float32Array(16);
   for (let col = 0; col < 4; col++) {
     for (let row = 0; row < 3; row++) matrix[col * 4 + row] = rows[row][col];
@@ -2083,6 +2655,7 @@ function modelCamera(scene, width, height, scale, target) {
 
 // Draw the scene, the parts with ids in `focus`, first to last, lit up, or its ids for picking; with the
 // sprinklers' coverage shown, the lawn and planted beds, last in the buffer, by how many heads reach each spot.
+/** @param {ModelGL} m @param {ModelCamera} camera @param {number[] | null} focus @param {boolean} picking */
 function renderModel(m, camera, focus, picking) {
   const { gl, uniforms: u } = m;
   gl.uniformMatrix4fv(u.matrix, false, camera.matrix);
@@ -2110,13 +2683,14 @@ function renderModel(m, camera, focus, picking) {
 // which step of MODEL_WATER_STEPS the water they put on it comes to (0 for none): a grid of them, a cell
 // MODEL_COVERAGE_CELL ft across, or wider where the lot is too big for MODEL_COVERAGE_CELLS of them along a side,
 // each from the heads whose throw, out to its radius and within its arc, reaches its middle.
+/** @param {Scene} scene @param {Item | null} [part] @param {Measure} [measure] @returns {Coverage} */
 function modelCoverage(scene, part = null, measure = "heads") {
   const [x0, y0, , x1, y1] = scene.lawn.bbox;
   const cell = Math.max(MODEL_COVERAGE_CELL, (x1 - x0) / MODEL_COVERAGE_CELLS, (y1 - y0) / MODEL_COVERAGE_CELLS);
   const [w, h] = [Math.max(1, Math.ceil((x1 - x0) / cell)), Math.max(1, Math.ceil((y1 - y0) / cell))];
   const counts = new Uint8Array(w * h);
   const water = measure === "water" ? new Float32Array(w * h) : null;
-  for (const { heads } of part ? [part.water] : scene.sprinklers.map((z) => z.item.water)) {
+  for (const { heads } of part ? [/** @type {Water} */ (part.water)] : scene.sprinklers.map((z) => /** @type {Water} */ (z.item.water))) {
     for (const { x, y, radius, arc, rate } of heads) {
       const within = modelArc(arc);
       // Row by row, the cells whose middles are within its throw.
@@ -2140,6 +2714,7 @@ function modelCoverage(scene, part = null, measure = "heads") {
 // Whether a spot dx, dy from a sprinkler head is within its arc, [first direction, how far round] the way the angles
 // count, from the right toward the front: past its first end and short of its last, by which side of each the spot
 // is on, or for an arc of more than half a turn, not within the rest of the way round.
+/** @param {number[] | null} arc @returns {(dx: number, dy: number) => boolean} */
 function modelArc(arc) {
   if (!arc) return () => true;
   const [a, b] = [arc[0], arc[0] + arc[1]].map((d) => (d * Math.PI) / 180);
@@ -2150,12 +2725,13 @@ function modelArc(arc) {
 
 // Show the coverage of every zone, or of the zone or head focused, by heads or water (`measure`): its grid, worked
 // out once a scene, in the texture.
+/** @param {ModelGL} m @param {Scene} scene @param {Item | null} part @param {Measure} measure */
 function useCoverage(m, scene, part, measure) {
   const key = `${measure} ${part?.key ?? "all"}`;
   if (m.counts.scene === scene && m.counts.key === key) return;
   scene.coverage ??= new Map();
   if (!scene.coverage.has(key)) scene.coverage.set(key, modelCoverage(scene, part, measure));
-  const { box, w, h, counts } = scene.coverage.get(key);
+  const { box, w, h, counts } = /** @type {Coverage} */ (scene.coverage.get(key));
   const gl = m.gl;
   gl.bindTexture(gl.TEXTURE_2D, m.counts.texture);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // rows of one byte a cell, any width
@@ -2165,6 +2741,7 @@ function useCoverage(m, scene, part, measure) {
 }
 
 // The id of what's drawn at a pixel, from a render of ids to a buffer of their own.
+/** @param {ModelGL} m @param {ModelCamera} camera @param {number} x @param {number} y */
 function pickModel(m, camera, x, y) {
   const { gl } = m;
   const [w, h] = [gl.drawingBufferWidth, gl.drawingBufferHeight];
@@ -2185,7 +2762,7 @@ function pickModel(m, camera, x, y) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, m.pick.buffer);
   renderModel(m, camera, null, true);
   const pixel = new Uint8Array(4);
-  const ratio = w / gl.canvas.clientWidth;
+  const ratio = w / /** @type {HTMLCanvasElement} */ (gl.canvas).clientWidth;
   gl.readPixels(Math.floor(x * ratio), Math.floor(h - y * ratio), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   return pixel[0] + pixel[1] * 256 + pixel[2] * 65536;
@@ -2196,9 +2773,11 @@ function pickModel(m, camera, x, y) {
 // Draw the detailed view at this width, returning the map's layout: its
 // height, the keys arrow keys step through, and how to find, describe and
 // highlight each thing in it.
+/** @param {number} width @param {number | null} [fill] */
 function drawModel(width, fill = null) {
   const map = state.map;
-  const scene = (state.modelScene ??= pageModelScene());
+  // A Scene from here on but for a note, which goes no further than the note's return below.
+  const scene = /** @type {Scene} */ (state.modelScene ??= pageModelScene());
   if (map.gl === undefined) map.gl = scene.note ? null : modelGL(map.canvas);
   const note = scene.note ?? (map.gl ? null : "The detailed view needs WebGL, which this browser has turned off.");
   map.note.textContent = note ?? "";
@@ -2208,7 +2787,7 @@ function drawModel(width, fill = null) {
   renderModelCoverage(scene, !note);
   if (note) return { height: 0, keys: [], anchorOf: () => null, highlight() {}, pick: () => null };
 
-  const m = map.gl;
+  const m = /** @type {ModelGL} */ (map.gl); // there with no note
   // As large as fits, up to MODEL_SIZE; full screen, filling the height given.
   const scale = Math.min(width - 2 * MODEL_PAD, fill ? fill - 2 * MODEL_PAD : MODEL_SIZE) / (2 * scene.radius);
   const height = fill ?? Math.ceil(2 * scene.radius * scale + 2 * MODEL_PAD);
@@ -2238,7 +2817,9 @@ function drawModel(width, fill = null) {
   m.coverageColors = new Float32Array(MODEL_COVERAGE_TOKENS[measure].flatMap((token) => scene.colors[token]));
   const shows = modelShows(scene, mode, trees);
   const visible = scene.items.filter((item) => shows(item) && item !== scene.lawn);
+  /** @type {Map<string | null, Item>} */
   const byKey = new Map(scene.items.map((item) => [item.key, item]));
+  /** @type {ModelLayout} */
   const layout = {
     height,
     keys: visible.map((item) => item.key),
@@ -2253,7 +2834,7 @@ function drawModel(width, fill = null) {
       }
       renderModel(m, camera, item ? item.ids ?? [item.id, item.id] : null, false);
     },
-    centerOf: (key) => byKey.has(key) && modelCenter(byKey.get(key), mode),
+    centerOf: (key) => byKey.has(key) && modelCenter(/** @type {Item} */ (byKey.get(key)), mode),
     pick: (x, y) => {
       const item = scene.items[pickModel(m, camera, x, y) - 1];
       map.pointer = item ? { key: item.key, x, y } : null; // the readout goes beside it
@@ -2273,6 +2854,7 @@ function drawModel(width, fill = null) {
 
 // Zoom the detailed view in by a factor, out to the whole lot at 1, and
 // center it on a point if given; at 1 it centers on the whole lot again.
+/** @param {number} factor @param {Vec | false | "" | null} [target] */
 function zoomModel(factor, target = null) {
   const fit = state.modelScene?.fit ?? 1;
   state.modelZoom = Math.min(fit * MODEL_ZOOM_MAX, Math.max(1, (state.modelZoom ?? fit) * factor));
@@ -2284,6 +2866,7 @@ function zoomModel(factor, target = null) {
 
 // Zooming about a point on the canvas, x and y from its top left, so what's under it stays there, as the wheel
 // does: false at the end of the zoom, where it can't go further that way.
+/** @param {number} factor @param {number} x @param {number} y */
 function zoomModelAt(factor, x, y) {
   const [camera, scene] = [state.map.camera, state.modelScene];
   if (!camera || !scene || scene.note) return false;
@@ -2301,11 +2884,13 @@ function zoomModelAt(factor, x, y) {
 }
 
 // Where the detailed view centers, as it stands: what it was zoomed or panned to, else the house, or at 1 the lot.
+/** @param {Scene} scene @returns {Vec} */
 function modelTargetNow(scene) {
   return state.modelTarget ?? ((state.modelZoom ?? scene.fit) <= 1 ? scene.center : scene.houseCenter);
 }
 
 // Panning the detailed view by dx, dy px on the canvas: the scene moves with them, as under a drag.
+/** @param {number} dx @param {number} dy */
 function panModel(dx, dy) {
   const [camera, scene] = [state.map.camera, state.modelScene];
   if (!camera || !scene || scene.note) return;
@@ -2319,21 +2904,23 @@ function panModel(dx, dy) {
 // shows or hides the trees and the buttons for their season, there only for
 // the whole house, since cut away they're off. The season isn't kept, so the
 // page always opens on today's.
+/** @param {Scene | NoScene} scene */
 function renderModelCuts(scene) {
   const levels = scene.levels ?? [];
-  const options = [["outside", "Outside"], ...levels.map(([floor]) => [floor, `${floor} level`])];
+  /** @type {[string, string][]} */
+  const options = [["outside", "Outside"], ...levels.map(([floor]) => /** @type {[string, string]} */ ([floor, `${floor} level`]))];
   const current = options.some(([id]) => id === state.modelCut) ? state.modelCut : "outside";
-  const row = state.map.cuts.querySelector(".tree-options");
+  const row = /** @type {HTMLElement} */ (state.map.cuts.querySelector(".tree-options"));
   row.hidden = current !== "outside" || !(scene.trees?.length || scene.hedges?.length);
-  row.querySelector("input").checked = state.modelTrees;
-  const seasons = row.querySelector(".seasons");
+  /** @type {HTMLInputElement} */ (row.querySelector("input")).checked = state.modelTrees;
+  const seasons = /** @type {HTMLElement} */ (row.querySelector(".seasons"));
   seasons.hidden = !state.modelTrees || !(scene.hedges?.length || scene.trees?.some((t) => t.kind === "deciduous"));
   const now = seasonOf(new Date());
   renderModelButtons(seasons, MODEL_SEASONS.map((s) => [s, s[0].toUpperCase() + s.slice(1), s === now ? "The season now" : null]), state.modelSeason, (id) => {
-    state.modelSeason = id;
+    state.modelSeason = /** @type {Season} */ (id); // one of MODEL_SEASONS, its buttons' ids
     drawMap();
   });
-  renderModelButtons(state.map.cuts.querySelector(".levels .segmented"), options, current, (id) => {
+  renderModelButtons(/** @type {HTMLElement} */ (state.map.cuts.querySelector(".levels .segmented")), options, current, (id) => {
     state.modelCut = id;
     try {
       localStorage.setItem("house-monitor-model-cut", id);
@@ -2344,6 +2931,10 @@ function renderModelCuts(scene) {
 
 // A group of buttons, one pressed: each option its id, label and tooltip, if any, and what a click on it does.
 // Made again only when the options change, and otherwise just pressed anew, so a button keeps its focus.
+/**
+ * @param {HTMLElement} group @param {[string, string, (string | null)?][]} options @param {string} current
+ * @param {(id: string) => void} pick
+ */
 function renderModelButtons(group, options, current, pick) {
   const key = options.map((o) => o.join("/")).join();
   if (group.dataset.options !== key) {
@@ -2354,27 +2945,31 @@ function renderModelButtons(group, options, current, pick) {
       return button;
     }));
   }
-  for (const button of group.children) button.setAttribute("aria-pressed", String(button.dataset.id === current));
+  for (const button of /** @type {HTMLCollectionOf<HTMLElement>} */ (group.children)) button.setAttribute("aria-pressed", String(button.dataset.id === current));
 }
 
 // Whether the detailed view shows the sprinklers' coverage: turned on, for a house with sprinklers.
+/** @param {Scene | NoScene} scene */
 function modelCoverageShown(scene) {
-  return state.modelCoverage && scene.sprinklers?.length > 0;
+  return state.modelCoverage && (scene.sprinklers?.length ?? 0) > 0;
 }
 
 // The button that shows the sprinklers' coverage, for a house with them, and while it's on, whether it's of the heads
 // reaching each spot or the water they put on it, and its key: what each color means, and whose coverage it is, every
 // zone's or the one focused. Both keys are laid out in one place, the other hidden, so switching between them moves
 // nothing: the buttons stay where they are, and the map keeps its size.
+/** @param {Scene | NoScene} scene @param {boolean} drawn */
 function renderModelCoverage(scene, drawn) {
   const box = state.map.coverage;
   box.hidden = !(drawn && scene.sprinklers?.length);
   if (box.hidden) return;
   const [on, by] = [state.modelCoverage, state.modelCoverageBy];
-  const swatches = (measure) => MODEL_COVERAGE_TOKENS[measure].map((token) => `rgb(${scene.colors[token].map((v) => Math.round(v * 255)).join(" ")})`);
+  /** @param {Measure} measure */
+  const swatches = (measure) => MODEL_COVERAGE_TOKENS[measure].map((token) => `rgb(${/** @type {Scene} */ (scene).colors[token].map((v) => Math.round(v * 255)).join(" ")})`);
   const current = `${on} ${by} ${swatches("heads").join()} ${swatches("water").join()}`;
   if (box.dataset.current === current) return;
   box.dataset.current = current;
+  /** @param {string} name @param {unknown} value */
   const save = (name, value) => {
     try {
       localStorage.setItem(name, String(value));
@@ -2387,7 +2982,7 @@ function renderModelCoverage(scene, drawn) {
     drawMap();
   });
   if (!on) return box.replaceChildren(el("div", { class: "coverage-controls" }, button));
-  const choices = [["heads", "Heads"], ["water", "Water"]].map(([id, label]) => {
+  const choices = /** @type {[Measure, string][]} */ ([["heads", "Heads"], ["water", "Water"]]).map(([id, label]) => {
     const choice = el("button", { type: "button", "aria-pressed": String(id === by) }, label);
     choice.addEventListener("click", () => {
       state.modelCoverageBy = id;
@@ -2396,10 +2991,10 @@ function renderModelCoverage(scene, drawn) {
     });
     return choice;
   });
-  const keys = [
+  const keys = /** @type {[Measure, string[], string, string | null][]} */ ([
     ["heads", MODEL_COVERAGE_KEY, "Heads reaching each spot of the lawn and beds", null],
     ["water", MODEL_WATER_KEY, "Inches of water each spot of the lawn and beds gets in an hour of each zone", "per hour each zone runs"],
-  ].map(([measure, labels, about, unit]) => {
+  ]).map(([measure, labels, about, unit]) => {
     const colors = swatches(measure);
     const key = el("ul", { class: "coverage-key", "aria-label": about },
       ...labels.map((label, n) => el("li", {}, el("span", { class: "swatch", style: `background: ${colors[n]}` }), label)));
@@ -2413,23 +3008,25 @@ function renderModelCoverage(scene, drawn) {
 }
 
 // Whose coverage shows, in the key: every zone's, or a zone's or head's.
+/** @param {Item | null} part */
 function renderModelCoverageOf(part) {
   const of = state.map.coverage.querySelector(".coverage-of");
-  if (of) of.textContent = part ? part.water.of : "All zones";
+  if (of) of.textContent = part ? /** @type {Water} */ (part.water).of : "All zones";
 }
 
 // The list of everything placed, by kind, as a table: the view's text
 // alternative, and the place to check the guesses, but in a made-up house.
+/** @param {Scene} scene */
 function renderModelList(scene) {
   const guesses = !scene.details.example;
-  state.map.list.querySelector("summary").textContent = `Everything in the detailed view${guesses ? ", known or guessed" : ""}`;
+  /** @type {HTMLElement} */ (state.map.list.querySelector("summary")).textContent = `Everything in the detailed view${guesses ? ", known or guessed" : ""}`;
   const rows = MODEL_GROUPS.flatMap((group) => {
     const items = scene.items.filter((item) => item.group === group);
     if (!items.length) return [];
     return [
       el("tr", { class: "group" }, el("th", { colspan: guesses ? 4 : 3, scope: "colgroup" }, `${group} (${items.length})`)),
       ...items.map((item) => {
-        const cells = [item.name, item.kind, item.where, ...(guesses ? [item.known ? "Known" : "Guess"] : [])];
+        const cells = [item.name, item.kind, /** @type {string} */ (item.where), ...(guesses ? [item.known ? "Known" : "Guess"] : [])];
         const row = el("tr", {}, ...cells.map((text) => el("td", {}, text)));
         row.addEventListener("pointerenter", () => setMapFocus(item.key));
         row.addEventListener("pointerleave", () => setMapFocus(null));
@@ -2443,6 +3040,7 @@ function renderModelList(scene) {
 
 // How far a head throws and over what arc, or a zone's heads, for the readout; a throw the house file doesn't give is
 // its kind's, by guess.
+/** @param {SceneHead[]} heads */
 function modelThrow(heads) {
   const radii = [...new Set(heads.map((h) => h.radius))].sort((a, b) => a - b);
   const far = radii.length === 1 ? `${radii[0]} ft` : `${radii[0]} to ${radii.at(-1)} ft`;
@@ -2452,7 +3050,9 @@ function modelThrow(heads) {
 }
 
 // The water a head puts down on its area, or a zone's heads, in inches an hour, for the readout.
+/** @param {SceneHead[]} heads */
 function modelRate(heads) {
+  /** @param {number} v */
   const inches = (v) => (v < 1 ? v.toFixed(2) : v.toFixed(1));
   const rates = heads.map((h) => h.rate);
   const [lo, hi] = [Math.min(...rates), Math.max(...rates)];
@@ -2461,6 +3061,7 @@ function modelRate(heads) {
 }
 
 // The readout for a thing in the detailed view other than a room.
+/** @param {Item} item */
 function modelReadout(item) {
   const rows = [el("div", { class: "head" }, el("strong", {}, item.name), " ", el("span", {}, item.kind))];
   if (item.place && !item.sensor) rows.push(el("div", { class: "time" }, `${item.place.floor} level, no sensor`));
