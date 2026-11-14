@@ -1,0 +1,14 @@
+// Type-checks the page's JavaScript, typed in JSDoc comments; nothing is built, and the page runs as it's written.
+//   npx -p typescript@7.0.2 tsc -p .
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "types": []
+  },
+  "files": ["housemon/web/model.js", "housemon/web/app.js"]
+}
