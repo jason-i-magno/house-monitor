@@ -66,10 +66,19 @@ class ReadingAtTest(unittest.TestCase):
         self.assertLess(day_mean_f("Outside"), day_mean_f("Garage"))
 
     def test_space_heater_warms_the_office_during_the_day(self):
-        office, family = ROOMS["Office"], ROOMS["Family room"]
-        afternoon, night = local_time(14), local_time(2)
-        self.assertGreater(reading_at(office, afternoon).temperature_c, reading_at(family, afternoon).temperature_c)
-        self.assertLess(reading_at(office, night).temperature_c, reading_at(family, night).temperature_c)
+        """The office runs as the family room does but for its heater, on through the work day, so its lead over the
+        family room is more than a degree greater in the afternoon than at night. Each an hour's mean: at night the two
+        are within a reading's noise of each other, so comparing one reading of each failed on about one night in ten
+        (at least 1.25 °C more on every day of a year, in any time zone)."""
+
+        def lead(hour: float) -> float:  # the office's over the family room, °C, a reading a minute for the hour
+            start = local_time(hour)
+            office, family = ROOMS["Office"], ROOMS["Family room"]
+            return statistics.mean(
+                reading_at(office, start + 60 * m).temperature_c - reading_at(family, start + 60 * m).temperature_c for m in range(60)
+            )
+
+        self.assertGreater(lead(14) - lead(2), 1.0)
 
     def test_showers_steam_up_the_bathroom_for_a_while(self):
         room = ROOMS["Bathroom"]

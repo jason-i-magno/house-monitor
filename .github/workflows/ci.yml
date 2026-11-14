@@ -1,0 +1,140 @@
+# Every pull request and every push to main: the Python tests on the oldest and newest Python the app supports, the
+# page's type check, the cloud service's tests against a real Postgres with the race detector, its lint and known
+# vulnerabilities, and both container images built for amd64 and arm64. On main, once all of that passes, the images
+# are pushed to GitHub's container registry, tagged with the commit they were built from.
+#
+# Actions are pinned to the commit of a release, not its tag, which can be moved to point at other code.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.14"] # the oldest the README promises, and the newest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      # Without bleak, as the tests need: the standard library alone.
+      - run: python -m unittest
+
+  page:
+    name: Page type check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npx --yes -p typescript@7.0.2 tsc -p .
+
+  go:
+    name: Go tests
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18-alpine # for the tests alone
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      # Set, so the tests that need Postgres run; and in CI, one that found it unset would fail rather than skip.
+      HOUSECLOUD_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Not gofmt'd:"; echo "$unformatted"; exit 1; fi
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  lint:
+    name: Go lint and vulnerabilities
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0 # as .golangci.yml is written for
+      # Known vulnerabilities in the code paths the service calls, in its dependencies and the Go standard library.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  images:
+    name: Image ${{ matrix.image }}
+    needs: [python, page, go, lint]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # pushing to ghcr.io, which happens only on main
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: housecloud
+            file: cloud/housecloud.Containerfile
+          - image: simulator
+            file: cloud/simulator.Containerfile
+    steps:
+      # The public repository alone: private/ is a repository of its own, so it isn't here to end up in an image.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: github.event_name == 'push'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          # The commit, for deploying exactly what was tested; main, for whatever is newest.
+          tags: |
+            ghcr.io/jason-i-magno/house-monitor/${{ matrix.image }}:${{ github.sha }}
+            ghcr.io/jason-i-magno/house-monitor/${{ matrix.image }}:main
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

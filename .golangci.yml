@@ -1,0 +1,21 @@
+# golangci-lint v2, as CI runs it (.github/workflows/ci.yml). The standard linters (errcheck, govet, ineffassign,
+# staticcheck, unused), and a few more that catch real mistakes rather than matters of taste.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - errorlint # errors compared with == or asserted to a type, which wrapping breaks: use errors.Is and errors.As
+    - misspell
+    - nolintlint # a //nolint must name its linter and say why
+  settings:
+    errcheck:
+      exclude-functions:
+        # A write to a client that's gone away can't be helped, and the handler is done either way.
+        - (net/http.ResponseWriter).Write
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    presets:
+      - std-error-handling # unchecked Close, Flush and printing to stdout or stderr
