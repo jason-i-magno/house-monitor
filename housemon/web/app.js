@@ -1554,7 +1554,7 @@ function roomLabel(group, sensor, box) {
 
 // A room's name on one line if it fits, shrunk as far as 10px. Or else on
 // two lines, broken between words where the wider half is narrowest, if both
-// halves fit at full size.
+// halves fit, shrunk as far too; roomLabel shrinks each line only as it needs.
 /** @param {SVGGElement} group @param {string} name @param {number} room */
 function nameLines(group, name, room) {
   /** @param {string} text @param {number} [size] */
@@ -1570,7 +1570,7 @@ function nameLines(group, name, room) {
   const words = name.split(" ");
   const [best] = words.slice(1)
     .map((_, k) => [words.slice(0, k + 1).join(" "), words.slice(k + 1).join(" ")])
-    .map((halves) => /** @type {[string[], number]} */ ([halves, Math.max(...halves.map(width))]))
+    .map((halves) => /** @type {[string[], number]} */ ([halves, Math.max(...halves.map((half) => width(half, 10)))]))
     .sort((a, b) => a[1] - b[1]);
   return best && best[1] <= room ? best[0] : [name];
 }
