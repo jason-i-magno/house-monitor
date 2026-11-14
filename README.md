@@ -30,6 +30,8 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--ecobee-sign-in` | | Sign in to ecobee, save it to `--ecobee`, list its sensors, and exit. |
 | `--mova` | `data/mova.json` | The saved MOVAhome sign-in. |
 | `--mova-sign-in` | | Sign in to MOVAhome, save it to `--mova`, list its vacuums, and exit. |
+| `--uplink` | `data/uplink.json` | The house in the [cloud service](#cloud-service) to send to, and its token. |
+| `--uplink-sign-in` | | Set up the uplink, save it to `--uplink`, and exit. |
 | `--govee-scan` | | List the Govee sensors heard over Bluetooth, with their readings, and exit. |
 
 ## ecobee sensors
@@ -130,7 +132,16 @@ go run ./cloud/cmd/housecloud house add -id example -name "Example house" -publi
 go run ./cloud/cmd/housecloud serve -listen 127.0.0.1:8080 -default-house example
 ```
 
-A house sends what `python3 -m housemon --dump` prints with `PUT /houses/<id>/api/house`, and its readings with `POST /houses/<id>/api/readings`, as `{"readings": [...]}`, each with `Authorization: Bearer <token>`. Only a house added with `-public` can be read, as there's no signing in yet.
+Then point the app at it. It asks for the house's URL, as `http://127.0.0.1:8080/houses/example`, and the token `house add` printed, checks the cloud service takes it, and saves both to `data/uplink.json` (readable only by you, and gitignored):
+
+```sh
+python3 -m housemon --uplink-sign-in
+python3 -m housemon
+```
+
+While it runs, the app sends the house, and again whenever the house file changes, and every reading it stores, those it has already first, every 10 seconds. If the cloud service can't be reached, as when the internet is down, readings wait in the database at home, and the app tries again after 2, 5 and then every 10 minutes; nothing is lost, and nothing is counted twice. Only a house added with `-public` can be read, as there's no signing in yet.
+
+Underneath, a house sends what `python3 -m housemon --dump` prints with `PUT /houses/<id>/api/house`, and its readings with `POST /houses/<id>/api/readings`, as `{"readings": [...]}`, each with `Authorization: Bearer <token>`.
 
 ## License
 
