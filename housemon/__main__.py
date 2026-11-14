@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import signal
 import sys
 import threading
 import time
@@ -235,6 +236,9 @@ def main(argv: list[str] | None = None) -> None:
         except uplink.UplinkError:
             sources += f", sending as {args.uplink} says once it can be read"
     print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
+    # Stopped as a container is, or by a service manager, it shuts down as from ^C. Without this, run as a container's
+    # first process it wouldn't stop at all, as the kernel gives that one no default action for SIGTERM, until killed.
+    signal.signal(signal.SIGTERM, _interrupt)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -245,6 +249,10 @@ def main(argv: list[str] | None = None) -> None:
             collector.join()
         server.server_close()
         store.close()
+
+
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
 
 
 if __name__ == "__main__":

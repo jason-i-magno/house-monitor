@@ -143,6 +143,20 @@ While it runs, the app sends the house, and again whenever the house file change
 
 Underneath, a house sends what `python3 -m housemon --dump` prints with `PUT /houses/<id>/api/house`, and its readings with `POST /houses/<id>/api/readings`, as `{"readings": [...]}`, each with `Authorization: Bearer <token>`.
 
+### Container images
+
+Two images, built from the repository's root with Podman or Docker: the cloud service, and the simulated example house sending its readings to it, as the public demo runs. Only the files they need go into them, never `private/` or `data/`, and both run as a user that isn't root, with a read-only root file system.
+
+```sh
+podman build -f cloud/housecloud.Containerfile -t housecloud .
+podman build -f cloud/simulator.Containerfile -t housemon-simulator .
+
+podman run --rm -e DATABASE_URL=postgres://… -p 8080:8080 housecloud serve -default-house example
+podman run --rm -v ./uplink.json:/run/secrets/housemon/uplink.json:ro -v housemon:/var/lib/housemon housemon-simulator
+```
+
+The simulator models the example house, keeps its readings in the volume at `/var/lib/housemon`, and sends them to the house its `uplink.json` names, as `--uplink-sign-in` saves one; the file must be readable by its user, uid 10001.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -1,0 +1,10 @@
+# What the container images may be built from: only what's named here goes to the builder, so nothing else, as
+# private/ (the real house) or data/ (readings and sign-ins), can end up in an image, whatever a Containerfile copies.
+# Docker and Podman both read this file.
+*
+!go.mod
+!go.sum
+!web.go
+!cloud/
+!housemon/
+**/__pycache__
