@@ -51,7 +51,7 @@ python3 -m pip install -r requirements.txt   # bleak
 python3 -m housemon --govee-scan
 ```
 
-Each is named `GVH5075_` and the last four characters of its Bluetooth address. To tell them apart, hold one in your hand for a minute and scan again: its temperature rises. In your house file, give the room its name, as `SimulatedRoom(..., govee="GVH5075_1A2B")`, and start the app. Each room takes its sensor's newest reading every 10 seconds. If a sensor isn't heard from for 5 minutes, the terminal says so, with the names it does hear; if Bluetooth is off, it says that, and tries again every minute. Without bleak, the terminal notes that those rooms stay simulated.
+Each is named `GVH5075_` and the last four characters of its Bluetooth address. To tell them apart, hold one in your hand for a minute and scan again: its temperature rises. In your house file, give the room its name, as `SimulatedRoom(..., govee="GVH5075_1A2B")`, and start the app. Each room takes its sensor's newest reading every 10 seconds. If a sensor isn't heard from for 5 minutes, the terminal says so, with the names it does hear; if Bluetooth is off, it says that, and tries again every minute; and if the adapter is unplugged or reset, it notices within 30 seconds and starts listening again. Without bleak, the terminal notes that those rooms stay simulated.
 
 A room can have an ecobee SmartSensor beside its Govee, named as both `ecobee=` and `govee=`, say to keep the SmartSensor steering the thermostat while the Govee adds humidity. The room shows the Govee's readings, and the SmartSensor's only while the Govee goes unheard for 2 minutes, as with a dead battery or Bluetooth off. The outside can do the same with a thermostat's weather.
 

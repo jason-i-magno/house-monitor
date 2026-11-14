@@ -22,8 +22,14 @@ MISSING = 300.0  # seconds without a broadcast from a sensor the house file name
 BACKUP = 120.0  # seconds without a broadcast from a room's sensor before another source for the room fills in
 RETRY = 60.0  # seconds before scanning again after it fails, as with no Bluetooth adapter
 SCAN = 15.0  # seconds --govee-scan listens
+QUIET = 30.0  # seconds without hearing any Bluetooth device at all before the scan is taken for dead and started again
 
 Heard = Callable[[str, bytes, int | None], None]  # a broadcast: the sensor's name, its manufacturer data, its signal
+
+
+class Quiet(Exception):
+    """The scan heard no Bluetooth device at all for a while: it stopped without saying, as it does when its adapter
+    is unplugged, even for a moment, or reset."""
 
 
 @dataclass(frozen=True)
@@ -56,16 +62,21 @@ def decode(data: bytes) -> tuple[float, float, int] | None:
     return (-temperature if packed & 0x800000 else temperature), value % 1000 / 10, data[4] & 0x7F
 
 
-def scan_bluetooth(heard: Heard, stop: threading.Event) -> None:
+def scan_bluetooth(heard: Heard, stop: threading.Event, quiet: float = QUIET) -> None:
     """Listen for Govee broadcasts with bleak until stop is set, calling heard for each. A broadcast that leaves out
-    the sensor's name, as one can, takes the name the sensor last broadcast from its address."""
+    the sensor's name, as one can, takes the name the sensor last broadcast from its address. Raises Quiet if it hears
+    nothing at all, from any device, for `quiet` seconds: a scan whose adapter went away stops hearing without an
+    error, but anywhere with Bluetooth sensors in it is never that quiet while one listens."""
     import asyncio
 
     from bleak import BleakScanner
 
     names: dict[str, str] = {}
+    last = time.monotonic()
 
     def detected(device, advertisement) -> None:
+        nonlocal last
+        last = time.monotonic()
         data = advertisement.manufacturer_data.get(COMPANY)
         name = advertisement.local_name or device.name
         if name:
@@ -77,9 +88,18 @@ def scan_bluetooth(heard: Heard, stop: threading.Event) -> None:
     async def listen() -> None:
         # Every broadcast, not just those that differ from the last: BlueZ drops repeats unless told, so a sensor whose
         # reading held steady would seem to have gone quiet.
-        async with BleakScanner(detection_callback=detected, bluez={"filters": {"DuplicateData": True}}):
+        scanner = BleakScanner(detection_callback=detected, bluez={"filters": {"DuplicateData": True}})
+        await scanner.start()
+        try:
             while not stop.is_set():
                 await asyncio.sleep(0.5)
+                if time.monotonic() - last > quiet:
+                    raise Quiet(f"heard no Bluetooth device at all for {quiet:g} s")
+        finally:
+            try:
+                await scanner.stop()
+            except Exception:  # its adapter may be gone; the scan is over either way
+                pass
 
     asyncio.run(listen())
 
@@ -173,10 +193,17 @@ class GoveeSource:
         self.unheard = {name.casefold() for name in quiet}
 
     def _listen(self, stop: threading.Event) -> None:
-        """Scan until stop is set, starting again after a failure, as when Bluetooth is off."""
+        """Scan until stop is set, starting again at once if it goes quiet, warning of that once until a sensor is heard
+        again, and a while after any other failure, as when Bluetooth is off."""
+        warned: float | None = None  # when it last warned of a quiet scan
         while not stop.is_set():
             try:
                 self.scan(self.heard, stop)
+            except Quiet as e:
+                if warned is None or any(b.at > warned for b in self.heard_from()):
+                    self.warn(f"{e}, as when its adapter is unplugged or reset; starting the scan again")
+                    warned = time.time()
+                stop.wait(1)
             except Exception as e:  # whatever stops the scan, the rest of the house carries on
                 self.warn(f"couldn't listen for its sensors: {e or type(e).__name__}; trying again in {self.retry:g} s")
                 stop.wait(self.retry)
