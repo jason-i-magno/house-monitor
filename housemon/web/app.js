@@ -1977,7 +1977,7 @@ function drawAll() {
 }
 
 async function loadSensors() {
-  const response = await fetch("/api/sensors");
+  const response = await fetch("api/sensors");
   /** @type {House} */
   const house = await response.json();
   // Each sensor becomes a room, its latest reading set just below and its card made in renderRooms, as each vacuum's
@@ -2004,7 +2004,7 @@ async function loadSensors() {
 async function loadHistory() {
   const request = ++state.historyRequest;
   state.charts.forEach((c) => c.figure.classList.add("is-loading"));
-  const response = await fetch(`/api/history?hours=${state.hours}${state.hideSimulated ? "&simulated=0" : ""}`);
+  const response = await fetch(`api/history?hours=${state.hours}${state.hideSimulated ? "&simulated=0" : ""}`);
   /** @type {HistoryData} */
   const history = await response.json();
   if (request !== state.historyRequest) return; // a newer range was picked meanwhile
@@ -2051,7 +2051,7 @@ function setConnection(status, label) {
 
 function connect() {
   let dropped = false;
-  const stream = new EventSource("/api/stream");
+  const stream = new EventSource("api/stream");
   stream.onopen = () => {
     setConnection("live", "Live");
     if (dropped) loadSensors().then(loadHistory); // fill in what we missed
