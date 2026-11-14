@@ -78,7 +78,7 @@ func (s *Server) Close() {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.root)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /houses/{house}", s.withSlash)
 	mux.HandleFunc("GET /houses/{house}/{$}", s.page)
@@ -109,7 +109,7 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the database isn't answering", http.StatusServiceUnavailable)
 		return
 	}
-	io.WriteString(w, "ok\n")
+	w.Write([]byte("ok\n"))
 }
 
 // withSlash sends /houses/example on to /houses/example/, where the page's relative links resolve under the house.

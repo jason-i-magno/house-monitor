@@ -1,0 +1,15 @@
+# Pull requests moving the workflow's pinned actions and the Go modules on to new releases, weekly, so pins don't go
+# stale. The Containerfiles' base images are pinned by digest and moved by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly

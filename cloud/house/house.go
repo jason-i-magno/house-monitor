@@ -93,14 +93,19 @@ func (r Reading) check(now time.Time) error {
 		return fmt.Errorf("ts %v is before %d", r.TS, earliest.Year())
 	case r.TS > Seconds(now.Add(MaxSkew)):
 		return fmt.Errorf("ts %v is more than %v ahead of the server's clock", r.TS, MaxSkew)
-	case !(minTemp <= r.TemperatureC && r.TemperatureC <= maxTemp): // and not NaN
+	case !within(r.TemperatureC, minTemp, maxTemp):
 		return fmt.Errorf("temperature_c %v is outside %v to %v", r.TemperatureC, minTemp, maxTemp)
-	case r.Humidity != nil && !(0 <= *r.Humidity && *r.Humidity <= 100):
+	case r.Humidity != nil && !within(*r.Humidity, 0, 100):
 		return fmt.Errorf("humidity %v is outside 0 to 100", *r.Humidity)
-	case r.Battery != nil && !(0 <= *r.Battery && *r.Battery <= 100):
+	case r.Battery != nil && !within(*r.Battery, 0, 100):
 		return fmt.Errorf("battery %v is outside 0 to 100", *r.Battery)
-	case r.RSSI != nil && !(-200 <= *r.RSSI && *r.RSSI <= 20):
+	case r.RSSI != nil && !within(*r.RSSI, -200, 20):
 		return fmt.Errorf("rssi %v is outside -200 to 20", *r.RSSI)
 	}
 	return nil
+}
+
+// within reports whether lo <= x <= hi. Written that way round, it's false for NaN, as x < lo || x > hi isn't.
+func within[T int | float64](x, lo, hi T) bool {
+	return lo <= x && x <= hi
 }

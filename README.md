@@ -1,5 +1,7 @@
 # house-monitor
 
+[![CI](https://github.com/jason-i-magno/house-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/jason-i-magno/house-monitor/actions/workflows/ci.yml)
+
 Live temperature and humidity for every room, in a web app you run at home.
 
 For now the readings come from simulated sensors in a house: an example two-story house over a basement, with warm rooms upstairs, a cold basement, the thermostat on the main floor and a space heater in the office during the work day, or a house file of your own. Rooms with an ecobee thermostat or SmartSensor can read from it instead (see [ecobee sensors](#ecobee-sensors)), and rooms with a Govee H5075 Bluetooth thermo-hygrometer from that (see [Govee sensors](#govee-sensors)). A MOVA robot vacuum can show what it's doing and its battery (see [MOVA vacuums](#mova-vacuums)).
