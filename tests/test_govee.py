@@ -1,8 +1,11 @@
 import contextlib
 import io
+import sys
 import threading
 import time
+import types
 import unittest
+import unittest.mock
 
 from housemon import govee
 from housemon.readings import Reading
@@ -166,6 +169,72 @@ class GoveeSourceTest(unittest.TestCase):
         stop.set()
         runner.join(5)
         self.assertEqual(calls, [])
+
+
+class QuietScanTest(unittest.TestCase):
+    """A scan whose adapter went away, as when it's unplugged for a moment, stops hearing without an error."""
+
+    def fake_bleak(self, adverts, fail_stop=False):
+        """A stand-in for bleak whose scanner, once started, hears these (name or None, address, data) and no more."""
+        scanners = []
+
+        class Scanner:
+            def __init__(self, detection_callback, bluez):
+                self.callback, self.bluez, self.stopped = detection_callback, bluez, False
+                scanners.append(self)
+
+            async def start(self):
+                for name, address, data in adverts:
+                    device = types.SimpleNamespace(address=address, name=None)
+                    ad = types.SimpleNamespace(manufacturer_data={govee.COMPANY: data}, local_name=name, rssi=-70)
+                    self.callback(device, ad)
+
+            async def stop(self):
+                self.stopped = True
+                if fail_stop:
+                    raise OSError("the adapter is gone")
+
+        return unittest.mock.patch.dict(sys.modules, {"bleak": types.SimpleNamespace(BleakScanner=Scanner)}), scanners
+
+    def test_hears_every_broadcast_and_remembers_a_sensors_name(self):
+        patch, scanners = self.fake_bleak([(KITCHEN, "AA", broadcast(21.5, 40.2, 88)), (None, "AA", broadcast(21.6, 40.0, 88))])
+        heard, stop = [], threading.Event()
+        threading.Timer(0.2, stop.set).start()
+        with patch:
+            govee.scan_bluetooth(lambda *b: heard.append(b), stop, quiet=5)
+        self.assertEqual([(name, govee.decode(data)[0]) for name, data, _ in heard], [(KITCHEN, 21.5), (KITCHEN, 21.6)])
+        self.assertEqual(scanners[0].bluez, {"filters": {"DuplicateData": True}})
+        self.assertTrue(scanners[0].stopped)
+
+    def test_raises_quiet_when_it_hears_nothing_at_all(self):
+        patch, scanners = self.fake_bleak([], fail_stop=True)  # and stopping it fails, its adapter gone
+        with patch, self.assertRaises(govee.Quiet):
+            govee.scan_bluetooth(lambda *b: None, threading.Event(), quiet=0.2)
+        self.assertTrue(scanners[0].stopped)
+
+    def test_starts_a_quiet_scan_again_at_once_warning_once_until_a_sensor_is_heard(self):
+        calls, warnings = [], []
+        rooms = {KITCHEN: "sim-kitchen"}
+
+        def scan(heard, stop):
+            calls.append(1)
+            if len(calls) in (3, 5):  # heard in between the quiet spells
+                heard(KITCHEN, broadcast(21.5, 40.2, 88), -70)
+            if len(calls) < 6:
+                raise govee.Quiet("heard no Bluetooth device at all for 30 s")
+            stop.set()
+
+        source = govee.GoveeSource(lambda: rooms, warn=warnings.append, scan=scan, retry=60)
+        stop = threading.Event()
+        started = time.time()
+        with unittest.mock.patch.object(stop, "wait", lambda seconds: stop.is_set()):
+            source._listen(stop)
+        self.assertEqual(len(calls), 6)
+        self.assertLess(time.time() - started, 5)  # not the 60 s wait after another failure
+        # Quiet at calls 1 and 2 (warned once), heard at 3 then quiet (warned again), quiet at 4 (not), heard at 5 then
+        # quiet (warned again).
+        self.assertEqual(len(warnings), 3)
+        self.assertIn("starting the scan again", warnings[0])
 
 
 class ScanInteractivelyTest(unittest.TestCase):
