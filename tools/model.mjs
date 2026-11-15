@@ -33,7 +33,7 @@ export function themeColors(tokens) {
 // The scene of a house, as the page builds it.
 export function sceneOf(model, house) {
   return model.modelScene({
-    rooms: house.sensors.filter((s) => !s.outside),
+    rooms: house.sensors.filter((s) => !s.outside && !s.beside), // a sensor beside a room's own has no plan
     areas: house.areas,
     details: house.details,
     wall: house.wall,

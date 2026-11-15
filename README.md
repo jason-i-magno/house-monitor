@@ -59,6 +59,8 @@ Each is named `GVH5075_` and the last four characters of its Bluetooth address. 
 
 A room can have an ecobee SmartSensor beside its Govee, named as both `ecobee=` and `govee=`, say to keep the SmartSensor steering the thermostat while the Govee adds humidity. The room shows the Govee's readings, and the SmartSensor's only while the Govee goes unheard for 2 minutes, as with a dead battery or Bluetooth off. The outside can do the same with a thermostat's weather.
 
+Or, to see both, give the room `ecobee_beside="SmartSensor"` too: its card shows the SmartSensor's temperature on a line under the Govee's reading, and the temperature chart gives it a dashed line of its own in the room's color. The map still colors the room by the Govee, and the SmartSensor no longer fills in for it.
+
 ## Simulated readings
 
 The rest of the house stays simulated. The page's **Hide simulated** button, beside the connection status, leaves the simulator's readings out: their rooms' cards, their values on the map and their lines in the charts, along with the made-up past of a room that now reads from a real sensor, so you see only real readings.

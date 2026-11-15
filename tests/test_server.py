@@ -11,7 +11,7 @@ from pathlib import Path
 from housemon.details import Details, Finish, Fixture, Opening, Roof
 from housemon.hub import Hub
 from housemon.layout import house_layout
-from housemon.readings import Area, LitterBox, Plan, Reading, Vacuum
+from housemon.readings import Area, LitterBox, Plan, Reading, Sensor, Vacuum
 from housemon.server import HouseServer, house_json
 from housemon.example_house import HOUSE
 from housemon.store import Store
@@ -85,6 +85,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(details["roofs"][0]["ridge"], "x")
         self.assertEqual(details["openings"][0]["room"], "Office")
         self.assertEqual(details["trees"], [])
+
+    def test_a_sensor_beside_a_rooms_own_has_no_plan_and_names_the_room(self):
+        room = self.sensors[0]
+        beside = Sensor(f"{room.id}-ecobee", "SmartSensor", room.floor, None, room.heated, beside=room.id)
+        sent = house_json(self.sensors + [beside], self.areas, self.details)["sensors"]
+        self.assertIsNone(sent[0]["beside"])
+        self.assertEqual((sent[-1]["name"], sent[-1]["plan"], sent[-1]["beside"]), ("SmartSensor", None, room.id))
 
     def test_sensors_include_each_litter_boxs_latest_state(self):
         self.assertEqual(json.loads(self.get("/api/sensors")[2])["litter_boxes"], {"Litter box": None})

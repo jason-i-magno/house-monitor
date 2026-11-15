@@ -293,6 +293,18 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 
 .humidity { color: var(--text-secondary); }
 
+/* A sensor beside the room's own, as an ecobee SmartSensor beside a Govee: its line key, name and reading. */
+.beside {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.beside-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .meta {
   color: var(--text-muted);
   font-size: 0.8125rem;

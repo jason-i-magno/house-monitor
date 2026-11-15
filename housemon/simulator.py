@@ -53,10 +53,29 @@ class SimulatedRoom:
     # the room's readings come from it instead (govee.py). Beside an ecobee sensor or thermostat's weather, the Govee's
     # readings come while it's heard, and the ecobee's fill in while it isn't (govee.unless_heard).
     govee: str | None = None
+    # Naming both an ecobee sensor and a Govee, the name to show the ecobee's readings by beside the Govee's, as
+    # "SmartSensor": a sensor of its own in the room (`beside()`), on its card and a line of its own in the charts,
+    # rather than filling in while the Govee is quiet.
+    ecobee_beside: str | None = None
 
     def __post_init__(self):
         if self.ecobee and self.ecobee_weather:
             raise ValueError(f"{self.sensor.name} reads an ecobee sensor or a thermostat's weather, not both")
+        if self.ecobee_beside and not (self.ecobee and self.govee):
+            raise ValueError(f"{self.sensor.name} shows an ecobee sensor beside a Govee, so it names both")
+
+    def beside(self) -> Sensor | None:
+        """The room's ecobee sensor, shown beside its Govee, or None."""
+        if not self.ecobee_beside:
+            return None
+        s = self.sensor
+        return Sensor(f"{s.id}-ecobee", self.ecobee_beside, s.floor, None, s.heated, s.outside, beside=s.id)
+
+
+def ecobee_names(rooms: tuple[SimulatedRoom, ...]) -> dict[str, str]:
+    """Each ecobee sensor's name the rooms give, and the sensor id its readings are for: the room's, or the sensor shown
+    beside its Govee."""
+    return {room.ecobee: (room.beside() or room.sensor).id for room in rooms if room.ecobee}
 
 
 def _smoothstep(x: float) -> float:
@@ -194,7 +213,9 @@ class SimulatedSource:
 
     @property
     def sensors(self) -> list[Sensor]:
-        return [room.sensor for room in self.rooms]
+        """Each room's sensor, in order, and then those shown beside rooms' own, so the rooms keep their colors."""
+        rooms = [room.sensor for room in self.rooms]
+        return rooms + [beside for room in self.rooms if (beside := room.beside())]
 
     def simulated(self) -> list[SimulatedRoom]:
         """The rooms it reports, all but those another source reads."""
