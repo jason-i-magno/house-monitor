@@ -117,7 +117,7 @@ uplink ──POST batch──► api.addReadings ──► store.AddReadings (Po
 `.github/workflows/ci.yml` runs on every pull request and push to main: `python -m unittest` on Python 3.10 (the oldest the README promises) and 3.14; the page's `tsc` check; for the Go, `gofmt`, `go mod tidy -diff`, `go vet` and `go test -race` against a Postgres service; golangci-lint (`.golangci.yml`: the standard linters, `errorlint`, `misspell` and `nolintlint`) and `govulncheck`; and once those pass, both images built for amd64 and arm64. On a push to main the images are pushed to `ghcr.io/jason-i-magno/house-monitor/housecloud` and `…/simulator`, tagged with the commit's SHA and `main`; only that job can write packages. CI checks out this repository alone, so `private/` isn't there to end up in an image.
 
 - In CI (`CI` set), a test that needs Postgres and finds `HOUSECLOUD_TEST_DATABASE_URL` unset fails rather than skips (`storetest`), so they can't pass unrun.
-- Actions are pinned to a release's commit SHA, with the version in a comment, never a tag, which can be moved; Dependabot (`.github/dependabot.yml`) proposes new ones weekly, and new Go modules. Pin an action to a release at least two weeks old.
+- Actions are pinned to a release's commit SHA, with the version in a comment, never a tag, which can be moved; Dependabot (`.github/dependabot.yml`) proposes new ones weekly, and new Go modules, each once its release is two weeks old. Pin an action to a release at least two weeks old.
 - `errcheck` leaves `http.ResponseWriter.Write` alone, as a write to a client that's gone can't be helped; check every other error, or discard it with `_ =` and say why.
 
 ## Chart conventions
