@@ -1,11 +1,16 @@
 # Pull requests moving the workflow's pinned actions and the Go modules on to new releases, weekly, so pins don't go
 # stale. The Containerfiles' base images are pinned by digest and moved by hand.
+#
+# Each waits until a release is two weeks old, as CLAUDE.md asks of a pin, so a bad release has time to be noticed and
+# withdrawn first. Security updates aren't held back: the cooldown applies to version updates alone.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14 # GitHub Actions takes no separate wait for major, minor and patch releases
     groups:
       actions:
         patterns: ["*"]
@@ -13,3 +18,5 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
