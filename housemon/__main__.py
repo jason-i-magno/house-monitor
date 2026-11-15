@@ -12,7 +12,7 @@ from . import ecobee, govee, mova, uplink, whisker
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
-from .simulator import SimulatedSource
+from .simulator import SimulatedSource, ecobee_names
 from .store import Store
 
 
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> None:
     # Signed in to ecobee, the rooms that name an ecobee sensor read from it, and an outside that names a thermostat
     # from its weather; with bleak, the rooms that name a Govee sensor read from it; and the simulator leaves them be.
     def ecobee_rooms() -> dict[str, str]:
-        return {room.ecobee: room.sensor.id for room in source.rooms if getattr(room, "ecobee", None)}
+        return ecobee_names(source.rooms)  # a room's, or one shown beside its Govee
 
     def ecobee_weather() -> dict[str, str]:
         return {room.ecobee_weather: room.sensor.id for room in source.rooms if getattr(room, "ecobee_weather", None)}

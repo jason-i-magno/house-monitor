@@ -49,6 +49,7 @@ def house_json(
                 "plan": plan(sensor.plan),
                 "heated": sensor.heated,
                 "outside": sensor.outside,
+                "beside": sensor.beside,
                 "reading": latest[sensor.id].to_json() if sensor.id in latest else None,
             }
             for sensor in sensors

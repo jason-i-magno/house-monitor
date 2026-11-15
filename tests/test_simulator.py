@@ -8,7 +8,7 @@ import unittest
 from housemon import example_house
 from housemon import house as houses
 from housemon.readings import LitterBox, Plan
-from housemon.simulator import LITTER_INSIDE, LITTER_WAIT, SimulatedSource, _visits, litter_box_at, reading_at
+from housemon.simulator import LITTER_INSIDE, LITTER_WAIT, SimulatedSource, _visits, ecobee_names, litter_box_at, reading_at
 
 HOUSE = example_house.HOUSE
 # Every house file's rooms, for the checks that hold of any: the example's, and your own if it's there.
@@ -88,6 +88,26 @@ class ReadingAtTest(unittest.TestCase):
     def test_a_ceiling_drops_only_to_a_wall(self):
         with self.assertRaises(ValueError):
             Plan(0, 0, 10, 10, drop=("rear", 2))
+
+    def test_a_room_can_show_its_ecobee_sensor_beside_its_govee(self):
+        kitchen = ROOMS["Kitchen"]
+        backup = dataclasses.replace(kitchen, ecobee="Kitchen", govee="GVH5075_1A2B")
+        both = dataclasses.replace(backup, ecobee_beside="SmartSensor")
+        beside = both.beside()
+        self.assertIsNone(backup.beside())
+        self.assertEqual(
+            (beside.id, beside.name, beside.floor, beside.plan, beside.heated, beside.beside),
+            (f"{kitchen.sensor.id}-ecobee", "SmartSensor", kitchen.sensor.floor, None, kitchen.sensor.heated, kitchen.sensor.id),
+        )
+        # Its ecobee's readings are for the sensor beside, not the room's, which its Govee reads.
+        self.assertEqual(ecobee_names((both,)), {"Kitchen": beside.id})
+        self.assertEqual(ecobee_names((backup,)), {"Kitchen": kitchen.sensor.id})
+        with self.assertRaisesRegex(ValueError, "names both"):
+            dataclasses.replace(kitchen, ecobee="Kitchen", ecobee_beside="SmartSensor")
+        rooms = tuple(both if room is kitchen else room for room in HOUSE)
+        source = SimulatedSource(rooms)
+        self.assertEqual([s.id for s in source.sensors], [room.sensor.id for room in rooms] + [beside.id])  # rooms keep their order
+        self.assertNotIn(beside.id, {r.sensor_id for r in source.backfill(0, 120, 60)})  # never simulated
 
     def test_a_room_can_name_a_govee_sensor_beside_an_ecobee_one(self):
         kitchen = ROOMS["Kitchen"]

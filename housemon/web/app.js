@@ -34,6 +34,9 @@ const SERIES_SLOTS = 8; // rooms past the eighth share a gray rather than reuse 
 // dotted, dash-dot, dash-dot-dot and long dashes, each short enough to show in
 // a 20px line key. Past six, they repeat.
 const OTHER_DASHES = [[], [5, 3], [0, 3], [7, 3, 0, 3], [5, 2.4, 0, 2.4, 0, 2.4], [9, 3]];
+// A sensor shown beside a room's own, as an ecobee SmartSensor beside a Govee, takes its room's color, dashed, the
+// first of these unlike its room's pattern.
+const BESIDE_DASHES = [[4, 3], [0, 3]];
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HIDDEN_ROOMS_KEY = "house-monitor-hidden-rooms"; // {chart title: [sensor id]}, for this viewer
 const CHART_HEIGHT = 260;
@@ -60,7 +63,11 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
 
 // --- Types: the page's own (the house as the server sends it is in model.js) ---
 
-/** @typedef {Sensor & {latest: Reading | null, card: HTMLElement}} Room a sensor, its newest reading and its card */
+/**
+ * A sensor, its newest reading and its card, its color slot and dash pattern, and for one beside a room's own, the
+ * name it came by (its `name` then its room's and that), its card its room's.
+ * @typedef {Sensor & {latest: Reading | null, card: HTMLElement, slot: number, pattern: number[], label: string}} Room
+ */
 /** @typedef {{name: string, where: string | null, latest: LitterBoxState | null, card: HTMLElement}} LitterBox */
 /** @typedef {Vacuum & {card: HTMLElement}} VacuumCard */
 /** @typedef {[number, number, number | null]} HistoryPoint a bucket's time, temperature in °C and humidity */
@@ -74,7 +81,7 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
  */
 /** @typedef {[number, number]} ChartPoint a time and a value */
 /**
- * @typedef {{sensor: Room, index: number, color: string, dash: string, points: ChartPoint[], gap: number}} ChartSeries
+ * @typedef {{sensor: Room, color: string, dash: string, points: ChartPoint[], gap: number}} ChartSeries
  */
 /**
  * What a chart last drew, for its readout.
@@ -214,33 +221,33 @@ function svg(tag, attrs = {}) {
   return node;
 }
 
-/** @param {number} i */
-function seriesColor(i) {
-  return i < SERIES_SLOTS ? `var(--series-${i + 1})` : "var(--series-other)";
+/** @param {Room} sensor */
+function seriesColor(sensor) {
+  return sensor.slot < SERIES_SLOTS ? `var(--series-${sensor.slot + 1})` : "var(--series-other)";
 }
 
-// The stroke-dasharray for room i's line at this width. Round caps add half
+// The stroke-dasharray for a sensor's line at this width. Round caps add half
 // the width to each end of a dash, so dashes are drawn that much shorter and
 // gaps that much longer.
-/** @param {number} i @param {number} width */
-function seriesDash(i, width) {
-  const pattern = i < SERIES_SLOTS ? [] : OTHER_DASHES[(i - SERIES_SLOTS) % OTHER_DASHES.length];
+/** @param {Room} sensor @param {number} width */
+function seriesDash(sensor, width) {
+  const pattern = sensor.pattern;
   if (!pattern.length) return "none";
   return pattern.map((v, k) => (k % 2 ? v + width : Math.max(v - width, 0.01))).join(" ");
 }
 
-/** @param {number} i */
-function lineKey(i) {
+/** @param {Room} sensor */
+function lineKey(sensor) {
   const key = svg("svg", { class: "key", width: 20, height: 3, "aria-hidden": "true" });
   key.append(svg("line", {
     x1: 1.5,
     y1: 1.5,
     x2: 18.5,
     y2: 1.5,
-    stroke: seriesColor(i),
+    stroke: seriesColor(sensor),
     "stroke-width": 3,
     "stroke-linecap": "round",
-    "stroke-dasharray": seriesDash(i, 3),
+    "stroke-dasharray": seriesDash(sensor, 3),
   }));
   return key;
 }
@@ -301,11 +308,10 @@ function renderSimulatedToggle() {
 function renderRooms() {
   const root = /** @type {HTMLElement} */ (document.getElementById("rooms"));
   root.replaceChildren();
-  for (const floor of new Set(state.sensors.map((s) => s.floor))) {
+  const rooms = state.sensors.filter((s) => !s.beside); // one beside a room's own is on its room's card
+  for (const floor of new Set(rooms.map((s) => s.floor))) {
     const grid = el("div", { class: "room-grid" });
-    state.sensors.forEach((sensor, i) => {
-      if (sensor.floor === floor) grid.append(roomCard(sensor, i));
-    });
+    for (const sensor of rooms) if (sensor.floor === floor) grid.append(roomCard(sensor));
     const outside = state.sensors.every((s) => s.floor !== floor || s.outside); // not a level
     root.append(el("section", { class: "floor" }, el("h2", {}, outside ? floor : `${floor} level`), grid));
   }
@@ -408,14 +414,49 @@ function onVacuum(vacuum) {
   known.card.classList.add("updated");
 }
 
-/** @param {Room} sensor @param {number} i */
-function roomCard(sensor, i) {
+// Each room's color slot, in the order the server lists them, and dash pattern: solid, or past the eighth, the gray
+// rooms' patterns. A sensor beside a room's own takes its room's slot and a pattern of its own, and its room's name
+// before its own, as "Front bedroom (SmartSensor)".
+function colorSensors() {
+  const rooms = state.sensors.filter((s) => !s.beside);
+  rooms.forEach((s, i) => {
+    s.slot = i;
+    s.pattern = i < SERIES_SLOTS ? [] : OTHER_DASHES[(i - SERIES_SLOTS) % OTHER_DASHES.length];
+  });
+  for (const sensor of state.sensors) {
+    if (!sensor.beside) continue;
+    const room = rooms.find((r) => r.id === sensor.beside);
+    sensor.label = sensor.name;
+    sensor.name = room ? `${room.name} (${sensor.name})` : sensor.name;
+    sensor.slot = room?.slot ?? rooms.length;
+    sensor.pattern = BESIDE_DASHES.find((d) => String(d) !== String(room?.pattern ?? [])) ?? BESIDE_DASHES[0];
+  }
+}
+
+// The line on a room's card for each sensor beside its own: its line key, name and temperature, its humidity if it
+// reads it, and how old it is once it's stale.
+/** @param {HTMLElement} line @param {Room} room @param {number} now */
+function showBeside(line, room, now) {
+  const besides = state.sensors.filter((s) => s.beside === room.id);
+  line.hidden = !besides.length;
+  line.replaceChildren(...besides.flatMap((sensor, i) => {
+    const r = sensor.reading;
+    let text = `${sensor.label} ${r ? `${fahrenheit(r.temperature_c).toFixed(1)}°F` : "–"}`;
+    if (r && r.humidity != null) text += `, ${Math.round(r.humidity)}%`;
+    if (r && now - r.ts > STALE_AFTER) text += ` (${ago(now - r.ts)})`;
+    return [i ? " · " : "", el("span", { class: "beside-entry" }, lineKey(sensor), text)]; // its key and text together
+  }));
+}
+
+/** @param {Room} sensor */
+function roomCard(sensor) {
   sensor.card = el(
     "article",
     { class: "room" },
-    el("h3", {}, lineKey(i), sensor.name),
+    el("h3", {}, lineKey(sensor), sensor.name),
     el("p", { class: "temp" }, el("span", { class: "value" }, "–"), el("span", { class: "unit" }, "°F")),
     el("p", { class: "humidity" }),
+    el("p", { class: "beside", hidden: "" }),
     el("p", { class: "meta updated-at" }),
     el("p", { class: "meta device" }),
     el("p", { class: "stale", hidden: "" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), el("span")),
@@ -426,12 +467,14 @@ function roomCard(sensor, i) {
 function updateRooms() {
   const now = Date.now() / 1000;
   for (const sensor of state.sensors) {
+    if (sensor.beside) continue; // on its room's card
     const card = sensor.card;
     const reading = sensor.reading;
     card.hidden = hiddenRoom(sensor);
-    const [value, humidity, updatedAt, device, stale] = /** @type {HTMLElement[]} */ (
-      [".value", ".humidity", ".updated-at", ".device", ".stale"].map((s) => card.querySelector(s))
+    const [value, humidity, beside, updatedAt, device, stale] = /** @type {HTMLElement[]} */ (
+      [".value", ".humidity", ".beside", ".updated-at", ".device", ".stale"].map((s) => card.querySelector(s))
     );
+    showBeside(beside, sensor, now);
     if (!reading) {
       humidity.textContent = "No readings yet";
       continue;
@@ -613,9 +656,9 @@ function shown(chart, sensor) {
 /** @param {Chart} chart */
 function renderLegend(chart) {
   chart.figure.hidden = !state.sensors.some(chart.rooms);
-  const entries = state.sensors.flatMap((sensor, i) => {
+  const entries = state.sensors.flatMap((sensor) => {
     if (!chart.rooms(sensor)) return [];
-    const button = el("button", { type: "button", "data-sensor": sensor.id }, lineKey(i), sensor.name);
+    const button = el("button", { type: "button", "data-sensor": sensor.id }, lineKey(sensor), sensor.name);
     button.addEventListener("click", () => hideRooms(chart, [sensor.id], shown(chart, sensor)));
     return [el("li", {}, button)];
   });
@@ -737,12 +780,12 @@ function drawChart(chart) {
   const m = { top: 12, right: 16, bottom: 28, left: 44 };
   const until = Date.now() / 1000;
   const since = until - state.hours * 3600;
-  const series = state.sensors.map((sensor, i) => {
+  const series = state.sensors.map((sensor) => {
     const points = (/** @type {HistoryData} */ (state.history).series[sensor.id] || [])
       .filter((p) => p[0] >= since && p[metric.index] != null) // a sensor that reads only temperature has no humidity
       .map((p) => /** @type {ChartPoint} */ ([p[0], metric.value(/** @type {number} */ (p[metric.index]))]));
     const gap = lineGap(points, /** @type {HistoryData} */ (state.history).bucket); // a longer silence breaks the line
-    return { sensor, index: i, color: seriesColor(i), dash: seriesDash(i, 2), points, gap };
+    return { sensor, color: seriesColor(sensor), dash: seriesDash(sensor, 2), points, gap };
   }).filter((s) => shown(chart, s.sensor)); // the scale fits the rooms shown
   const values = series.flatMap((s) => s.points.map((p) => p[1]));
   root.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -897,7 +940,7 @@ function setHover(chart, t) {
     rows.push(el(
       "div",
       { class: "row" },
-      lineKey(s.index),
+      lineKey(s.sensor),
       el("strong", {}, value == null ? "–" : `${value.toFixed(chart.metric.digits)}${chart.metric.unit}`),
       el("span", { class: "name" }, s.sensor.name),
     ));
@@ -1269,7 +1312,7 @@ function isStale(reading) {
 
 // The sensors in the house, as opposed to outside.
 function indoors() {
-  return state.sensors.filter((s) => !s.outside);
+  return state.sensors.filter((s) => !s.outside && !s.beside);
 }
 
 // Each room's boxes in the house, in feet, one per piece of its plan, then
@@ -1390,11 +1433,11 @@ function drawMap() {
 // and 3D view's background takes that color too, faded into the surface, so
 // the rooms, at full strength, and the labels on it stand out.
 function renderOutside() {
-  const weather = state.mapView !== "model" && state.sensors.find((s) => s.outside && s.reading);
+  const weather = state.mapView !== "model" && state.sensors.find((s) => s.outside && !s.beside && s.reading);
   state.map.svg.style.background = weather
     ? `color-mix(in oklab, ${tempColor(/** @type {Reading} */ (weather.reading)).fill} 30%, var(--surface))`
     : "";
-  state.map.outside.replaceChildren(...state.sensors.filter((s) => s.outside).map((sensor) => {
+  state.map.outside.replaceChildren(...state.sensors.filter((s) => s.outside && !s.beside).map((sensor) => {
     const reading = sensor.reading;
     return el(
       "div",
@@ -1995,6 +2038,7 @@ async function loadSensors() {
     sensor.latest = sensor.reading;
     showReading(sensor);
   }
+  colorSensors();
   state.modelScene = null; // rebuilt from these when next drawn
   renderRooms();
   state.charts.forEach(renderLegend);
@@ -2028,9 +2072,11 @@ function onReading(reading) {
   state.charts.forEach((chart, i) => chart.rooms(sensor) !== charted[i] && renderLegend(chart));
   updateRooms();
   if (!sensor.reading) return; // hidden
-  sensor.card.classList.remove("updated");
-  void sensor.card.offsetWidth; // restart the arrival animation
-  sensor.card.classList.add("updated");
+  if (!sensor.beside) {
+    sensor.card.classList.remove("updated");
+    void sensor.card.offsetWidth; // restart the arrival animation
+    sensor.card.classList.add("updated");
+  }
   drawMapSoon();
   if (state.history) {
     const points = (state.history.series[reading.sensor_id] ||= []);

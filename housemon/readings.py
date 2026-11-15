@@ -38,6 +38,9 @@ class Sensor:
     plan: Plan | tuple[Plan, ...] | None = None  # without one, the map lays the floor's rooms out in a row
     heated: bool = True  # False for a space like the garage, whose temperature the page charts apart
     outside: bool = False  # outdoors: no plan, and the map shows its reading apart from the rooms
+    # A second sensor in a room, beside its own: the id of the room's sensor. It has no plan, the map leaves it out,
+    # and its room's card shows its reading by its name, as "SmartSensor", and the charts a line of its own.
+    beside: str | None = None
 
 
 @dataclass(frozen=True)
