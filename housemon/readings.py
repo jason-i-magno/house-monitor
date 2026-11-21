@@ -41,6 +41,9 @@ class Sensor:
     # A second sensor in a room, beside its own: the id of the room's sensor. It has no plan, the map leaves it out,
     # and its room's card shows its reading by its name, as "SmartSensor", and the charts a line of its own.
     beside: str | None = None
+    # °C, the sensors' own units: below it, its room's card warns, as for a room with pipes that could freeze, its
+    # heat off. 10.0 is 50 °F.
+    warn_below_c: float | None = None
 
 
 @dataclass(frozen=True)

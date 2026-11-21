@@ -93,6 +93,11 @@ class ServerTest(unittest.TestCase):
         self.assertIsNone(sent[0]["beside"])
         self.assertEqual((sent[-1]["name"], sent[-1]["plan"], sent[-1]["beside"]), ("SmartSensor", None, room.id))
 
+    def test_a_sensor_sends_the_temperature_its_card_warns_below(self):
+        sensors = [replace(self.sensors[0], warn_below_c=10.0), *self.sensors[1:]]
+        sent = house_json(sensors, self.areas, self.details)["sensors"]
+        self.assertEqual([s["warn_below_c"] for s in sent], [10.0] + [None] * (len(sensors) - 1))
+
     def test_sensors_include_each_litter_boxs_latest_state(self):
         self.assertEqual(json.loads(self.get("/api/sensors")[2])["litter_boxes"], {"Litter box": None})
         state = LitterBox("Litter box", time.time(), "DF1", 28, 93.3)

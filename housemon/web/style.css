@@ -284,7 +284,7 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .temp .value { font-size: 2rem; font-weight: 600; }
 .temp .unit { margin-left: 2px; color: var(--text-secondary); font-size: 1rem; }
 .room.updated .value { animation: arrive 0.8s ease-out; }
-.room.is-stale .temp, .room.is-stale .humidity { opacity: 0.45; }
+.room.is-stale .temp, .room.is-stale .humidity, .room.is-stale .cold { opacity: 0.45; }
 
 @keyframes arrive {
   from { opacity: 0.4; }
@@ -292,6 +292,10 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 }
 
 .humidity { color: var(--text-secondary); }
+
+/* A room colder than its house file warns of, as one with pipes that could freeze: in words, with the warning icon. */
+.cold { margin-top: 4px; }
+.cold .icon { margin-right: 4px; color: var(--status-warning); }
 
 /* A sensor beside the room's own, as an ecobee SmartSensor beside a Govee: its line key, name and reading. */
 .beside {
