@@ -456,6 +456,7 @@ function roomCard(sensor) {
     el("h3", {}, lineKey(sensor), sensor.name),
     el("p", { class: "temp" }, el("span", { class: "value" }, "–"), el("span", { class: "unit" }, "°F")),
     el("p", { class: "humidity" }),
+    el("p", { class: "cold", hidden: "" }, el("span", { class: "icon", "aria-hidden": "true" }, "⚠"), el("span")),
     el("p", { class: "beside", hidden: "" }),
     el("p", { class: "meta updated-at" }),
     el("p", { class: "meta device" }),
@@ -471,10 +472,11 @@ function updateRooms() {
     const card = sensor.card;
     const reading = sensor.reading;
     card.hidden = hiddenRoom(sensor);
-    const [value, humidity, beside, updatedAt, device, stale] = /** @type {HTMLElement[]} */ (
-      [".value", ".humidity", ".beside", ".updated-at", ".device", ".stale"].map((s) => card.querySelector(s))
+    const [value, humidity, cold, beside, updatedAt, device, stale] = /** @type {HTMLElement[]} */ (
+      [".value", ".humidity", ".cold", ".beside", ".updated-at", ".device", ".stale"].map((s) => card.querySelector(s))
     );
     showBeside(beside, sensor, now);
+    cold.hidden = true;
     if (!reading) {
       humidity.textContent = "No readings yet";
       continue;
@@ -482,6 +484,12 @@ function updateRooms() {
     const age = now - reading.ts;
     value.textContent = fahrenheit(reading.temperature_c).toFixed(1);
     humidity.textContent = reading.humidity == null ? "Reads temperature only" : `${Math.round(reading.humidity)}% humidity`;
+    // Below the room's warning, as the card shows it, to a tenth, so a reading shown as 50.0°F isn't below 50°F.
+    if (sensor.warn_below_c != null) {
+      const below = Number(fahrenheit(sensor.warn_below_c).toFixed(1));
+      cold.hidden = !(Number(value.textContent) < below);
+      /** @type {Element} */ (cold.lastElementChild).textContent = `Below ${below}°F`;
+    }
     updatedAt.textContent = `Updated ${ago(age)}`;
     // Each detail stays whole, so a narrow card wraps between them. A made-up reading says so, in place of a
     // battery and signal that are made up too.

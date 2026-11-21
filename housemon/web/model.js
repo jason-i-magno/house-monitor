@@ -26,9 +26,10 @@
 /**
  * A sensor and the room it's in: an outside one has no plan, and without plans for all of them, none has one. One
  * beside a room's own, as an ecobee SmartSensor beside a Govee, has none either, and names its room's (`beside`).
+ * Below `warn_below_c`, its room's card warns.
  * @typedef {{
  *   id: string, name: string, floor: string, plan: Plans | null, heated: boolean, outside: boolean,
- *   beside: string | null, reading: Reading | null,
+ *   beside: string | null, warn_below_c: number | null, reading: Reading | null,
  * }} Sensor
  */
 /** @typedef {{name: string, floor: string, plan: Plans}} Area */

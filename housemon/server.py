@@ -50,6 +50,7 @@ def house_json(
                 "heated": sensor.heated,
                 "outside": sensor.outside,
                 "beside": sensor.beside,
+                "warn_below_c": sensor.warn_below_c,
                 "reading": latest[sensor.id].to_json() if sensor.id in latest else None,
             }
             for sensor in sensors
