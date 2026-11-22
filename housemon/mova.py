@@ -440,10 +440,10 @@ class Account:
                 break
         return {}
 
-    def status(self, device: dict, now: float) -> Vacuum:
+    def status(self, device: dict, now: float, name: str | None = None) -> Vacuum:
         """What the vacuum is doing, its battery, any error or warning, what's wrong at its dock, its parts, and how
-        far along its clean is, if it's cleaning."""
-        name, key = vacuum_name(device), f"mova-{device['did']}"
+        far along its clean is, if it's cleaning, by name if given, else by the name MOVA gives it."""
+        name, key = name or vacuum_name(device), f"mova-{device['did']}"
         values = {} if device.get("online") is False else self.properties(device, WANTED)
         if STATE not in values:
             return Vacuum(key, name, "Offline", None, now)
@@ -466,18 +466,37 @@ class Account:
 
 class MovaSource:
     """What each vacuum on a MOVAhome account is doing, polled every `interval` seconds, the account's vacuums listed
-    again every hour, or after MOVA answers a poll with an error, to take up one added, renamed or moved."""
+    again every hour, or after MOVA answers a poll with an error, to take up one added, renamed or moved. names()
+    maps a vacuum's name, as MOVA gives it, to the name to show it by, as the house file has them; it's looked up each
+    poll, so a changed house file takes effect, and a name matches whatever its case. A name the account has no vacuum
+    by is warned about, with the names it has, once until it's matched again."""
 
-    def __init__(self, account: Account, interval: float = POLL):
+    def __init__(
+        self, account: Account, names: Callable[[], dict[str, str]] = dict, interval: float = POLL,
+        warn: Callable[[str], None] | None = None,
+    ):
         self.account = account
+        self.names = names
         self.interval = interval
+        self.warn = warn or (lambda message: print(f"MOVA: {message}", file=sys.stderr, flush=True))
+        self.unmatched: set[str] = set()  # the names warned about, casefolded
         self.devices: list[dict] | None = None
         self.listed = 0.0
 
     def poll(self, now: float) -> list[Vacuum]:
         if self.devices is None or now - self.listed >= DEVICES_EVERY:
             self.devices, self.listed = self.account.vacuums(), now
-        return [self.account.status(device, now) for device in self.devices]
+        names = self.names()
+        shown = {name.casefold(): to for name, to in names.items()}
+        has = [vacuum_name(device) for device in self.devices]
+        known = {name.casefold() for name in has}
+        missing = sorted((name for name in names if name.casefold() not in known), key=str.casefold)
+        new = [name for name in missing if name.casefold() not in self.unmatched]
+        if new:
+            listed = ", ".join(repr(name) for name in has) or "none"
+            self.warn(f"no vacuum named {', '.join(repr(name) for name in new)}, as the house file has; the account has {listed}")
+        self.unmatched = {name.casefold() for name in missing}
+        return [self.account.status(device, now, shown.get(name.casefold())) for device, name in zip(self.devices, has)]
 
     def run(self, publish: Callable[[Vacuum], None], stop: threading.Event) -> None:
         """Call publish(vacuum) for each vacuum every poll until stop is set, gently (polling.py): backing off while

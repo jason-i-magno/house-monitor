@@ -892,6 +892,29 @@ class LoadTest(unittest.TestCase):
             self.assertIn("didn't load", err.getvalue())
             self.assertIs(house.module.HOUSE, example_house.HOUSE)
 
+    def test_a_house_file_can_name_its_vacuums_and_a_bad_naming_leaves_the_last(self):
+        start = "from housemon.example_house import AREAS, DETAILS, HOUSE\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "house.py"
+            path.write_text(start)
+            house = houses.HouseFile(path)
+            self.assertEqual(houses.vacuum_names(house.module), {})  # none unless it names them
+            path.write_text(start + "VACUUM_NAMES = {'Rover': 'Robbie'}\n")
+            os.utime(path, (house.mtime + 1, house.mtime + 1))
+            self.assertEqual(houses.vacuum_names(house.changed()), {"Rover": "Robbie"})
+            for bad in ("['Robbie']", "{'Rover': ''}", "{'Rover': 3}", "{'Rover': 'Robbie', 'ROVER': 'Rosie'}"):
+                path.write_text(start + f"VACUUM_NAMES = {bad}\n")
+                os.utime(path, (house.mtime + 1, house.mtime + 1))
+                with self.subTest(bad), contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertIsNone(house.changed())
+                    self.assertIn("VACUUM_NAMES", err.getvalue())
+            self.assertEqual(houses.vacuum_names(house.module), {"Rover": "Robbie"})
+
+    def test_every_house_files_vacuum_names_are_names(self):
+        for name, module in [("example", example_house)] + ([("private", houses.load(houses.PRIVATE))] if houses.PRIVATE.exists() else []):
+            with self.subTest(house=name):
+                houses.vacuum_names(module)  # raises if not
+
 
 if __name__ == "__main__":
     unittest.main()

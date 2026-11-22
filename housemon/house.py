@@ -2,7 +2,8 @@
 
 A house file is a Python module like example_house.py: HOUSE, its rooms as
 SimulatedRoom, with each sensor's plan; AREAS, the parts with no sensor; and
-DETAILS, what the map's detailed view draws, or None. Keep your own house in a
+DETAILS, what the map's detailed view draws, or None; and if it likes,
+VACUUM_NAMES, the names to show its robot vacuums by. Keep your own house in a
 repo of its own cloned into private/, which this repo ignores, as
 private/house.py, and it's used in place of the example.
 """
@@ -28,6 +29,18 @@ def load(path: Path | None = None) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def vacuum_names(module: ModuleType) -> dict[str, str]:
+    """A house file's VACUUM_NAMES, none if it has none: each robot vacuum's name, as MOVA gives it (the one its app
+    shows, else its model's) and matched whatever its case, to the name the page shows it by. A vacuum it doesn't name
+    keeps MOVA's."""
+    names = getattr(module, "VACUUM_NAMES", {})
+    if not isinstance(names, dict) or not all(isinstance(n, str) and n and isinstance(m, str) and m for n, m in names.items()):
+        raise ValueError("VACUUM_NAMES maps each vacuum's name, as MOVA gives it, to the name to show it by, each a string, not empty")
+    if len({name.casefold() for name in names}) < len(names):
+        raise ValueError("VACUUM_NAMES names a vacuum twice, in different cases")
+    return dict(names)
 
 
 class HouseFile:
@@ -56,6 +69,7 @@ class HouseFile:
             module = load(self.path)
             for name in ("HOUSE", "AREAS", "DETAILS"):
                 getattr(module, name)
+            vacuum_names(module)
         except Exception:
             print(f"The house file {self.path} didn't load, so the last one stays:", file=sys.stderr)
             traceback.print_exc()

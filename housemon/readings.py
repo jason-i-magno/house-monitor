@@ -142,7 +142,7 @@ class Vacuum:
     """What a robot vacuum is doing, as its maker's cloud last said: not a reading of a room, so not stored."""
 
     id: str
-    name: str  # as its app shows it
+    name: str  # as its app shows it, or as the house file names it
     state: str  # what it's doing, as "Charging"; "Offline" when its cloud can't reach it
     battery: int | None  # percent
     ts: float  # Unix time, seconds

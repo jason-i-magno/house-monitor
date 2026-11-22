@@ -307,6 +307,25 @@ class SourceTest(unittest.TestCase):
         source.poll(1000.0 + mova.DEVICES_EVERY)
         self.assertEqual(lists(), 2)
 
+    def test_a_vacuum_shows_by_the_name_the_house_file_gives_it(self):
+        names = {"p10 PRO ultra": "Robbie"}  # matched whatever its case
+        source = mova.MovaSource(self.account, lambda: names, warn=self.fail)
+        self.assertEqual(source.poll(1000.0), [Vacuum("mova-1234", "Robbie", "Charging", 87, 1000.0)])
+        names = {}  # a changed house file takes effect at the next poll
+        self.assertEqual([v.name for v in source.poll(1060.0)], ["P10 Pro Ultra"])
+
+    def test_a_name_the_account_has_no_vacuum_by_is_warned_of_once_until_its_matched_again(self):
+        warned = []
+        source = mova.MovaSource(self.account, lambda: {"Rosie": "Robbie"}, warn=warned.append)
+        self.assertEqual([v.name for v in source.poll(1000.0)], ["P10 Pro Ultra"])
+        source.poll(1060.0)
+        self.assertEqual(warned, ["no vacuum named 'Rosie', as the house file has; the account has 'P10 Pro Ultra'"])  # not the mower
+        self.cloud.devices = [{**VACUUM, "customName": "Rosie"}]  # so named in its app, taken up at the next listing
+        self.assertEqual([v.name for v in source.poll(1000.0 + mova.DEVICES_EVERY)], ["Robbie"])
+        self.cloud.devices = [VACUUM]
+        source.poll(1000.0 + 2 * mova.DEVICES_EVERY)
+        self.assertEqual(len(warned), 2)
+
     def test_a_failed_poll_is_reported_and_tried_again_later(self):
         source = mova.MovaSource(self.account)
         source.poll(1000.0)
