@@ -81,15 +81,16 @@
  *   width: number, depth: number, height: number,
  *   paving: "concrete" | "flagstone" | "wood" | "gravel" | "mulch" | "carpet" | "dirt",
  *   cutouts: [number, number, number, number][], outline: Point[] | null, railings: Side[],
- *   edging: "stone" | "brick" | null, known: boolean,
+ *   edging: Edging | null, known: boolean,
  * }} Ground
  */
+/** @typedef {"stone" | "brick" | "metal"} Edging */
 /** @typedef {"green" | "light" | "dark"} Leaves */
 /** @typedef {"yellow" | "orange" | "red"} Fall */
 /**
  * @typedef {{
  *   name: string, kind: "deciduous" | "evergreen", x: number, y: number, height: number, spread: number, ring: number,
- *   edging: "stone" | "brick" | null, crown: "round" | "vase" | "spreading" | "pyramid", clearance: number | null,
+ *   edging: Edging | null, crown: "round" | "vase" | "spreading" | "pyramid", clearance: number | null,
  *   lean: [number, number], leaves: Leaves, fall: Fall, flowers: "white" | "pink" | null,
  *   blooms: "spring" | "summer", stems: number, fork: number, trunk: number | null, bark: "brown" | "gray" | "white",
  *   known: boolean,
@@ -1659,10 +1660,11 @@ function tree(mesh, scene, t, season = "summer") {
   const stem = (t.trunk ?? Math.max(stems > 1 ? 0.4 : 0.7, (t.spread * 0.06) / Math.sqrt(stems))) / 2; // each one's radius
   /** @param {number} r */
   const ring = (r) => Array.from({ length: 16 }, (_, i) => [t.x + r * Math.cos((Math.PI * i) / 8), t.y + r * Math.sin((Math.PI * i) / 8)]);
-  if (t.ring > 0 && t.edging) { // a raised ring of stone or brick, filled with mulch, level from the lowest ground under it
+  if (t.ring > 0 && t.edging) { // a raised ring of stone, brick or metal, filled with mulch, level from the lowest ground under it
     const [low, high] = groundRange(details, ring(t.ring));
-    round(mesh, [t.x, t.y], t.ring, low, high + 0.9, C[t.edging] ?? C.stone, id, false, 16);
-    round(mesh, [t.x, t.y], t.ring - 0.4, high + 0.9, high + 0.95, C.mulch, id, false, 16);
+    const [color, thick] = edgingWall(C, t.edging);
+    round(mesh, [t.x, t.y], t.ring, low, high + 0.9, color, id, false, 16);
+    round(mesh, [t.x, t.y], t.ring - thick, high + 0.9, high + 0.95, C.mulch, id, false, 16);
   } else if (t.ring > 0) { // a flat one, through the lawn's plane rather than in it
     drape(mesh, details, ring(t.ring), [0.05, 0.05], C.mulch, id);
   }
@@ -1946,10 +1948,17 @@ function paving(C, g) {
   return { concrete: C.concrete, flagstone: C.flagstone, wood: C.deck, gravel: C.gravel, mulch: C.mulch, carpet: C.carpet, dirt: C.dirt }[g.paving] ?? C.concrete;
 }
 
-// Whether sprinklers water a ground, as they do the lawn: a planted bed, in mulch, not one of gravel.
+// Whether sprinklers water a ground, as they do the lawn: a planted bed, in mulch or soil, not one of gravel.
 /** @param {Ground} g */
 function watered(g) {
-  return g.kind === "bed" && g.paving === "mulch";
+  return g.kind === "bed" && (g.paving === "mulch" || g.paving === "dirt");
+}
+
+// An edging's wall, its color and how thick it is: stone or brick 0.4 ft, or a sheet of metal, as an aluminum or
+// steel bed's, 0.1 ft, in the steel appliances are.
+/** @param {ModelColors} C @param {Edging} edging @returns {[RGB, number]} */
+function edgingWall(C, edging) {
+  return edging === "metal" ? [C.steel, 0.1] : [C[edging] ?? C.stone, 0.4];
 }
 
 // A roof section cut to its outline: its slope over the outline, a flat
@@ -2039,8 +2048,8 @@ function stepsFlight(mesh, scene, t, cap = Infinity) {
 }
 
 // A raised ground: a block of its paving up to its top, over its rectangle or cut to its outline. With
-// edging, its sides are a low wall of stone or brick 0.4 ft thick instead, with its paving filled in a
-// little below the wall's top.
+// edging, its sides are a low wall of stone or brick instead, or a sheet of metal (edgingWall), with its paving
+// filled in a little below the wall's top.
 // Where the ground slopes, it's level, from the lowest ground under it.
 /** @param {Mesh} mesh @param {Scene} scene @param {SceneGround} g */
 function raisedGround(mesh, scene, g) {
@@ -2064,10 +2073,11 @@ function raisedGround(mesh, scene, g) {
     }
     // At a corner turning in, the wall runs on its thickness past it, to close the corner inside.
     const turnsIn = sign * ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) < -1e-9;
-    const [end, t] = [length + (turnsIn ? 0.4 : 0), 0.4];
+    const [color, t] = edgingWall(C, g.edging);
+    const end = length + (turnsIn ? t : 0);
     /** @param {number} z */
     const corners = (z) => [at(0, 0, z), at(end, 0, z), at(end, t, z), at(0, t, z)];
-    hexa(mesh, corners(low), corners(top), C[g.edging] ?? C.stone, id);
+    hexa(mesh, corners(low), corners(top), color, id);
   });
 }
 
