@@ -8,7 +8,7 @@ import unittest
 from housemon import example_house
 from housemon import house as houses
 from housemon.readings import LitterBox, Plan
-from housemon.simulator import LITTER_INSIDE, LITTER_WAIT, SimulatedSource, _visits, ecobee_names, litter_box_at, reading_at
+from housemon.simulator import LITTER_INSIDE, LITTER_WAIT, SimulatedSource, _local, _visits, ecobee_names, litter_box_at, reading_at
 
 HOUSE = example_house.HOUSE
 # Every house file's rooms, for the checks that hold of any: the example's, and your own if it's there.
@@ -16,9 +16,9 @@ EVERY_ROOM = list(HOUSE) + (list(houses.load(houses.PRIVATE).HOUSE) if houses.PR
 
 
 def local_time(hour: float, days_ago: int = 1) -> float:
-    """A Unix time at `hour` o'clock local time, a day or more in the past."""
-    t = time.localtime(time.time() - days_ago * 86400)
-    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)) + hour * 3600
+    """A Unix time at `hour` o'clock local time, a day or more in the past: that hour on the clock, as _local places it,
+    on a day the clocks change too, where midnight and that many hours would come an hour off."""
+    return _local(datetime.date.fromtimestamp(time.time() - days_ago * 86400), hour)
 
 
 def fahrenheit(celsius: float) -> float:
@@ -119,11 +119,10 @@ class ReadingAtTest(unittest.TestCase):
 
 
 def sunday(hour: float, weeks: int = 0) -> float:
-    """A Unix time at `hour` o'clock local time on the Sunday of a week in the past."""
-    t = time.localtime(time.time() - (8 + 7 * weeks) * 86400)
-    day = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 12, 0, 0, 0, 0, -1)) + ((6 - t.tm_wday) % 7) * 86400
-    t = time.localtime(day)
-    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)) + hour * 3600
+    """A Unix time at `hour` o'clock local time on the Sunday of a week in the past, as local_time places it: in much of
+    the world the clocks change on a Sunday."""
+    day = datetime.date.fromtimestamp(time.time() - (8 + 7 * weeks) * 86400)
+    return _local(day + datetime.timedelta(days=(6 - day.weekday()) % 7), hour)
 
 
 class LitterBoxAtTest(unittest.TestCase):
