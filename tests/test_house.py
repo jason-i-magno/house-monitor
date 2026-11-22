@@ -784,6 +784,7 @@ class KindsTest(unittest.TestCase):
             Ground("Bed", "bed", 0, 0, 10, 3, height=1, edging="wood")
         with self.assertRaises(ValueError):
             Ground("Bed", "bed", 0, 0, 10, 3, edging="brick")  # edging holds in a raised one
+        Ground("Bed", "bed", 0, 0, 10, 3, height=1, paving="dirt", edging="metal")  # an aluminum or steel bed
         with self.assertRaises(ValueError):
             Tree("Tree", "deciduous", 0, 0, height=30, spread=20, ring=3, edging="wood")
         Tree("Tree", "deciduous", 0, 0, height=30, spread=20, ring=3, edging=None)  # a flat ring of mulch

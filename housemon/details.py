@@ -35,7 +35,7 @@ BARKS = ("brown", "gray", "white")
 SPRINKLERS = ("rotor", "spray")
 THROWS = {"rotor": 30, "spray": 12}  # feet a head of each kind throws, unless it or its zone says (MODEL_THROW in model.js)
 FENCES = ("wood", "chain link")
-EDGINGS = ("stone", "brick")
+EDGINGS = ("stone", "brick", "metal")
 CLADDINGS = ("siding", "paneling", "stone")
 FLOORINGS = ("carpet", "wood", "tile", "concrete", "dirt")
 WALLINGS = ("paint", "drywall", "concrete")
@@ -198,8 +198,8 @@ class Ground:
     can have cutouts, each x, y, width and depth, left as bare ground: around a tree, say. Any can instead
     have an outline, its corners on the plan in order, that cuts it to that shape within its rectangle and
     the lot: along a slanting fence, say. railings are the sides it has a railing along, 3 ft over its top: a
-    deck's. edging, for a raised one, is a low wall of stone or brick along its edges, up to its top, holding
-    in its paving: a raised bed's. Its paving can be bare dirt, as a path worn along a fence, where trees and
+    deck's. edging, for a raised one, is a low wall of stone or brick along its edges, up to its top, or a sheet
+    of metal, as an aluminum or steel bed's, holding in its paving: a raised bed's. Its paving can be bare dirt, as a path worn along a fence, where trees and
     sprinkler heads stand as they do in the lawn.
     """
 
@@ -248,8 +248,8 @@ class Tree:
     crown in the season it blooms, spring or summer. stems is how many trunks rise from the ground, as a
     clump's do, and fork how high each splits into limbs, or 0 for a trunk running on up into the crown. trunk is
     each stem's width at the ground, by default from the tree's spread, and bark its color: brown, gray or white.
-    ring is the radius of a bed of mulch around the trunk, if it has one: raised and edged in stone or brick
-    (edging), or flat on the lawn with no edging (None). An evergreen is the same all year.
+    ring is the radius of a bed of mulch around the trunk, if it has one: raised and edged in stone, brick or
+    metal (edging), or flat on the lawn with no edging (None). An evergreen is the same all year.
     """
 
     name: str
