@@ -201,9 +201,13 @@ def main(argv: list[str] | None = None) -> None:
     if with_whisker:
         robots = whisker.WhiskerSource(whisker.Account(args.whisker), litter_robots)
         collectors.append(threading.Thread(target=robots.run, args=(hub.publish, stop), name="whisker", daemon=True))
+    # Signed in to MOVAhome, each vacuum shows by the name the house file gives it, if it gives one.
+    def vacuum_names() -> dict[str, str]:
+        return houses.vacuum_names(house_file.module)
+
     vacuums = args.mova.exists()
     if vacuums:
-        poller = mova.MovaSource(mova.Account(args.mova))
+        poller = mova.MovaSource(mova.Account(args.mova), vacuum_names)
         collectors.append(threading.Thread(target=poller.run, args=(hub.publish_vacuum, stop), name="mova", daemon=True))
     # Set up, the uplink sends the house, as it is when each round starts, and the readings the store keeps.
     def house_now() -> dict:
@@ -229,7 +233,8 @@ def main(argv: list[str] | None = None) -> None:
     if bluetooth and govee_rooms():
         sources += f", Govee sensors ({', '.join(sorted(govee_rooms(), key=str.casefold))})"
     if vacuums:
-        sources += ", MOVA vacuums"
+        named = sorted(vacuum_names().items(), key=lambda n: n[0].casefold())
+        sources += ", MOVA vacuums" + (f" ({', '.join(f'{name} as {to}' for name, to in named)})" if named else "")
     if sending:
         try:
             sources += f", sending to {uplink.Target.load(args.uplink).url}"
