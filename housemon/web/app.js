@@ -161,7 +161,7 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
  *   details: Details | null, wall: number | null, hours: number, history: HistoryData | null, charts: Chart[],
  *   historyRequest: number, map: HouseMap, mapView: MapView, mapAngle: number, mapFull: boolean, mapTilt: number,
  *   mapFocus: string | null, modelCut: string, modelTrees: boolean, modelSeason: Season,
- *   modelCoverage: boolean, modelCoverageBy: Measure,
+ *   modelCoverage: boolean, modelCoverageBy: Measure, modelProposal: string,
  *   modelScene: ReturnType<typeof modelScene> | null, modelZoom: number | null, modelTarget: number[] | null,
  *   tempStops: number[][] | null,
  * }} State
@@ -195,6 +195,7 @@ const state = {
   modelSeason: seasonOf(new Date()), // the season they're shown in, today's when the page loads
   modelCoverage: false, // the detailed view's lawn and beds shaded by how many sprinkler heads reach them
   modelCoverageBy: "heads", // or by how much water they put on each spot, "water"
+  modelProposal: "", // the proposal it shows in place of things as they are, by name, or "" for none; not kept
   modelScene: null, // what the detailed view draws, built from the sensors and details when first needed
   modelZoom: null, // how far the detailed view is zoomed in, 1 showing the whole lot, or null to frame the house
   modelTarget: null, // the point in feet the zoomed-in view centers on, or null for the middle
@@ -1050,7 +1051,7 @@ function createMap() {
     } catch {}
     drawMap();
   });
-  // The levels in a row, and under them whether the trees show, and in which season.
+  // The levels in a row, and under them whether the trees show, and in which season, and the proposals, if any.
   const cuts = el(
     "div",
     { class: "cuts" },
@@ -1065,6 +1066,11 @@ function createMap() {
       { class: "tree-options" },
       el("label", { class: "trees" }, trees, "Trees"),
       el("div", { class: "segmented seasons", role: "group", "aria-label": "The trees' season" }),
+    ),
+    el(
+      "div",
+      { class: "proposals", hidden: "" },
+      el("div", { class: "segmented", role: "group", "aria-label": "Show the house as it is, or with a change being thought about" }),
     ),
   );
   const coverage = el("div", { class: "coverage", hidden: "" });
@@ -1416,11 +1422,15 @@ function drawMap() {
   map.svg.style.display = model ? "none" : "";
   if (model) {
     map.layout = drawModel(width, fill);
-    const by = state.modelCoverageBy === "water" ? "how much water the sprinkler heads put on them in an hour of each zone" : "how many sprinkler heads reach them";
     // drawModel has built the scene.
-    const coverage = modelCoverageShown(/** @type {Scene | NoScene} */ (state.modelScene)) ? ` The lawn and beds are shaded by ${by}, as the key below says.` : "";
+    const scene = /** @type {Scene | NoScene} */ (state.modelScene);
+    const reach = modelDrips(scene) ? "how many sprinkler heads and drip lines reach them" : "how many sprinkler heads reach them";
+    const by = state.modelCoverageBy === "water" ? "how much water the sprinklers put on them in an hour of each zone" : reach;
+    const coverage = modelCoverageShown(scene) ? ` The lawn and beds are shaded by ${by}, as the key below says.` : "";
+    const proposal = modelProposal();
+    const shown = proposal ? ` It shows ${proposal.name}, a change being thought about, in place of things as they are.` : "";
     map.canvas.setAttribute("aria-label", "The house in 3D with its doors, windows, vents, appliances, closets, roof and yard. "
-      + `Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.${coverage}`);
+      + `Arrow keys step through its parts, and with shift turn and tilt it; plus and minus zoom it; the list below the map names each one.${shown}${coverage}`);
   } else {
     map.canvas.style.display = "none";
     map.note.hidden = true;
