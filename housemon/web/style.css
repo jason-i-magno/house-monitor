@@ -654,10 +654,11 @@ html.map-full { overflow: hidden; }
 /* The detailed view's colors don't encode temperature, so it has no scale or swatches. */
 .map.is-model .scale, .map.is-model .outside .swatch { display: none; }
 .map:not(.is-model) .model-only { display: none; }
-/* The levels in a row, and under them the trees' box and their seasons, each row's buttons wrapping as they must. */
+/* The levels in a row, and under them the trees' box and their seasons, and the proposals, each row's buttons wrapping
+   as they must. */
 .cuts { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 100%; }
-.cuts .levels, .cuts .tree-options { display: flex; align-items: center; gap: 4px; max-width: 100%; }
-.cuts .tree-options[hidden], .cuts .seasons[hidden] { display: none; }
+.cuts .levels, .cuts .tree-options, .cuts .proposals { display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.cuts .tree-options[hidden], .cuts .seasons[hidden], .cuts .proposals[hidden] { display: none; }
 .cuts .hint { margin-right: 4px; color: var(--text-muted); font-size: 0.75rem; }
 .cuts .segmented { flex-wrap: wrap; min-width: 0; }
 .cuts .trees { display: flex; align-items: center; gap: 6px; margin-right: 8px; color: var(--text-secondary); font-size: 0.875rem; cursor: pointer; }

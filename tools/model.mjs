@@ -30,12 +30,18 @@ export function themeColors(tokens) {
   }));
 }
 
-// The scene of a house, as the page builds it.
-export function sceneOf(model, house) {
+// The scene of a house, as the page builds it, or with a proposal, by name, in place of things as they are.
+export function sceneOf(model, house, proposal = null) {
+  let details = house.details;
+  if (proposal != null) {
+    const shown = details?.proposals.find((p) => p.name === proposal);
+    if (!shown) throw new Error(`No proposal named ${proposal}; the house has ${details?.proposals.map((p) => p.name).join(", ") || "none"}`);
+    details = { ...details, sprinklers: shown.sprinklers };
+  }
   return model.modelScene({
     rooms: house.sensors.filter((s) => !s.outside && !s.beside), // a sensor beside a room's own has no plan
     areas: house.areas,
-    details: house.details,
+    details,
     wall: house.wall,
     colors: themeColors(model.MODEL_TOKENS),
   });

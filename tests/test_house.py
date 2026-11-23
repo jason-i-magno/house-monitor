@@ -17,8 +17,8 @@ from housemon import example_house
 from housemon import house as houses
 from housemon import layout
 from housemon.details import (
-    THROWS, Closet, Details, Fence, Fixture, Ground, Head, Hedge, Opening, Roof, RoofVent, Slope, Sprinklers, Steps,
-    Tree,
+    THROWS, Closet, Details, Drip, Fence, Fixture, Ground, Head, Hedge, Opening, Proposal, Roof, RoofVent, Slope,
+    Sprinklers, Steps, Tree,
 )
 
 WALL = 0.4  # how far things in a room stay from its plan's edges: a wall's thickness, and a bit; half that from a
@@ -113,6 +113,20 @@ def stands_on(x, y, thing):
         return False
     outline = getattr(thing, "outline", None)
     return within_rect(x, y, rect(thing)) and (not outline or in_polygon(x, y, list(outline)))
+
+
+def along(points, step=0.25):
+    """Points a few inches apart along a line through these points, in order, from the first to the last."""
+    yield points[0]
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        n = max(1, math.ceil(math.hypot(x2 - x1, y2 - y1) / step))
+        for k in range(1, n + 1):
+            yield x1 + (x2 - x1) * k / n, y1 + (y2 - y1) * k / n
+
+
+def systems(details):
+    """A house's sprinkler systems, its zones as they are and as each proposal has them, each by what it is."""
+    return [("as it is", details.sprinklers), *((p.name, p.sprinklers) for p in details.proposals)]
 
 
 def throw_edge(x, y, radius, arc):
@@ -558,27 +572,36 @@ class YardTest(HouseTestCase):
                         self.assertFalse(h.on_house(x, y), (hedge.name, x, y))
 
     def test_sprinklers_and_valve_boxes_are_in_the_lawn_or_a_bed(self):
-        """Not on paving but bare dirt, a shed or the house, and no two heads in one spot."""
+        """Not on paving but bare dirt, a shed or the house, and no two heads, or drip lines' feeds, in one spot, as
+        things are or in a proposal; a drip line's tubing too, each run all on one bed, or off them, so it lies flat
+        (it comes to them under the ground)."""
         for h in self.each():
             d = h.details
-            spots = [(z.name, head.x, head.y) for z in d.sprinklers for head in z.heads]
-            spots += [(f.name, f.x + f.width / 2, f.y + f.depth / 2) for f in d.fixtures if f.kind == "valve box"]
-            for name, x, y in spots:
-                self.assertTrue(h.in_lot(x, y), (name, x, y))
-                self.assertFalse(h.on_house(x, y), (name, x, y))
-                for thing in (*(g for g in d.grounds if g.kind != "bed" and g.paving != "dirt"), *d.sheds):
-                    self.assertFalse(stands_on(x, y, thing), (name, x, y, thing.name))
-            heads = [(z.name, head.x, head.y) for z in d.sprinklers for head in z.heads]
-            for (name, x1, y1), (other, x2, y2) in itertools.combinations(heads, 2):
-                self.assertGreater(math.hypot(x2 - x1, y2 - y1), 0.5, (name, x1, y1, other))
+            boxes = [(f.name, f.x + f.width / 2, f.y + f.depth / 2) for f in d.fixtures if f.kind == "valve box"]
+            for system, zones in systems(d):
+                heads = [((system, z.name), head.x, head.y) for z in zones for head in z.heads]
+                feeds = [((system, z.name, "drip line's feed"), *drip.feed) for z in zones for drip in z.drips]
+                runs = [((system, z.name, "drip line"), run) for z in zones for drip in z.drips for run in drip.runs]
+                tubing = [(name, x, y) for name, run in runs for x, y in along(run)]
+                for name, x, y in heads + feeds + tubing + boxes:
+                    self.assertTrue(h.in_lot(x, y), (name, x, y))
+                    self.assertFalse(h.on_house(x, y), (name, x, y))
+                    for thing in (*(g for g in d.grounds if g.kind != "bed" and g.paving != "dirt"), *d.sheds):
+                        self.assertFalse(stands_on(x, y, thing), (name, x, y, thing.name))
+                for (name, x1, y1), (other, x2, y2) in itertools.combinations(heads + feeds, 2):
+                    self.assertGreater(math.hypot(x2 - x1, y2 - y1), 0.5, (name, x1, y1, other))
+                raised = [g for g in d.grounds if g.height > 0]
+                for name, run in runs:
+                    on = {tuple(k for k, g in enumerate(raised) if stands_on(x, y, g)) for x, y in along(run)}
+                    self.assertEqual(len(on), 1, (name, run))
 
     def test_sprinklers_throw_in_the_lot_and_clear_of_the_house(self):
         """Each head's throw, over its arc and out as far as it throws, stays in the lot and off the house."""
         for h in self.each():
-            for z in h.details.sprinklers:
+            for system, z in ((system, z) for system, zones in systems(h.details) for z in zones):
                 for k, head in enumerate(z.heads, 1):
                     radius, arc = head.radius or z.radius or THROWS[z.kind], head.arc
-                    where = (z.name, f"head {k}", head.x, head.y)
+                    where = (system, z.name, f"head {k}", head.x, head.y)
                     for x, y in throw_edge(head.x, head.y, radius, arc):
                         self.assertTrue(h.in_lot(x, y), (*where, "out of the lot at", round(x, 1), round(y, 1)))
                         self.assertFalse(h.on_house(x, y), (*where, "on the house at", round(x, 1), round(y, 1)))
@@ -768,6 +791,15 @@ class KindsTest(unittest.TestCase):
             Sprinklers("Zone 1", ((0, 0),), kind="drip")
         with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ())
+        drip = Drip((0, 0), (((1, 0), (2, 0)),))
+        Sprinklers("Zone 1", (), drips=(drip,))  # drip line alone
+        for wrong in ({"feed": (0,)}, {"runs": ()}, {"runs": (((1, 0),),)}, {"flow": 0}, {"spacing": 0}, {"width": -1}):
+            with self.assertRaises(ValueError, msg=wrong):
+                dataclasses.replace(drip, **wrong)
+        with self.assertRaises(ValueError):
+            Proposal("", (Sprinklers("Zone 1", ((0, 0),)),))
+        with self.assertRaises(ValueError):  # two by one name
+            Details(lot=((0, 0), (10, 0), (10, 10)), grade=0, proposals=(Proposal("Drip", ()), Proposal("Drip", ())))
         with self.assertRaises(ValueError):
             Sprinklers("Zone 1", ((0, 0),), radius=0)
         with self.assertRaises(ValueError):

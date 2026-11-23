@@ -4,11 +4,14 @@
 // Checks the house whole, its trees in each season, and cut away to each level, from four ways round.
 //
 //   node tools/scan.mjs [house file]   # as the server picks it, if none given
+//   node tools/scan.mjs --proposal NAME [house file]   # with a proposal shown in place of things as they are
+import { parseArgs } from "node:util";
 import { loadHouse, loadModel, sceneOf } from "./model.mjs";
 
+const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { proposal: { type: "string" } } });
 const model = loadModel();
 const { buildModel } = model;
-const scene = sceneOf(model, loadHouse(process.argv[2]));
+const scene = sceneOf(model, loadHouse(positionals[0]), opt.proposal ?? null);
 if (scene.note) {
   console.log(scene.note);
   process.exit(0);

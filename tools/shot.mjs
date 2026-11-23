@@ -10,6 +10,7 @@
 //     --level NAME      in the detailed view, cut away to a level by its floor's name, as Upper or Main; or outside
 //     --no-trees        in the detailed view, the whole house with its trees hidden
 //     --season NAME     or with its trees in a season: spring, summer, fall or winter (default: today's)
+//     --proposal NAME   in the detailed view, a proposal shown in place of things as they are, by name
 //     --angle DEG       turn the 3D or detailed view to an angle, 0 looking at the front
 //     --tilt DEG        and tilt it, 90 looking straight down
 //     --top             straight down, the front at the bottom (--angle 0 --tilt 90)
@@ -41,6 +42,7 @@ const { values: opt, positionals } = parseArgs({
     level: { type: "string" },
     "no-trees": { type: "boolean" },
     season: { type: "string" },
+    proposal: { type: "string" },
     angle: { type: "string" },
     tilt: { type: "string" },
     top: { type: "boolean" },
@@ -129,6 +131,7 @@ try {
   if (opt["no-trees"]) {
     steps.push(`{ const box = document.querySelector(".cuts .trees input"); if (!box || box.closest("[hidden]")) throw new Error("No trees to hide"); if (box.checked) box.click(); await new Promise((r) => setTimeout(r, 700)); }`);
   }
+  if (opt.proposal) steps.push(click(".cuts .proposals button", opt.proposal));
   if (opt.coverage || opt.water) steps.push(`if (!state.modelCoverage) ${click(".coverage button", "Sprinkler coverage")}`);
   if (opt.coverage || opt.water) steps.push(click(".coverage .segmented button", opt.water ? "Water" : "Heads"));
   const [angle, tilt] = opt.top ? [0, 90] : [opt.angle, opt.tilt];

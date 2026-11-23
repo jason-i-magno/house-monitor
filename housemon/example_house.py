@@ -10,13 +10,14 @@ hall; in the basement, an office and a utility room open off an L-shaped
 family room. A thermostat on the main floor keeps it at 64 to 68 °F; upstairs
 runs warm, the basement cold, the office has a space heater for the work day,
 and the garage is unheated. Sprinklers water the front and back lawns and the
-flower bed, run from a controller in the garage. The first eight rooms get the eight series
+flower bed, run from a controller in the garage, and a proposal turns the
+flower bed's spray heads into a drip line. The first eight rooms get the eight series
 colors, and the garage, bathroom and outside share the gray.
 """
 
 from housemon.details import (
-    Closet, Details, Fence, Finish, Fixture, Ground, Head, Hedge, Opening, Roof, RoofVent, Shed, Slope, Sprinklers, Steps,
-    Tree,
+    Closet, Details, Drip, Fence, Finish, Fixture, Ground, Head, Hedge, Opening, Proposal, Roof, RoofVent, Shed, Slope,
+    Sprinklers, Steps, Tree,
 )
 from housemon.readings import Area, Plan, Sensor
 from housemon.simulator import SimulatedRoom
@@ -66,6 +67,31 @@ AREAS = (
     Area("Hall", "Upper", Plan(16, 9, 9, 19, elevation=UP)),
     Area("Guest room", "Upper", Plan(25, 0, 11, 28, elevation=UP)),
     Area("Utility room", "Basement", Plan(30, 0, 6, 16, elevation=DOWN)),
+)
+
+SPRINKLERS = (
+    # Each throwing over the lawn or the bed it's in, clear of the house and in the lot: those along an edge a half
+    # circle, those in a corner a quarter, and so on.
+    Sprinklers(
+        "Zone 1 (front lawn)",
+        (
+            Head(-19.5, 20.5, arc=(25, 90)), Head(-19.5, 59.5, arc=(270, 360)), Head(4, 59.5, arc=(180, 360)),
+            Head(27.5, 59.5, arc=(180, 360)), Head(25.5, 31.5, arc=(0, 180)), Head(-0.5, 31.5, arc=(0, 180), radius=19),
+        ),
+        radius=23,
+    ),
+    Sprinklers(
+        "Zone 2 (back lawn)",
+        (
+            Head(-19.5, -12, arc=(270, 20)), Head(17, -12, arc=(180, 360)), Head(47, -12, arc=(180, 330)),
+            Head(74.5, -12, arc=(150, 270)), Head(-19.5, -44.5, arc=(0, 90)), Head(17, -44.5, arc=(0, 180)),
+            Head(47, -44.5, arc=(30, 180)), Head(74.5, -44.5, arc=(90, 180)),
+        ),
+    ),
+    Sprinklers(
+        "Zone 3 (flower bed)", (Head(3, 29.5, arc=(0, 180)), Head(12, 29.5, arc=(0, 180)), Head(24.5, 29.5, arc=(0, 180))),
+        kind="spray", radius=8,
+    ),
 )
 
 DETAILS = Details(
@@ -216,28 +242,16 @@ DETAILS = Details(
         Steps("Deck steps", 36, -12, 4, 2, bottom=-1, top=-0.1, up="front", paving="wood"),
         Steps("Garage steps", 36.4, 16, 2, 3, bottom=-1, top=0, up="left", room="Garage"),
     ),
-    sprinklers=(
-        # Each throwing over the lawn or the bed it's in, clear of the house and in the lot: those along an edge a half
-        # circle, those in a corner a quarter, and so on.
-        Sprinklers(
-            "Zone 1 (front lawn)",
+    sprinklers=SPRINKLERS,
+    proposals=(
+        # The flower bed's spray heads off, the middle one's riser feeding a drip line back and forth along the bed,
+        # inside its edging, two rows a foot apart.
+        Proposal(
+            "Drip line in the flower bed",
             (
-                Head(-19.5, 20.5, arc=(25, 90)), Head(-19.5, 59.5, arc=(270, 360)), Head(4, 59.5, arc=(180, 360)),
-                Head(27.5, 59.5, arc=(180, 360)), Head(25.5, 31.5, arc=(0, 180)), Head(-0.5, 31.5, arc=(0, 180), radius=19),
+                *SPRINKLERS[:2],
+                Sprinklers("Zone 3 (flower bed)", (), drips=(Drip((12, 29.5), (((1, 29), (25, 29), (25, 30), (1, 30)),)),)),
             ),
-            radius=23,
-        ),
-        Sprinklers(
-            "Zone 2 (back lawn)",
-            (
-                Head(-19.5, -12, arc=(270, 20)), Head(17, -12, arc=(180, 360)), Head(47, -12, arc=(180, 330)),
-                Head(74.5, -12, arc=(150, 270)), Head(-19.5, -44.5, arc=(0, 90)), Head(17, -44.5, arc=(0, 180)),
-                Head(47, -44.5, arc=(30, 180)), Head(74.5, -44.5, arc=(90, 180)),
-            ),
-        ),
-        Sprinklers(
-            "Zone 3 (flower bed)", (Head(3, 29.5, arc=(0, 180)), Head(12, 29.5, arc=(0, 180)), Head(24.5, 29.5, arc=(0, 180))),
-            kind="spray", radius=8,
         ),
     ),
 )

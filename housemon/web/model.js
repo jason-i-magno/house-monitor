@@ -103,11 +103,18 @@
  */
 /** @typedef {{x: number, y: number, arc: [number, number] | null, radius: number | null}} Head */
 /**
- * A zone of sprinklers, each head a Head, as the server sends it even for one given as just its point.
+ * A drip line on a zone: its feed, where the zone's pipe comes up, and its runs of tubing, each along its points, an
+ * emitter every `spacing` inches putting out `flow` gallons an hour, wetting a strip `width` ft wide.
+ * @typedef {{feed: Point, runs: Point[][], flow: number, spacing: number, width: number}} Drip
+ */
+/**
+ * A zone of sprinklers, each head a Head, as the server sends it even for one given as just its point, and its drip
+ * lines.
  * @typedef {{
- *   name: string, heads: Head[], kind: "rotor" | "spray", radius: number | null, known: boolean,
+ *   name: string, heads: Head[], kind: "rotor" | "spray", radius: number | null, known: boolean, drips: Drip[],
  * }} Sprinklers
  */
+/** @typedef {{name: string, sprinklers: Sprinklers[]}} Proposal a change being thought about, by its name */
 /**
  * @typedef {{
  *   name: string, x: number, y: number, width: number, depth: number, wall: number, peak: number, ridge: "x" | "y",
@@ -151,6 +158,7 @@
  *   colors: Partial<Record<string, [string, string]>>, claddings: Cladding[], roofs: Roof[], roof_vents: RoofVent[],
  *   openings: Opening[], closets: Closet[], fixtures: Fixture[], grounds: Ground[], trees: Tree[], hedges: Hedge[],
  *   sheds: Shed[], fences: Fence[], steps: Steps[], sprinklers: Sprinklers[], window_border: number,
+ *   proposals: Proposal[],
  * }} Details
  */
 /**
@@ -193,7 +201,8 @@
 /**
  * A part of the scene, as picking, the readout and the list know it: its box, x0, y0, z0, x1, y1, z1, and the level
  * it's on, if any; whether it shows only with the whole house, or comes and goes with the trees; for a room or area,
- * its place; and for sprinklers, the ids of a zone's heads, the point it's centered on, and what it waters.
+ * its place; and for sprinklers, the ids of a zone's heads and drip lines, the point it's centered on, and what it
+ * waters.
  * @typedef {{
  *   id: number, key: string, name: string, kind: string, group?: string | null, where?: string, known?: boolean,
  *   level: number | null, bbox: number[], whole?: boolean, tree?: boolean, place?: Place, sensor?: Sensor,
@@ -207,7 +216,12 @@
  *   x: number, y: number, top: number, arc: number[] | null, radius: number, guessed: boolean, rate: number,
  * }} SceneHead
  */
-/** @typedef {{heads: SceneHead[], of: string}} Water what a zone or head waters, and whose it is */
+/**
+ * A drip line in the scene: its feed, with the top of the ground there, its runs, each point with the top of the
+ * ground or bed under it, how many feet of tubing they come to, and the inches of water an hour it puts on its strip.
+ * @typedef {Omit<Drip, "runs"> & {top: number, runs: Vec[][], length: number, rate: number}} SceneDrip
+ */
+/** @typedef {{heads: SceneHead[], drips: SceneDrip[], of: string}} Water what a zone, head or drip line waters, and whose */
 /** @typedef {Opening & SideLine & {s0: number, s1: number, z0: number, z1: number, item: Item}} WallOpening */
 /**
  * A door, window or vent in a room's wall: its place and the piece it's in, whether it goes through the wall, and
@@ -241,7 +255,11 @@
  * A fence, each gate its middle and width.
  * @typedef {Omit<Fence, "gates"> & {item: Item, gates: {x: number, y: number, width: number, item: Item}[]}} SceneFence
  */
-/** @typedef {Omit<Sprinklers, "heads"> & {heads: SceneHead[], item: Item, headItems: Item[]}} SceneSprinklers */
+/**
+ * @typedef {Omit<Sprinklers, "heads" | "drips"> & {
+ *   heads: SceneHead[], drips: SceneDrip[], item: Item, headItems: Item[], dripItems: Item[],
+ * }} SceneSprinklers
+ */
 /** @typedef {Steps & {item: Item}} SceneSteps */
 /** @typedef {Slope & {item: Item}} SceneSlope */
 /** @typedef {Roof & {item: Item, color?: undefined}} SceneRoof */
@@ -345,8 +363,10 @@ const MODEL_TOKENS = [
   "bark-gray", "bark-white", "leaves", "leaves-light", "leaves-dark", "leaves-spring", "fall-yellow", "fall-orange", "fall-red", "flowers-white", "flowers-pink", "needles", "focus", "sash", "window-border", "paneling", "flagstone", "stone", "fence", "deck", "shed-roof", "brick", "gravel", "mulch",
   "coverage-0", "coverage-1", "coverage-2", "coverage-3", "water-1", "water-2", "water-3", "water-4", "water-5",
 ];
-// The sprinklers' coverage: how many heads reach a spot, dry for none, up to 3 or more.
+// The sprinklers' coverage: how many heads reach a spot, dry for none, up to 3 or more, or with drip lines, how many
+// heads and lines.
 const MODEL_COVERAGE_KEY = ["Dry", "1 head", "2 heads", "3 or more"];
+const MODEL_COVERAGE_DRIP_KEY = ["Dry", "1 head or line", "2 heads or lines", "3 or more"];
 // The water a spot gets in an hour of each zone running, all the heads reaching it together: dry, and then up to
 // each of MODEL_WATER_STEPS inches, or more.
 const MODEL_WATER_STEPS = [0.25, 0.5, 1, 2];
@@ -556,7 +576,7 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   /** @type {SceneDetails} */
   const details = {
     colors: {}, slopes: [], claddings: [], roofs: [], roof_vents: [], openings: [], closets: [], fixtures: [], grounds: [], trees: [], hedges: [], sheds: [], fences: [], steps: [], sprinklers: [], window_border: 0,
-    ...(given ?? modelFallback(raw)),
+    proposals: [], ...(given ?? modelFallback(raw)),
   };
   /** @type {Item[]} */
   const items = [];
@@ -705,11 +725,12 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
     });
     return { ...f, item, gates };
   });
-  // A sprinkler zone's heads are each a part, and the zone one more with no faces of its own: focusing it lights up
-  // all its heads, their ids a run (`ids`), centered on its head nearest their middle, as theirs may be far from any.
-  // Each head stands in the lawn or the bed it's in, and throws over its arc (`arc`, its first direction and how far
-  // round from it, in degrees, null for all the way round) as far as it says, else as its zone's do, else as far as
-  // its kind does, by guess; `water` is what a zone or head waters, for the coverage shown while it's focused.
+  // A sprinkler zone's heads and drip lines are each a part, and the zone one more with no faces of its own: focusing
+  // it lights up all of them, their ids a run (`ids`), centered on its head or drip line's feed nearest their middle,
+  // as theirs may be far from any. Each head stands in the lawn or the bed it's in, and throws over its arc (`arc`, its
+  // first direction and how far round from it, in degrees, null for all the way round) as far as it says, else as its
+  // zone's do, else as far as its kind does, by guess; a drip line's tubing lies on the ground or bed under it. `water`
+  // is what a zone, head or drip line waters, for the coverage shown while it's focused.
   const sprinklers = details.sprinklers.map((z, i) => {
     const heads = z.heads.map((h) => /** @type {SceneHead} */ ({
       x: h.x, y: h.y, top: groundTop(details, h.x, h.y),
@@ -722,20 +743,43 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
       const area = ((h.arc ? h.arc[1] : 360) / 360) * Math.PI * h.radius ** 2;
       h.rate = z.kind === "spray" ? MODEL_SPRAY_RATE : (MODEL_INCHES_AN_HOUR * MODEL_ROTOR_FLOW) / area;
     }
-    const kind = `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}`;
-    const [xs, ys, zs] = /** @type {("x" | "y" | "top")[]} */ (["x", "y", "top"]).map((k) => heads.map((h) => h[k]));
+    // Its drip lines, each point on the ground or bed under it, and the inches an hour each puts on its strip; none in
+    // a house the cloud service was sent before there were any.
+    const drips = (z.drips ?? []).map((d) => {
+      const runs = d.runs.map((run) => run.map(([x, y]) => /** @type {Vec} */ ([x, y, groundTop(details, x, y)])));
+      const length = runs.reduce((sum, run) => sum + run.slice(1).reduce((l, q, k) => l + Math.hypot(q[0] - run[k][0], q[1] - run[k][1]), 0), 0);
+      return /** @type {SceneDrip} */ ({ ...d, top: groundTop(details, ...d.feed), runs, length, rate: (231 * d.flow) / (12 * d.spacing * d.width) });
+    });
+    const named = [
+      heads.length ? `${heads.length} ${z.kind === "spray" ? "spray head" : "rotor"}${heads.length === 1 ? "" : "s"}` : "",
+      drips.length ? (drips.length === 1 ? "a drip line" : `${drips.length} drip lines`) : "",
+    ].filter((n) => n).join(" and ");
+    const kind = named[0].toUpperCase() + named.slice(1);
+    // The points it reaches, and the ones it can be centered on: its heads and drip lines' feeds.
+    const centers = [...heads.map((h) => [h.x, h.y, h.top]), ...drips.map((d) => [...d.feed, d.top])];
+    const spots = [...centers, ...drips.flatMap((d) => d.runs.flat())];
+    const [xs, ys, zs] = [0, 1, 2].map((k) => spots.map((p) => p[k]));
     const bbox = [Math.min(...xs) - 0.3, Math.min(...ys) - 0.3, Math.min(...zs) - 0.1, Math.max(...xs) + 0.3, Math.max(...ys) + 0.3, Math.max(...zs) + 0.2];
     const [mx, my] = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2];
-    const middle = heads.reduce((a, b) => (Math.hypot(b.x - mx, b.y - my) < Math.hypot(a.x - mx, a.y - my) ? b : a));
-    const item = outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [middle.x, middle.y, middle.top + 0.1], water: { heads, of: z.name } });
+    const middle = centers.reduce((a, b) => (Math.hypot(b[0] - mx, b[1] - my) < Math.hypot(a[0] - mx, a[1] - my) ? b : a));
+    const item = outside(`sprinklers:${i}`, z, kind, "Sprinklers", bbox, { center: [middle[0], middle[1], middle[2] + 0.1], water: { heads, drips, of: z.name } });
     const headItems = heads.map((h, k) => {
       const head = { name: `Head ${k + 1}`, known: z.known };
-      const water = { heads: [h], of: `${head.name} of ${z.name}` };
+      const water = { heads: [h], drips: [], of: `${head.name} of ${z.name}` };
       const box = [h.x - 0.3, h.y - 0.3, h.top - 0.1, h.x + 0.3, h.y + 0.3, h.top + 0.2];
       return outside(`sprinkler:${i}:${k}`, head, z.kind === "spray" ? "Spray head" : "Rotor", "Sprinklers", box, { where: z.name, center: [h.x, h.y, h.top + 0.1], water });
     });
-    item.ids = [headItems[0].id, /** @type {Item} */ (headItems.at(-1)).id]; // a zone has a head or more
-    return { ...z, heads, item, headItems };
+    const dripItems = drips.map((d, k) => {
+      const line = { name: `Drip line ${k + 1}`, known: z.known };
+      const water = { heads: [], drips: [d], of: `${line.name} of ${z.name}` };
+      const points = [[...d.feed, d.top], ...d.runs.flat()];
+      const [px, py, pz] = [0, 1, 2].map((k) => points.map((p) => p[k]));
+      const box = [Math.min(...px) - 0.3, Math.min(...py) - 0.3, Math.min(...pz) - 0.1, Math.max(...px) + 0.3, Math.max(...py) + 0.3, Math.max(...pz) + 0.1];
+      return outside(`drip:${i}:${k}`, line, "Drip line", "Sprinklers", box, { where: z.name, water });
+    });
+    const parts = [...headItems, ...dripItems];
+    item.ids = [parts[0].id, /** @type {Item} */ (parts.at(-1)).id]; // a zone has a head or a drip line
+    return { ...z, heads, drips, item, headItems, dripItems };
   });
   const roofs = details.roofs.map((r, i) => ({ ...r, item: add({ key: `roof:${i}`, name: r.name, kind: "Roof", group: "Roof", where: "Roof", known: r.known, level: null, whole: true, bbox: [r.x, r.y, r.eave - MODEL_ROOF_DEPTH, r.x + r.width, r.y + r.depth, r.peak] }) }));
   const roofVents = details.roof_vents.flatMap((v, i) => {
@@ -787,9 +831,16 @@ function modelScene({ rooms, areas, details: given, wall = MODEL_WALL, colors })
   };
 }
 
-// The scene for the page, from its state.
+// The proposal the detailed view shows in place of things as they are: the one chosen, while the house still has it.
+function modelProposal() {
+  return (state.details?.proposals ?? []).find((p) => p.name === state.modelProposal) ?? null;
+}
+
+// The scene for the page, from its state, with the proposal chosen in place of things as they are.
 function pageModelScene() {
-  return modelScene({ rooms: indoors(), areas: state.areas, details: state.details, wall: state.wall ?? MODEL_WALL, colors: modelColors });
+  const proposal = modelProposal();
+  const details = state.details && proposal ? { ...state.details, sprinklers: proposal.sprinklers } : state.details;
+  return modelScene({ rooms: indoors(), areas: state.areas, details, wall: state.wall ?? MODEL_WALL, colors: modelColors });
 }
 
 // The theme's colors, but where the house has its own, like its siding, as [r, g, b] from 0 to 1.
@@ -2477,6 +2528,27 @@ function fixture(mesh, C, f) {
   }
 }
 
+// A drip line: its feed a round lid just over the ground, where its zone's pipe comes up, and its tubing a thin black
+// tube along each run, on the ground or bed, sunk a little into it so its underside isn't in their plane. Each
+// stretch runs on past its ends by half the tube's width, so the tubing turns its corners with no gap.
+/** @param {Mesh} mesh @param {ModelColors} C @param {SceneDrip} d @param {number} id */
+function dripLine(mesh, C, d, id) {
+  round(mesh, d.feed, 0.3, d.top - 0.1, d.top + 0.05, C.black, id, false, 12);
+  const half = 0.04;
+  for (const run of d.runs) {
+    run.slice(1).forEach((q, k) => {
+      const p = run[k];
+      const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (length < 1e-6) return;
+      const [ux, uy] = [((q[0] - p[0]) / length) * half, ((q[1] - p[1]) / length) * half]; // along it, half its width
+      const [a, b] = [[p[0] - ux, p[1] - uy, p[2]], [q[0] + ux, q[1] + uy, q[2]]];
+      /** @param {number} dz @returns {Vec[]} */
+      const corners = (dz) => [[a[0] + uy, a[1] - ux, a[2] + dz], [b[0] + uy, b[1] - ux, b[2] + dz], [b[0] - uy, b[1] + ux, b[2] + dz], [a[0] - uy, a[1] + ux, a[2] + dz]];
+      hexa(mesh, corners(-0.03), corners(0.05), C.black, id);
+    });
+  }
+}
+
 // The scene's triangles, cut away to `mode` and seen along `view`, its trees shown or not and in a season.
 /** @param {Scene} scene @param {string} mode @param {Vec} view @param {{trees?: boolean, season?: Season}} [options] */
 function buildModel(scene, mode, view, { trees = true, season = "summer" } = {}) {
@@ -2496,9 +2568,10 @@ function buildModel(scene, mode, view, { trees = true, season = "summer" } = {})
   const cut = mode === "outside" ? Infinity : (scene.levels.find(([floor]) => floor === mode)?.[1] ?? Infinity) + MODEL_CUT;
   for (const t of scene.steps) if (shows(t.item)) stepsFlight(mesh, scene, t, cut);
   for (const f of scene.fences) fence(mesh, scene, f);
-  // Sprinkler heads, at rest, their caps just over the ground, sunk into it so they're not in its plane.
+  // Sprinkler heads, at rest, their caps just over the ground, sunk into it so they're not in its plane, and drip lines.
   for (const z of scene.sprinklers) {
     z.heads.forEach((h, k) => round(mesh, [h.x, h.y], z.kind === "spray" ? 0.17 : 0.25, h.top - 0.1, h.top + 0.1, C.black, z.headItems[k].id, false, 10));
+    z.drips.forEach((d, k) => dripLine(mesh, C, d, z.dripItems[k].id));
   }
   for (const t of scene.trees) if (shows(t.item)) tree(mesh, scene, t, season);
   for (const h of scene.hedges) if (shows(h.item)) hedge(mesh, scene, h, season);
@@ -2692,10 +2765,11 @@ function renderModel(m, camera, focus, picking) {
   }
 }
 
-// How many sprinkler heads reach each spot of the lot, or only those of a zone or head, or with `measure` "water",
-// which step of MODEL_WATER_STEPS the water they put on it comes to (0 for none): a grid of them, a cell
-// MODEL_COVERAGE_CELL ft across, or wider where the lot is too big for MODEL_COVERAGE_CELLS of them along a side,
-// each from the heads whose throw, out to its radius and within its arc, reaches its middle.
+// How many sprinkler heads and drip lines reach each spot of the lot, or only those of a zone, head or drip line, or
+// with `measure` "water", which step of MODEL_WATER_STEPS the water they put on it comes to (0 for none): a grid of
+// them, a cell MODEL_COVERAGE_CELL ft across, or wider where the lot is too big for MODEL_COVERAGE_CELLS of them along
+// a side, each from the heads whose throw, out to its radius and within its arc, reaches its middle, and each run of
+// drip line whose strip does: half its width either side of the tubing, and past its ends, square.
 /** @param {Scene} scene @param {Item | null} [part] @param {Measure} [measure] @returns {Coverage} */
 function modelCoverage(scene, part = null, measure = "heads") {
   const [x0, y0, , x1, y1] = scene.lawn.bbox;
@@ -2703,7 +2777,12 @@ function modelCoverage(scene, part = null, measure = "heads") {
   const [w, h] = [Math.max(1, Math.ceil((x1 - x0) / cell)), Math.max(1, Math.ceil((y1 - y0) / cell))];
   const counts = new Uint8Array(w * h);
   const water = measure === "water" ? new Float32Array(w * h) : null;
-  for (const { heads } of part ? [/** @type {Water} */ (part.water)] : scene.sprinklers.map((z) => /** @type {Water} */ (z.item.water))) {
+  /** @param {number} k @param {number} rate */
+  const reach = (k, rate) => {
+    if (water) water[k] += rate;
+    else counts[k] = Math.min(255, counts[k] + 1);
+  };
+  for (const { heads, drips } of part ? [/** @type {Water} */ (part.water)] : scene.sprinklers.map((z) => /** @type {Water} */ (z.item.water))) {
     for (const { x, y, radius, arc, rate } of heads) {
       const within = modelArc(arc);
       // Row by row, the cells whose middles are within its throw.
@@ -2712,16 +2791,36 @@ function modelCoverage(scene, part = null, measure = "heads") {
         const dy = y0 + (j + 0.5) * cell - y;
         const half = Math.sqrt(Math.max(0, radius * radius - dy * dy));
         const [i0, i1] = [Math.max(0, Math.ceil((x - half - x0) / cell - 0.5)), Math.min(w - 1, Math.floor((x + half - x0) / cell - 0.5))];
-        for (let i = i0; i <= i1; i++) {
-          if (!within(x0 + (i + 0.5) * cell - x, dy)) continue;
-          if (water) water[j * w + i] += rate;
-          else counts[j * w + i] = Math.min(255, counts[j * w + i] + 1);
+        for (let i = i0; i <= i1; i++) if (within(x0 + (i + 0.5) * cell - x, dy)) reach(j * w + i, rate);
+      }
+    }
+    for (const { runs, width, rate } of drips) {
+      for (const run of runs) {
+        const half = width / 2;
+        const [rx, ry] = [run.map((p) => p[0]), run.map((p) => p[1])];
+        const [i0, i1] = [Math.max(0, Math.ceil((Math.min(...rx) - half - x0) / cell - 0.5)), Math.min(w - 1, Math.floor((Math.max(...rx) + half - x0) / cell - 0.5))];
+        const [j0, j1] = [Math.max(0, Math.ceil((Math.min(...ry) - half - y0) / cell - 0.5)), Math.min(h - 1, Math.floor((Math.max(...ry) + half - y0) / cell - 0.5))];
+        for (let j = j0; j <= j1; j++) {
+          for (let i = i0; i <= i1; i++) {
+            const [px, py] = [x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell];
+            if (run.some((q, k) => k > 0 && inStrip(px, py, run[k - 1], q, half))) reach(j * w + i, rate);
+          }
         }
       }
     }
   }
   if (water) water.forEach((inches, k) => (counts[k] = inches > 0 ? 1 + MODEL_WATER_STEPS.filter((step) => inches >= step).length : 0));
   return { box: [x0, y0, 1 / (w * cell), 1 / (h * cell)], w, h, counts };
+}
+
+// Whether a point on the plan is in the strip along the segment a to b, `half` either side of it and past its ends.
+/** @param {number} px @param {number} py @param {number[]} a @param {number[]} b @param {number} half */
+function inStrip(px, py, a, b, half) {
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const [ux, uy] = length ? [(b[0] - a[0]) / length, (b[1] - a[1]) / length] : [1, 0];
+  const [dx, dy] = [px - a[0], py - a[1]];
+  const along = dx * ux + dy * uy;
+  return -half <= along && along <= length + half && Math.abs(dx * uy - dy * ux) <= half;
 }
 
 // Whether a spot dx, dy from a sprinkler head is within its arc, [first direction, how far round] the way the angles
@@ -2916,7 +3015,9 @@ function panModel(dx, dy) {
 // The buttons that cut the house away to a level, and under them the box that
 // shows or hides the trees and the buttons for their season, there only for
 // the whole house, since cut away they're off. The season isn't kept, so the
-// page always opens on today's.
+// page always opens on today's. Under them, for a house with proposals, the
+// buttons that show one in place of things as they are, which isn't kept
+// either, so the page opens on the house as it is.
 /** @param {Scene | NoScene} scene */
 function renderModelCuts(scene) {
   const levels = scene.levels ?? [];
@@ -2931,6 +3032,16 @@ function renderModelCuts(scene) {
   const now = seasonOf(new Date());
   renderModelButtons(seasons, MODEL_SEASONS.map((s) => [s, s[0].toUpperCase() + s.slice(1), s === now ? "The season now" : null]), state.modelSeason, (id) => {
     state.modelSeason = /** @type {Season} */ (id); // one of MODEL_SEASONS, its buttons' ids
+    drawMap();
+  });
+  const proposals = scene.note ? [] : (state.details?.proposals ?? []);
+  const changes = /** @type {HTMLElement} */ (state.map.cuts.querySelector(".proposals"));
+  changes.hidden = !proposals.length;
+  /** @type {[string, string, string][]} */
+  const choices = [["", "As it is", "The house as it is"], ...proposals.map((p) => /** @type {[string, string, string]} */ ([p.name, p.name, "A change being thought about"]))];
+  renderModelButtons(/** @type {HTMLElement} */ (changes.querySelector(".segmented")), choices, modelProposal()?.name ?? "", (id) => {
+    state.modelProposal = id;
+    state.modelScene = null; // built again with it
     drawMap();
   });
   renderModelButtons(/** @type {HTMLElement} */ (state.map.cuts.querySelector(".levels .segmented")), options, current, (id) => {
@@ -2967,6 +3078,12 @@ function modelCoverageShown(scene) {
   return state.modelCoverage && (scene.sprinklers?.length ?? 0) > 0;
 }
 
+// Whether the sprinklers the detailed view shows have drip lines.
+/** @param {Scene | NoScene} scene */
+function modelDrips(scene) {
+  return (scene.sprinklers ?? []).some((z) => z.drips.length);
+}
+
 // The button that shows the sprinklers' coverage, for a house with them, and while it's on, whether it's of the heads
 // reaching each spot or the water they put on it, and its key: what each color means, and whose coverage it is, every
 // zone's or the one focused. Both keys are laid out in one place, the other hidden, so switching between them moves
@@ -2977,9 +3094,10 @@ function renderModelCoverage(scene, drawn) {
   box.hidden = !(drawn && scene.sprinklers?.length);
   if (box.hidden) return;
   const [on, by] = [state.modelCoverage, state.modelCoverageBy];
+  const drips = modelDrips(scene);
   /** @param {Measure} measure */
   const swatches = (measure) => MODEL_COVERAGE_TOKENS[measure].map((token) => `rgb(${/** @type {Scene} */ (scene).colors[token].map((v) => Math.round(v * 255)).join(" ")})`);
-  const current = `${on} ${by} ${swatches("heads").join()} ${swatches("water").join()}`;
+  const current = `${on} ${by} ${drips} ${swatches("heads").join()} ${swatches("water").join()}`;
   if (box.dataset.current === current) return;
   box.dataset.current = current;
   /** @param {string} name @param {unknown} value */
@@ -3005,7 +3123,9 @@ function renderModelCoverage(scene, drawn) {
     return choice;
   });
   const keys = /** @type {[Measure, string[], string, string | null][]} */ ([
-    ["heads", MODEL_COVERAGE_KEY, "Heads reaching each spot of the lawn and beds", null],
+    drips
+      ? ["heads", MODEL_COVERAGE_DRIP_KEY, "Heads and drip lines reaching each spot of the lawn and beds", null]
+      : ["heads", MODEL_COVERAGE_KEY, "Heads reaching each spot of the lawn and beds", null],
     ["water", MODEL_WATER_KEY, "Inches of water each spot of the lawn and beds gets in an hour of each zone", "per hour each zone runs"],
   ]).map(([measure, labels, about, unit]) => {
     const colors = swatches(measure);
@@ -3062,15 +3182,21 @@ function modelThrow(heads) {
   return `Throws ${far}${arc}${guessed}`;
 }
 
-// The water a head puts down on its area, or a zone's heads, in inches an hour, for the readout.
-/** @param {SceneHead[]} heads */
-function modelRate(heads) {
+// The water heads or drip lines put down, each on its area, in inches an hour, for the readout, after what puts it
+// down (as "Each puts down").
+/** @param {number[]} rates @param {string} lead */
+function modelRate(rates, lead) {
   /** @param {number} v */
   const inches = (v) => (v < 1 ? v.toFixed(2) : v.toFixed(1));
-  const rates = heads.map((h) => h.rate);
   const [lo, hi] = [Math.min(...rates), Math.max(...rates)];
-  const amount = `${inches(lo)}${hi - lo >= 0.005 ? ` to ${inches(hi)}` : ""} in an hour`;
-  return heads.length > 1 ? `Each puts down ${amount}` : `Puts down ${amount}`;
+  return `${lead} ${inches(lo)}${hi - lo >= 0.005 ? ` to ${inches(hi)}` : ""} in an hour`;
+}
+
+// How much tubing a drip line has, or a zone's drip lines, and for one, its emitters, for the readout.
+/** @param {SceneDrip[]} drips */
+function modelTubing(drips) {
+  const tubing = `${Math.round(drips.reduce((sum, d) => sum + d.length, 0))} ft of drip line`;
+  return drips.length > 1 ? tubing : `${tubing}, an emitter every ${drips[0].spacing} in, ${drips[0].flow} gal an hour each`;
 }
 
 // The readout for a thing in the detailed view other than a room.
@@ -3079,8 +3205,18 @@ function modelReadout(item) {
   const rows = [el("div", { class: "head" }, el("strong", {}, item.name), " ", el("span", {}, item.kind))];
   if (item.place && !item.sensor) rows.push(el("div", { class: "time" }, `${item.place.floor} level, no sensor`));
   if (item.where && item.where !== "Outside" && item.where !== "Roof") rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.where)));
-  if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelThrow(item.water.heads))));
-  if (item.water) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, modelRate(item.water.heads))));
+  /** @param {string} text */
+  const row = (text) => el("div", { class: "row" }, el("span", { class: "name" }, text));
+  // A zone's heads, then its drip lines, each said for what it is where a zone has both.
+  const [heads, drips] = [item.water?.heads ?? [], item.water?.drips ?? []];
+  if (heads.length) {
+    const lead = heads.length > 1 ? (drips.length ? "Each head puts down" : "Each puts down") : drips.length ? "Its head puts down" : "Puts down";
+    rows.push(row(modelThrow(heads)), row(modelRate(heads.map((h) => h.rate), lead)));
+  }
+  if (drips.length) {
+    const lead = drips.length > 1 ? "Each drip line puts down" : heads.length ? "Its drip line puts down" : "Puts down";
+    rows.push(row(modelTubing(drips)), row(modelRate(drips.map((d) => d.rate), lead)));
+  }
   if (item.falls) rows.push(el("div", { class: "row" }, el("span", { class: "name" }, item.falls)));
   if (!item.place && !item.known) rows.push(el("div", { class: "time" }, "Placed by guess"));
   return rows;

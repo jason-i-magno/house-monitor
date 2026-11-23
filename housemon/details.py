@@ -1,6 +1,6 @@
 """What the house map's detailed view draws besides the rooms: the doors, windows,
 vents, appliances, fireplaces and closets in them, the roof over them, and the yard around them, with its
-sprinklers.
+sprinklers, and changes being thought about, which it can show in their place.
 
 A house file (example_house.py, or your own) gives its details as a Details.
 Like the rooms' plans, they're in feet, with x to the right, y toward the front
@@ -345,26 +345,66 @@ class Hedge:
 
 
 @dataclass(frozen=True)
+class Drip:
+    """A drip line on a sprinkler zone: tubing laid along each of its runs, each its points on the plan in order, on
+    the bed or lawn it's in, as back and forth along a bed, with an emitter every `spacing` inches putting out `flow`
+    gallons an hour, wetting a strip `width` ft wide along it, so an hour of its zone running puts
+    231 × flow / (12 × spacing × width) inches of water on each spot of it (a gallon is 231 in³). Its water comes in
+    tubing under the ground from its feed, a point on the plan where its zone's pipe comes up, as a sprinkler head's
+    riser converted to drip, with a filter and a pressure regulator."""
+
+    feed: tuple[float, float]
+    runs: tuple[tuple[tuple[float, float], ...], ...]
+    flow: float = 0.9
+    spacing: float = 12
+    width: float = 1.0
+
+    def __post_init__(self):
+        if len(self.feed) != 2:
+            raise ValueError(f"A drip line's feed is a point on the plan, not {self.feed!r}")
+        if not self.runs or any(len(run) < 2 for run in self.runs):
+            raise ValueError(f"The drip line fed at {self.feed} has a run or more, each along at least two points")
+        if not (self.flow > 0 and self.spacing > 0 and self.width > 0):
+            raise ValueError(f"The drip line fed at {self.feed} puts out some water, from emitters some way apart, on a strip some way wide")
+
+
+@dataclass(frozen=True)
 class Sprinklers:
     """One zone of a sprinkler system: its heads, in the lawn or a bed, standing in whichever they're in, each a Head,
-    or for one throwing all the way round, its point (x, y) on the plan. kind is what they are: rotors, throwing far
-    across a lawn, or sprays, smaller and closer together. radius is how far its heads throw, in feet, but for one
-    that says, if not as far as that kind does by default (THROWS: 30 for rotors, 12 for sprays). Its valve is in a
-    valve box, a fixture, and so is the controller that runs it."""
+    or for one throwing all the way round, its point (x, y) on the plan, and its drip lines (drips), if any, each a
+    Drip. kind is what its heads are: rotors, throwing far across a lawn, or sprays, smaller and closer together.
+    radius is how far its heads throw, in feet, but for one that says, if not as far as that kind does by default
+    (THROWS: 30 for rotors, 12 for sprays). Its valve is in a valve box, a fixture, and so is the controller that
+    runs it."""
 
     name: str
     heads: tuple[Head | tuple[float, float], ...]
     kind: str = "rotor"
     radius: float | None = None
     known: bool = False
+    drips: tuple[Drip, ...] = ()
 
     def __post_init__(self):
         _check(self.kind, SPRINKLERS, "a sprinkler's kind")
-        if not self.heads:
-            raise ValueError(f"{self.name} needs a head or more")
+        if not self.heads and not self.drips:
+            raise ValueError(f"{self.name} needs a head or a drip line")
         if self.radius is not None and self.radius <= 0:
             raise ValueError(f"{self.name}'s heads need to throw some way")
         object.__setattr__(self, "heads", tuple(h if isinstance(h, Head) else Head(*h) for h in self.heads))
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """A change being thought about, which the detailed view can show in place of the house as it is, by its name:
+    for now, to its sprinkler system, these zones in place of its own (sprinklers), as with a head converted to a
+    drip line."""
+
+    name: str
+    sprinklers: tuple[Sprinklers, ...]
+
+    def __post_init__(self):
+        if not self.name:
+            raise ValueError("A proposal has a name, to show it by")
 
 
 @dataclass(frozen=True)
@@ -575,7 +615,9 @@ class Details:
     so the view calls none of it a guess. sprinklers are the sprinkler
     system's zones. window_border is how wide a raised border, as of stucco,
     stands round each window on the outside of the house, in the
-    window-border color, or 0 for none.
+    window-border color, or 0 for none. proposals are changes being thought
+    about, each a Proposal, which the view can show in place of things as they
+    are, one at a time.
     """
 
     lot: tuple[tuple[float, float], ...]
@@ -598,10 +640,14 @@ class Details:
     steps: tuple[Steps, ...] = ()
     sprinklers: tuple[Sprinklers, ...] = ()
     window_border: float = 0.0
+    proposals: tuple[Proposal, ...] = ()
 
     def __post_init__(self):
         if self.window_border < 0:
             raise ValueError(f"a window border can't be {self.window_border} ft wide")
+        names = [p.name for p in self.proposals]
+        if len(set(names)) < len(names):
+            raise ValueError("two proposals have one name, so the view couldn't tell them apart")
         # A litter box's state goes by its name, and a robot is one litter box.
         boxes = [f for f in self.fixtures if f.kind == "litter box"]
         for what, values in (("name", [f.name for f in boxes]), ("Litter-Robot", [f.whisker.casefold() for f in boxes if f.whisker])):
