@@ -162,11 +162,17 @@
  * }} Details
  */
 /**
+ * Where a house's garden is, as the house file's GARDEN says (garden.py): its latitude, the compass bearing its plan's
+ * front faces, and the average dates of the last frost in spring and the first in fall, each [month, day].
+ * @typedef {{latitude: number, facing: number, last_frost: [number, number], first_frost: [number, number]}} Garden
+ */
+/**
  * The house, from /api/sensors: its sensors with their latest readings, areas, details, the walls' thickness in feet,
- * each litter box's latest state by name (null before its first), and what each robot vacuum is doing.
+ * each litter box's latest state by name (null before its first), what each robot vacuum is doing, and where its
+ * garden is, if the house file says.
  * @typedef {{
  *   sensors: Sensor[], areas: Area[], details: Details | null, wall: number,
- *   litter_boxes: Record<string, LitterBoxState | null>, vacuums: Vacuum[],
+ *   litter_boxes: Record<string, LitterBoxState | null>, vacuums: Vacuum[], garden: Garden | null,
  * }} House
  */
 

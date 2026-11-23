@@ -4,6 +4,7 @@ and vacuums."""
 import json
 import math
 import queue
+import socket
 import time
 from dataclasses import asdict
 from http import HTTPStatus
@@ -12,6 +13,7 @@ from importlib import resources
 from urllib.parse import parse_qs, urlsplit
 
 from .details import Details
+from .garden import MAX_BYTES, Garden, Plans
 from .hub import Hub
 from .layout import WALL, house_layout
 from .readings import Area, LitterBox, Reading, Sensor, Vacuum
@@ -21,6 +23,8 @@ STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/model.js": ("model.js", "text/javascript; charset=utf-8"),
+    "/garden.js": ("garden.js", "text/javascript; charset=utf-8"),
+    "/plants.json": ("plants.json", "application/json"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 KEEPALIVE = 15.0  # seconds between comments on an idle stream, so nothing in between closes it
@@ -29,11 +33,17 @@ HISTORY_POINTS = 500  # per sensor, so a chart stays light whatever the range
 
 
 def house_json(
-    sensors: list[Sensor], areas: list[Area], details: Details | None, latest: dict[str, Reading] = {}, boxes: dict[str, LitterBox] = {}
+    sensors: list[Sensor],
+    areas: list[Area],
+    details: Details | None,
+    latest: dict[str, Reading] = {},
+    boxes: dict[str, LitterBox] = {},
+    garden: Garden | None = None,
 ) -> dict:
     """The house as /api/sensors sends it: its sensors, with their latest readings, areas and details, each plan with
-    its share of the wall on each side (layout.py), the details with what's placed against a wall resolved, and the
-    latest state of each litter box in them that names a Litter-Robot, by its name."""
+    its share of the wall on each side (layout.py), the details with what's placed against a wall resolved, the
+    latest state of each litter box in them that names a Litter-Robot, by its name, and where its garden is, if the
+    house file says (garden.py)."""
     layout = house_layout(sensors, areas, details)
 
     def plan(plan):  # a dict, a list of them for a place in pieces, or None
@@ -61,12 +71,14 @@ def house_json(
             name: boxes[name].to_json() if name in boxes else None for name in (details.litter_robots().values() if details else ())
         },
         "wall": WALL,
+        "garden": asdict(garden) if garden else None,
     }
 
 
 class HouseServer(ThreadingHTTPServer):
-    """Serves the page and API for a house's sensors, areas and details. refresh, if given, is called before each
-    /api/sensors to bring them up to date, as when the house file changes."""
+    """Serves the page and API for a house's sensors, areas, details and garden, and the garden's plans, if it's given
+    somewhere to keep them. refresh, if given, is called before each /api/sensors to bring them up to date, as when
+    the house file changes."""
 
     daemon_threads = True
 
@@ -79,6 +91,8 @@ class HouseServer(ThreadingHTTPServer):
         areas: list[Area] = (),
         details: Details | None = None,
         refresh=None,
+        garden: Garden | None = None,
+        plans: Plans | None = None,
     ):
         super().__init__(address, Handler)
         self.hub = hub
@@ -87,6 +101,8 @@ class HouseServer(ThreadingHTTPServer):
         self.areas = list(areas)
         self.details = details
         self.refresh = refresh
+        self.garden = garden
+        self.plans = plans
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -102,8 +118,50 @@ class Handler(BaseHTTPRequestHandler):
             self._history(parse_qs(url.query))
         elif url.path == "/api/stream":
             self._stream()
+        elif url.path == "/api/garden" and self.server.plans:
+            self._garden_plans()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self) -> None:
+        if urlsplit(self.path).path == "/api/garden" and self.server.plans:
+            self._save_bed()
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _garden_plans(self) -> None:
+        try:
+            plans = self.server.plans.load()
+        except (OSError, ValueError) as e:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, explain=f"Couldn't read the garden's plans: {e}")
+            return
+        self._json(plans)
+
+    def _save_bed(self) -> None:
+        """One bed's plantings, as {"bed": name, "plants": [...]}, saved in place of what it had (garden.Plans)."""
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.send_error(HTTPStatus.LENGTH_REQUIRED)
+            return
+        if not 0 < length <= MAX_BYTES:
+            self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"A bed's plan is at most {MAX_BYTES} bytes")
+            return
+        self.connection.settimeout(10)  # a client that stops partway doesn't hold the thread
+        try:
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict) or set(body) != {"bed", "plants"}:
+                raise ValueError('A bed\'s plan is {"bed": its name, "plants": [...]}')
+            plans = self.server.plans.save_bed(body["bed"], body["plants"])
+        except (socket.timeout, ConnectionError):
+            return
+        except ValueError as e:  # JSONDecodeError is one too
+            self.send_error(HTTPStatus.BAD_REQUEST, explain=str(e))  # in the body: it can quote what was sent
+            return
+        except OSError as e:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, explain=f"Couldn't save the garden's plans: {e}")
+            return
+        self._json(plans)
 
     def _static(self, name: str, content_type: str) -> None:
         # Read on every request, so edits to the page show up on reload.
@@ -113,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.refresh:
             self.server.refresh()
         hub = self.server.hub
-        house = house_json(self.server.sensors, self.server.areas, self.server.details, hub.latest(), hub.litter_boxes())
+        house = house_json(self.server.sensors, self.server.areas, self.server.details, hub.latest(), hub.litter_boxes(), self.server.garden)
         return {**house, "vacuums": [vacuum.to_json() for vacuum in hub.vacuums()]}
 
     def _history(self, query: dict[str, list[str]]) -> None:

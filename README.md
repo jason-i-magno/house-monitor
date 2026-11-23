@@ -34,6 +34,7 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--mova-sign-in` | | Sign in to MOVAhome, save it to `--mova`, list its vacuums, and exit. |
 | `--uplink` | `data/uplink.json` | The house in the [cloud service](#cloud-service) to send to, and its token. |
 | `--uplink-sign-in` | | Set up the uplink, save it to `--uplink`, and exit. |
+| `--garden` | `data/garden.json` | Where the garden planner keeps what's planted in each bed. |
 | `--govee-scan` | | List the Govee sensors heard over Bluetooth, with their readings, and exit. |
 
 ## ecobee sensors
@@ -79,12 +80,13 @@ If you sign in to MOVAhome with Apple or Google, set a password in the app first
 
 The simulator models a house file: `housemon/example_house.py` unless you give it your own. Copy the example to `private/house.py`, which this repo ignores, so you can keep your house in a private repo of its own there, and the app uses it in place of the example. `python3 -m unittest` runs the checks every house file must pass on it too, and any `test_*.py` you keep beside it. The server picks up changes to your house file when you reload the page, with no restart; if it doesn't load, the error goes to the terminal and the last version stays.
 
-A house file has three parts, and a fourth if you like:
+A house file has three parts, and two more if you like:
 
 - `HOUSE`: the rooms, each a simulated sensor with how it runs (its offset from the thermostat, how much of the weather reaches it, showers, cooking, a space heater) and its `Plan`. A plan places the room in feet: x to the right, y toward the front, its floor's elevation above the main floor, and its height at the ceiling's highest, 8 ft unless given. A sloped ceiling also has a `drop`: the wall it slopes down to and how much lower it is there. A room that isn't a rectangle, like an L, has a tuple of plans, one per piece. A sensor can also have a temperature to warn below, `warn_below_c`, in °C (10.0 is 50 °F), as for a room with pipes and its heat off: while it's colder, its card says so.
 - `AREAS`: the parts of the house with no sensor, which the map draws as outlines.
 - `DETAILS`: what the map's detailed view draws (`housemon/details.py`): the doors, windows, vents, appliances, plumbing, fireplaces and closets, the roof, and outside the lot's outline, porches, decks, steps, paving, beds, trees, sheds, fences and sprinklers, their heads and drip lines, each marked as known or a guess, and the house's own colors, and changes you're thinking of making (`proposals`), each shown in place of things as they are when you pick it under the map: for now, a sprinkler system of its own, as with a head turned into a drip line. A fixture or flight of steps can stand `against` the walls on sides of its room, and an opening can run from or to a wall (an offset or width of `None`), so they stay put against the walls wherever those end up.
 - `VACUUM_NAMES`: names to show your MOVA vacuums by in place of MOVA's (see [MOVA vacuums](#mova-vacuums)), each vacuum's name as `--mova-sign-in` lists it, matched whatever its case, to the name to show, as `VACUUM_NAMES = {"Rover": "Robbie"}`. A vacuum it doesn't name keeps MOVA's, and if the account has no vacuum by a name it gives, the terminal says so, with the names it has.
+- `GARDEN`: where your garden is, for the garden planner (`housemon/garden.py`): its latitude, the compass bearing your plan's front faces (0 for north, 90 for east), and the average dates of your last frost in spring and first in fall, as `GARDEN = Garden(latitude=40, facing=0, last_frost=(4, 30), first_frost=(10, 15))`. Without it the planner still plans your beds, but gives planting times in weeks from frost and can't work out their sun.
 
 ## How it works
 
@@ -101,9 +103,11 @@ source ──► Hub ──► Store (SQLite)
   - `GET /api/sensors`: each room, where it is in the house, and its latest reading, plus the parts of the house with no sensor and the details the map's detailed view draws, with where its walls stand (`layout.py`), and what each robot vacuum is doing.
   - `GET /api/history?hours=24`: bucketed history.
   - `GET /api/stream`: a Server-Sent Events stream with one JSON reading per message, and a `vacuum` event with what a robot vacuum is doing whenever it says.
+  - `GET /api/garden`, `PUT /api/garden`: what's planted in each of the garden's beds, saved a bed at a time (`garden.py`).
 - **Page** (`web/`):
   - Room cards grouped by floor, and a card for each robot vacuum, with its battery, what it's doing, how far along a clean is, and what needs looking at. A card is flagged if its room, or vacuum, goes 5 minutes without a reading. A room's card warns while it's colder than its house file says it should get.
   - A house map: a floor plan of each level, or a 3D view of the house you can drag, or turn with shift and the arrow keys, to turn and tilt, from any side, above or below, with each room colored by its temperature on a gradient (blue colder, red warmer, through gray at a comfortable 68 °F) and the outside temperature in its corner and as the tint of its background. Its detailed view shows the house as it looks, with its doors, windows, vents, appliances, closets, roof and yard: whole from outside, or cut away to any level, as it is or with a change you're thinking of making, and zoomed with the scroll wheel, about the pointer, with the + and − keys, or in on whatever you double-click, and panned by dragging with shift or the right button held, or with two fingers on a touch screen. The button beside the views makes the map full screen.
+  - A garden planner for each of your planted beds (in soil or mulch), drawn to scale a square foot at a time from about 50 vegetables, herbs, fruits and flowers (`web/plants.json`): pick one and click, tap or drag across squares to plant it, drag a plant to move it, or use the arrow keys. It says how much room each plant takes, its height, the sun and water it needs, when to start, plant and harvest it from your frost dates, whether it's food, and which plants it grows well with or is best kept from. For the bed it notes neighbors that clash or help, plants getting less sun than they need, worked out from the shade your house, trees and fences cast in each month, tall plants shading short ones, plants that want very different water, and what water your sprinklers or drip line put on it. A calendar shows each plant's season, and a list what's coming up. Plans are saved on the server, so every device sees the same ones.
   - Temperature and humidity charts for 6 hours to 30 days, with a hover or keyboard readout and a table view. Unheated spaces like the garage get a temperature chart of their own. Click a room in a chart's legend to hide or show its line.
   - Light and dark mode follow the system setting.
 
@@ -114,15 +118,16 @@ Readings are stored in the sensors' own units (°C and percent relative humidity
 The page's JavaScript is typed in JSDoc comments, so it runs as it's written, with no build, and TypeScript checks it, with Node:
 
 ```sh
-npx -p typescript@7.0.2 tsc -p .   # type-check app.js and model.js, as tsconfig.json sets
+npx -p typescript@7.0.2 tsc -p .   # type-check app.js, model.js and garden.js, as tsconfig.json sets
 ```
 
-Two tools in `tools/` help check changes to the house map, with Node 22 or newer:
+Two tools in `tools/` help check changes to the house map and the garden planner, with Node 22 or newer:
 
 ```sh
 node tools/scan.mjs [house file]   # faces in the detailed view that would flicker against each other
 node tools/scan.mjs --proposal NAME [house file]   # with a proposal shown in place of things as they are
 node tools/shot.mjs --view detailed --level Main --top --room Kitchen kitchen.png  # a screenshot of a running server's map
+node tools/shot.mjs --garden --bed "Vegetable bed" --sun Jun garden.png  # or of its garden planner
 ```
 
 `scan.mjs` builds the detailed view without a browser or server. `shot.mjs` needs Chromium (`$CHROME`, or one on the PATH or from Playwright); its options are listed at the top of the file.

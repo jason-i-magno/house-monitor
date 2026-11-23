@@ -3,7 +3,8 @@
 A house file is a Python module like example_house.py: HOUSE, its rooms as
 SimulatedRoom, with each sensor's plan; AREAS, the parts with no sensor; and
 DETAILS, what the map's detailed view draws, or None; and if it likes,
-VACUUM_NAMES, the names to show its robot vacuums by. Keep your own house in a
+VACUUM_NAMES, the names to show its robot vacuums by, and GARDEN, where its
+garden is and its frost dates, for the garden planner (garden.py). Keep your own house in a
 repo of its own cloned into private/, which this repo ignores, as
 private/house.py, and it's used in place of the example.
 """
@@ -13,6 +14,8 @@ import sys
 import traceback
 from pathlib import Path
 from types import ModuleType
+
+from . import garden as gardens
 
 PRIVATE = Path(__file__).resolve().parent.parent / "private" / "house.py"
 
@@ -70,6 +73,7 @@ class HouseFile:
             for name in ("HOUSE", "AREAS", "DETAILS"):
                 getattr(module, name)
             vacuum_names(module)
+            gardens.garden(module)
         except Exception:
             print(f"The house file {self.path} didn't load, so the last one stays:", file=sys.stderr)
             traceback.print_exc()

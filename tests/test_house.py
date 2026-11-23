@@ -610,6 +610,12 @@ class YardTest(HouseTestCase):
                         for x, y in corners(rect(p)):
                             self.assertFalse(in_throw(x, y, head.x, head.y, radius, arc), (*where, "on", place.name))
 
+    def test_planted_beds_have_names_of_their_own(self):
+        """The garden planner shows and saves each bed in soil or mulch by its name."""
+        for h in self.each():
+            names = [g.name for g in h.details.grounds if g.kind == "bed" and g.paving in ("dirt", "mulch")]
+            self.assertEqual(len(names), len(set(names)), names)
+
     def test_outlines_are_in_their_grounds(self):
         for h in self.each():
             for ground in (g for g in h.details.grounds if g.outline):
