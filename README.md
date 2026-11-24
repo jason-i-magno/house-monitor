@@ -37,7 +37,7 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--garden` | `data/garden.json` | Where the garden planner keeps what's planted in each bed. |
 | `--govee-scan` | | List the Govee sensors heard over Bluetooth, with their readings, and exit. |
 | `--manual` | `data/manual.sqlite3` | The [home manual](#home-manual)'s database. |
-| `--allow-host` | | A name besides this computer's own the home manual answers at, as one `tailscale serve` gives it. May be given more than once. |
+| `--allow-host` | | A name besides this computer's own the home manual and the garden's plans answer at, as one `tailscale serve` gives it. May be given more than once. |
 
 ## ecobee sensors
 
@@ -91,7 +91,7 @@ ANTHROPIC_API_KEY=sk-ant-... python3 -m housemon
 
 Without them everything else works, and the page says how to set Claude up. Only what you ask about is sent to Anthropic: a label's photo, or the question with the inventory and, for one piece of equipment, its manual and label.
 
-The manual's API changes things, so it answers only at this computer's own names and addresses (localhost, its IP addresses, its host name) and refuses requests from other sites' pages; a name like a `tailscale serve` address needs `--allow-host`.
+The manual's API changes things, so it answers only at this computer's own names and addresses (localhost, its IP addresses, its host name) and refuses requests from other sites' pages; a name like a `tailscale serve` address needs `--allow-host`. The garden planner's saved plans (`/api/garden`) are guarded the same way.
 
 ## Your own house
 

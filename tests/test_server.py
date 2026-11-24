@@ -158,12 +158,32 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(self.put("/api/garden", bad)[0], 400)
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
         conn.putrequest("PUT", "/api/garden")
+        conn.putheader("Content-Type", "application/json")
         conn.putheader("Content-Length", "300000")  # said, not sent: it's refused before it's read
         conn.endheaders()
         self.assertEqual(conn.getresponse().status, 413)
         conn.close()
         self.assertEqual(json.loads(self.get("/api/garden")[2])["beds"]["North bed"], tomato)
         self.assertEqual(self.put("/api/sensors", b"{}")[0], 404)
+
+    def test_the_gardens_plans_refuse_other_sites_and_forms(self):
+        self.server.plans = Plans(Path(self.dir.name) / "garden.json")
+        body = json.dumps({"bed": "North bed", "plants": [{"plant": "tomato", "x": 0, "y": 0}]}).encode()
+        for headers, status in [({"Origin": "https://evil.example"}, 403), ({"Host": "evil.example"}, 403), ({"Content-Type": "text/plain"}, 415)]:
+            with self.subTest(headers=headers):
+                self.assertEqual(self.request("PUT", "/api/garden", body, headers)[0], status)
+        self.assertEqual(self.request("GET", "/api/garden", None, {"Host": "evil.example:8000"})[0], 403)  # DNS rebinding
+        self.assertEqual(json.loads(self.get("/api/garden")[2]), {"beds": {}})  # nothing refused was saved
+        own = {"Origin": f"http://127.0.0.1:{self.server.server_port}"}
+        self.assertEqual(self.request("PUT", "/api/garden", body, own)[0], 200)
+
+    def request(self, method: str, path: str, body: bytes | None, headers: dict[str, str]) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        conn.request(method, path, body, {"Content-Type": "application/json", **headers})
+        response = conn.getresponse()
+        result = response.status, response.read()
+        conn.close()
+        return result
 
     def put(self, path: str, body: bytes) -> tuple[int, bytes]:
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
