@@ -99,8 +99,8 @@ def main(argv: list[str] | None = None) -> None:
         action="append",
         default=[],
         metavar="NAME",
-        help="a name besides this computer's own (and its addresses) the home manual answers at, as one tailscale serve gives"
-        " it; may be given more than once",
+        help="a name besides this computer's own (and its addresses) the home manual and the garden's plans answer at, as one"
+        " tailscale serve gives it; may be given more than once",
     )
     parser.add_argument(
         "--govee-scan",

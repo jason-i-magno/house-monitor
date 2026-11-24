@@ -185,18 +185,35 @@ class Handler(BaseHTTPRequestHandler):
 
     # The home manual
 
-    def _check_manual_request(self, write: bool) -> None:
-        """Refuses a request to the manual's API from another site's page in a browser here: one whose Host isn't this
-        computer's (known_host), whose Origin isn't this server, or, to change something, that isn't JSON, which a page
-        elsewhere can't send without asking first (and this server never answers that ask)."""
+    def _refused(self, write: bool) -> tuple[int, str] | None:
+        """Why a request to an API that keeps the owner's things (the home manual, the garden's plans) is refused, if it
+        is, as a status and words: one from another site's page in a browser here, whose Host isn't this computer's
+        (known_host), as when a site points its name here (DNS rebinding), or whose Origin isn't this server; or, to
+        change something, one that isn't JSON, which a page elsewhere can't send without asking first (and this server
+        never answers that ask)."""
         host = self.headers.get("Host", "")
         if not known_host(host, self.server.allowed_hosts):
-            raise ManualError("The home manual answers only at this computer's own names and addresses (see --allow-host).", 403)
+            return HTTPStatus.FORBIDDEN, "This answers only at this computer's own names and addresses (see --allow-host)."
         origin = self.headers.get("Origin")
         if origin and urlsplit(origin).netloc.lower() != host.lower():
-            raise ManualError("Requests from other sites are refused.", 403)
+            return HTTPStatus.FORBIDDEN, "Requests from other sites are refused."
         if write and self.headers.get_content_type() != "application/json":
-            raise ManualError("Send JSON.", 415)
+            return HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Send JSON."
+        return None
+
+    def _check_manual_request(self, write: bool) -> None:
+        """Refuses a request to the manual's API as _refused says, in the manual's way: a ManualError, answered as JSON."""
+        refused = self._refused(write)
+        if refused:
+            raise ManualError(refused[1], refused[0])
+
+    def _refuse_garden(self, write: bool) -> bool:
+        """Refuses a request for the garden's plans as _refused says, with an error page as the garden's API answers;
+        whether it did."""
+        refused = self._refused(write)
+        if refused:
+            self.send_error(refused[0], explain=refused[1])
+        return refused is not None
 
     def _read_json(self) -> dict:
         try:
@@ -312,6 +329,8 @@ class Handler(BaseHTTPRequestHandler):
         return {"answer": assistant.ask(question.strip()[:2000], manual.inventory(date.today()), documents)}
 
     def _garden_plans(self) -> None:
+        if self._refuse_garden(write=False):
+            return
         try:
             plans = self.server.plans.load()
         except (OSError, ValueError) as e:
@@ -321,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _save_bed(self) -> None:
         """One bed's plantings, as {"bed": name, "plants": [...]}, saved in place of what it had (garden.Plans)."""
+        if self._refuse_garden(write=True):
+            return
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
