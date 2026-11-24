@@ -31,9 +31,9 @@ const CHARTS = [
 const SERIES_SLOTS = 8; // rooms past the eighth share a gray rather than reuse a color
 // The gray rooms are told apart by dash pattern, solid first. Each is the
 // visible lengths of dash and gap, a dash of 0 being a dot: solid, dashed,
-// dotted, dash-dot, dash-dot-dot and long dashes, each short enough to show in
-// a 20px line key. Past six, they repeat.
-const OTHER_DASHES = [[], [5, 3], [0, 3], [7, 3, 0, 3], [5, 2.4, 0, 2.4, 0, 2.4], [9, 3]];
+// dotted, dash-dot, dash-dot-dot, long dashes and dashes in pairs, each short
+// enough to show in a 20px line key. Past seven, they repeat.
+const OTHER_DASHES = [[], [5, 3], [0, 3], [7, 3, 0, 3], [5, 2.4, 0, 2.4, 0, 2.4], [9, 3], [4, 2.4, 4, 6]];
 // A sensor shown beside a room's own, as an ecobee SmartSensor beside a Govee, takes its room's color, dashed, the
 // first of these unlike its room's pattern.
 const BESIDE_DASHES = [[4, 3], [0, 3]];
