@@ -35,6 +35,8 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--uplink` | `data/uplink.json` | The house in the [cloud service](#cloud-service) to send to, and its token. |
 | `--uplink-sign-in` | | Set up the uplink, save it to `--uplink`, and exit. |
 | `--govee-scan` | | List the Govee sensors heard over Bluetooth, with their readings, and exit. |
+| `--manual` | `data/manual.sqlite3` | The [home manual](#home-manual)'s database. |
+| `--allow-host` | | A name besides this computer's own the home manual answers at, as one `tailscale serve` gives it. May be given more than once. |
 
 ## ecobee sensors
 
@@ -74,6 +76,21 @@ python3 -m housemon --mova-sign-in
 ```
 
 If you sign in to MOVAhome with Apple or Google, set a password in the app first. It saves only the refresh token MOVA gives, to `data/mova.json` (readable only by you, and gitignored), never your email or password, and lists the vacuums it found. Then start the app: it asks each vacuum on the account how it is every minute. MOVA has no public API, so this signs in as the MOVAhome app does, as the community [Dreame Vacuum integration](https://github.com/Tasshack/dreame-vacuum) for Home Assistant worked out, with the app's own client id and secret, which are the same for every MOVAhome user. It isn't official, and could stop working if MOVA changes its app; the newest apps connect in a way of their own, which this doesn't copy. If the sign-in lapses, the terminal says so, and it stops asking until you sign in again, which it notices without a restart. If a poll fails, as when the internet is down, it waits longer before each try, up to 10 minutes, until one works. A vacuum shows by the name you gave it in the MOVAhome app, else its model's; to show it by another, give it one in your house file's `VACUUM_NAMES` (see [Your own house](#your-own-house)).
+
+## Home manual
+
+`manual.html` (the Manual link at the top of the page) keeps the house's equipment: the furnace, the water heater, appliances, each with where it is, its brand, model and serial, photos of its label, its manuals as PDFs, and its maintenance, every so many months. Adding a piece of equipment can add its kind's usual maintenance (replacing a furnace's filter every 3 months, flushing a water heater every year, testing smoke alarms every month), and Coming up lists what's overdue, not done yet and due soon, each with Done today. Tasks for the house as a whole, like the gutters, go under House tasks. It's all kept in `data/manual.sqlite3` (gitignored), photos and PDFs included, and never sent to the cloud service.
+
+With Claude, adding equipment can start from a photo of its label, which Claude reads into the form for you to check; Suggest maintenance asks what else it needs, from its manual when it has one; and you can ask questions, about one piece of equipment (its manual and label go with the question) or the whole house. That takes the `anthropic` package and an API key:
+
+```sh
+pip install anthropic
+ANTHROPIC_API_KEY=sk-ant-... python3 -m housemon
+```
+
+Without them everything else works, and the page says how to set Claude up. Only what you ask about is sent to Anthropic: a label's photo, or the question with the inventory and, for one piece of equipment, its manual and label.
+
+The manual's API changes things, so it answers only at this computer's own names and addresses (localhost, its IP addresses, its host name) and refuses requests from other sites' pages; a name like a `tailscale serve` address needs `--allow-host`.
 
 ## Your own house
 

@@ -406,6 +406,9 @@ var assetTypes = map[string]string{
 	"app.js":     "text/javascript; charset=utf-8",
 	"model.js":   "text/javascript; charset=utf-8",
 	"style.css":  "text/css; charset=utf-8",
+	// The home manual's page; its API stays at the house, so in the cloud it says to open it there.
+	"manual.html": "text/html; charset=utf-8",
+	"manual.js":   "text/javascript; charset=utf-8",
 }
 
 func loadAssets(page fs.FS) (map[string]asset, error) {

@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import ecobee, govee, mova, uplink, whisker
+from . import ecobee, govee, manual, mova, uplink, whisker
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -80,6 +80,20 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="set up the uplink: ask for the house's URL in the cloud service and its token, check it, save it to --uplink,"
         " and exit",
+    )
+    parser.add_argument(
+        "--manual",
+        type=Path,
+        default=Path("data") / "manual.sqlite3",
+        help="the home manual's database: the house's equipment, its labels and manuals, and its maintenance (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="a name besides this computer's own (and its addresses) the home manual answers at, as one tailscale serve gives"
+        " it; may be given more than once",
     )
     parser.add_argument(
         "--govee-scan",
@@ -184,8 +198,21 @@ def main(argv: list[str] | None = None) -> None:
             source.skip_boxes = set(litter_robots().values()) if with_whisker else set()
             server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
 
+    args.manual.parent.mkdir(parents=True, exist_ok=True)
+    home_manual = manual.Manual(args.manual)
+    assistant, assistant_problem = manual.assistant_from_environment()
     server = HouseServer(
-        (args.host, args.port), hub, store, source.sensors, getattr(source, "areas", []), getattr(source, "details", None), refresh
+        (args.host, args.port),
+        hub,
+        store,
+        source.sensors,
+        getattr(source, "areas", []),
+        getattr(source, "details", None),
+        refresh,
+        manual=home_manual,
+        assistant=assistant,
+        assistant_problem=assistant_problem,
+        allowed_hosts=args.allow_host,
     )
     stop = threading.Event()
     collectors = [threading.Thread(target=source.run, args=(hub.publish, stop), name="collector", daemon=True)]
@@ -246,6 +273,7 @@ def main(argv: list[str] | None = None) -> None:
         # until killed. Before saying it's up, so whatever waits for that to stop it is sure to stop it cleanly.
         signal.signal(signal.SIGTERM, _interrupt)
         print(f"House monitor on http://{args.host}:{server.server_port}/ ({sources}, {file}, {db})", flush=True)
+        print(f"Home manual at manual.html ({args.manual}, {'with Claude' if assistant else 'without Claude'})", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
@@ -255,6 +283,7 @@ def main(argv: list[str] | None = None) -> None:
             collector.join()
         server.server_close()
         store.close()
+        home_manual.close()
 
 
 def _interrupt(signum, frame) -> None:

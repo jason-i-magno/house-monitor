@@ -1,11 +1,15 @@
 """The web app: static files, a JSON API, and a Server-Sent Events stream of live readings, litter boxes' states
-and vacuums."""
+and vacuums; and the home manual's page and API (manual.py)."""
 
+import base64
+import ipaddress
 import json
 import math
 import queue
+import socket
 import time
 from dataclasses import asdict
+from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -14,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from .details import Details
 from .hub import Hub
 from .layout import WALL, house_layout
+from .manual import KINDS, STARTER_TASKS, Manual, ManualError, check_file
 from .readings import Area, LitterBox, Reading, Sensor, Vacuum
 from .store import Store
 
@@ -22,10 +27,33 @@ STATIC = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/model.js": ("model.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/manual.html": ("manual.html", "text/html; charset=utf-8"),
+    "/manual.js": ("manual.js", "text/javascript; charset=utf-8"),
 }
 KEEPALIVE = 15.0  # seconds between comments on an idle stream, so nothing in between closes it
 MAX_HISTORY_HOURS = 24 * 366
 HISTORY_POINTS = 500  # per sensor, so a chart stays light whatever the range
+MAX_MANUAL_BODY = 45 * 1024 * 1024  # a file the manual takes, as base64, and the JSON around it
+
+
+def known_host(header: str, allowed=()) -> bool:
+    """Whether a request's Host is this computer's: an IP address, localhost, its own name (or that .local), or one
+    of `allowed` (--allow-host). Anything else could be a site that has pointed its name at this computer to reach
+    the manual from a browser here (DNS rebinding), so the manual's API refuses it."""
+    host = header.strip().lower()
+    if host.startswith("[") and "]" in host:
+        host = host[1 : host.index("]")]
+    elif host.count(":") == 1:
+        host = host.split(":")[0]
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    name = socket.gethostname().lower()
+    return host == "localhost" or host.endswith(".localhost") or host in (name, f"{name}.local") or host in allowed
 
 
 def house_json(
@@ -66,7 +94,9 @@ def house_json(
 
 class HouseServer(ThreadingHTTPServer):
     """Serves the page and API for a house's sensors, areas and details. refresh, if given, is called before each
-    /api/sensors to bring them up to date, as when the house file changes."""
+    /api/sensors to bring them up to date, as when the house file changes. With a `manual` (manual.Manual), it serves
+    the home manual too, and with an `assistant` (manual.Assistant), Claude for it, or `assistant_problem` says why
+    not; `allowed_hosts` are names besides its own the manual answers on (known_host)."""
 
     daemon_threads = True
 
@@ -79,8 +109,16 @@ class HouseServer(ThreadingHTTPServer):
         areas: list[Area] = (),
         details: Details | None = None,
         refresh=None,
+        manual: Manual | None = None,
+        assistant=None,
+        assistant_problem: str | None = None,
+        allowed_hosts=(),
     ):
         super().__init__(address, Handler)
+        self.manual = manual
+        self.assistant = assistant
+        self.assistant_problem = assistant_problem
+        self.allowed_hosts = {h.lower() for h in allowed_hosts}
         self.hub = hub
         self.store = store
         self.sensors = sensors
@@ -102,8 +140,153 @@ class Handler(BaseHTTPRequestHandler):
             self._history(parse_qs(url.query))
         elif url.path == "/api/stream":
             self._stream()
+        elif url.path == "/api/manual" and self.server.manual:
+            self._manual_contents()
+        elif url.path == "/api/manual/file" and self.server.manual:
+            self._manual_file(parse_qs(url.query))
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:
+        url = urlsplit(self.path)
+        if not url.path.startswith("/api/manual/") or not self.server.manual:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        try:
+            self._check_manual_request(write=True)
+            result = self._manual_action(url.path.removeprefix("/api/manual/"), self._read_json())
+        except ManualError as e:
+            self._json({"error": str(e)}, e.status)
+            return
+        self._json(result)
+
+    # The home manual
+
+    def _check_manual_request(self, write: bool) -> None:
+        """Refuses a request to the manual's API from another site's page in a browser here: one whose Host isn't this
+        computer's (known_host), whose Origin isn't this server, or, to change something, that isn't JSON, which a page
+        elsewhere can't send without asking first (and this server never answers that ask)."""
+        host = self.headers.get("Host", "")
+        if not known_host(host, self.server.allowed_hosts):
+            raise ManualError("The home manual answers only at this computer's own names and addresses (see --allow-host).", 403)
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.lower() != host.lower():
+            raise ManualError("Requests from other sites are refused.", 403)
+        if write and self.headers.get_content_type() != "application/json":
+            raise ManualError("Send JSON.", 415)
+
+    def _read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ManualError("Bad Content-Length.") from None
+        if length > MAX_MANUAL_BODY:
+            raise ManualError("That's too large.", 413)
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            raise ManualError("The body isn't JSON.") from None
+        if not isinstance(body, dict):
+            raise ManualError("Send a JSON object.")
+        return body
+
+    def _manual_contents(self) -> None:
+        try:
+            self._check_manual_request(write=False)
+        except ManualError as e:
+            self._json({"error": str(e)}, e.status)
+            return
+        if self.server.refresh:
+            self.server.refresh()
+        rooms = [s.name for s in self.server.sensors if not s.outside and not s.beside] + [a.name for a in self.server.areas]
+        self._json(
+            {
+                **self.server.manual.contents(date.today()),
+                "kinds": KINDS,
+                "starter_tasks": {kind: [{"title": t, "every_months": m} for t, m in tasks] for kind, tasks in STARTER_TASKS.items()},
+                "rooms": rooms,
+                "claude": {"available": self.server.assistant is not None, "problem": self.server.assistant_problem},
+            }
+        )
+
+    def _manual_file(self, query: dict[str, list[str]]) -> None:
+        try:
+            self._check_manual_request(write=False)
+            file = self.server.manual.file(int(query.get("id", ["0"])[0]))
+        except ManualError as e:
+            self._json({"error": str(e)}, e.status)
+            return
+        except ValueError:
+            self.send_error(HTTPStatus.BAD_REQUEST, "id must be a number")
+            return
+        if not file:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self._send(file["data"], file["mime"])
+
+    def _manual_action(self, action: str, body: dict) -> dict:
+        """Does one of the manual's changes, or asks Claude; gives what to answer with."""
+        manual, assistant = self.server.manual, self.server.assistant
+
+        def number(key: str = "id") -> int:
+            value = body.get(key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ManualError(f"{key} must be a number.")
+            return value
+
+        if action == "equipment":  # added, or changed when it has an id
+            id = number() if body.get("id") is not None else None
+            return {"id": manual.save_equipment(body.get("fields") or {}, id, starter=bool(body.get("starter")))}
+        if action == "equipment-delete":
+            manual.delete_equipment(number())
+            return {"ok": True}
+        def data() -> bytes:
+            try:
+                raw = base64.b64decode(body.get("data") or "", validate=True)
+            except (ValueError, TypeError):
+                raise ManualError("data isn't base64.") from None
+            if not raw:
+                raise ManualError("data (the file as base64) is required.")
+            return raw
+
+        if action == "file":
+            return {"id": manual.add_file(number("equipment_id"), body.get("kind"), body.get("name") or "", body.get("mime"), data())}
+        if action == "file-delete":
+            manual.delete_file(number())
+            return {"ok": True}
+        if action == "task":  # added, or changed when it has an id
+            id = number() if body.get("id") is not None else None
+            return {"id": manual.save_task(body.get("fields") or {}, id)}
+        if action == "task-done":
+            manual.mark_done(number(), body.get("day") or date.today().isoformat())
+            return {"ok": True}
+        if action == "task-delete":
+            manual.delete_task(number())
+            return {"ok": True}
+        if action not in ("read-label", "suggest-tasks", "ask"):
+            raise ManualError(f"Unknown action {action!r}.", 404)
+        if assistant is None:
+            raise ManualError(self.server.assistant_problem or "Claude isn't set up.")
+        if action == "read-label":  # a stored photo, or one not saved yet, as when adding equipment from its label
+            if body.get("file_id") is None:
+                photo = {"name": body.get("name") or "label", "mime": body.get("mime"), "data": data()}
+                check_file(photo["mime"], photo["data"])
+                return assistant.read_label(photo)
+            file = manual.file(number("file_id"))
+            if not file:
+                raise ManualError("That file isn't in the manual.", 404)
+            return assistant.read_label(file)
+        if action == "suggest-tasks":
+            id = number()
+            item = next((e for e in manual.contents(date.today())["equipment"] if e["id"] == id), None)
+            if not item:
+                raise ManualError("That equipment isn't in the manual.", 404)
+            return {"tasks": assistant.suggest_tasks(item, manual.files_of(id, ("manual",)))}
+        question = body.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise ManualError("Ask a question.")
+        documents = manual.files_of(number("equipment_id"), ("label", "manual")) if body.get("equipment_id") is not None else []
+        return {"answer": assistant.ask(question.strip()[:2000], manual.inventory(date.today()), documents)}
 
     def _static(self, name: str, content_type: str) -> None:
         # Read on every request, so edits to the page show up on reload.
@@ -155,12 +338,13 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.server.hub.unsubscribe(client)
 
-    def _json(self, value: object) -> None:
-        self._send(json.dumps(value).encode(), "application/json")
+    def _json(self, value: object, status: int = HTTPStatus.OK) -> None:
+        self._send(json.dumps(value).encode(), "application/json", status)
 
-    def _send(self, body: bytes, content_type: str) -> None:
-        self.send_response(HTTPStatus.OK)
+    def _send(self, body: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
