@@ -81,6 +81,7 @@ class ServerTest(unittest.TestCase):
         plans = sensors[self.sensors.index(family_room)]["plan"]
         self.assertEqual([{k: v for k, v in p.items() if k != "sides"} for p in plans], [asdict(plan) for plan in family_room.plan])
         self.assertEqual(body["areas"][0]["name"], "Porch")
+        self.assertIsNone(body["areas"][0]["part_of"])
         self.assertEqual([{k: v for k, v in p.items() if k != "sides"} for p in body["areas"][0]["plan"]], [asdict(p) for p in self.areas[0].plan])
         self.assertEqual(body["wall"], 0.33)
         details = body["details"]

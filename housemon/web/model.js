@@ -32,7 +32,7 @@
  *   beside: string | null, warn_below_c: number | null, reading: Reading | null,
  * }} Sensor
  */
-/** @typedef {{name: string, floor: string, plan: Plans}} Area */
+/** @typedef {{name: string, floor: string, plan: Plans, part_of: string | null}} Area the room it's part of, in the 3D view */
 /**
  * A litter box's state, with what its status says and whether it needs seeing to.
  * @typedef {{

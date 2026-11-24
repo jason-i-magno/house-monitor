@@ -110,8 +110,9 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
 /** @typedef {(x: number, y: number, z: number) => Spot} Project a point in feet, onto the map */
 /**
  * A face of a room's box in the 3D view: its corners on the map, its middle in feet, how squarely it faces the viewer,
- * and how much darker it's shaded.
- * @typedef {{points: Spot[], center: [number, number, number], facing: number, shade: number}} Face
+ * how much darker it's shaded, and its edges to draw, each from one spot to another on the map: all of them but where
+ * it runs on into a face of another of its place's boxes, so a place in pieces looks like one.
+ * @typedef {{points: Spot[], center: [number, number, number], facing: number, shade: number, edges: Spot[][]}} Face
  */
 /**
  * A place's first box, the spots on the map for its label, best first, and its top's middle.
@@ -178,7 +179,7 @@ const state = {
   // latest state, or null before the first
   litterBoxes: [],
   vacuums: [], // [{id, name, state, battery, ts, error, card}]: what each robot vacuum is doing, if the server has any
-  areas: [], // [{name, floor, plan}]: parts of the house with no sensor
+  areas: [], // [{name, floor, plan, part_of}]: parts of the house with no sensor
   details: null, // the doors, windows, roof, yard and more for the detailed view (housemon/details.py), if any
   wall: null, // how thick every wall is, in feet (housemon/layout.py)
   hours: 24,
@@ -1399,6 +1400,18 @@ function cutBoxes(boxes, cut) {
   });
 }
 
+// For the 3D view, each area that's part of a room, as a closet or half bath
+// off it (Area.part_of), as more boxes of that room: one shape with it,
+// colored by its reading, and labeled, focused and stepped to as it is.
+/** @param {HouseBox[]} boxes @returns {HouseBox[]} */
+function joinParts(boxes) {
+  const rooms = new Map(indoors().map((s) => [s.name, s]));
+  return boxes.map((r) => {
+    const room = r.sensor ? null : rooms.get(/** @type {Area} */ (r.place).part_of ?? ""); // none from an older house
+    return room ? { ...r, place: room, sensor: room, name: room.name, floor: room.floor } : r;
+  });
+}
+
 // The outline of boxes from above, grown by d, as loops of [x, y] corners:
 // the edges between covered and uncovered cells of the grid their sides
 // make, each loop going clockwise on screen.
@@ -1691,7 +1704,7 @@ function nameLines(group, name, room) {
  * @returns {RoomsLayout}
  */
 function draw3d(root, width, fill = null, cut = "outside") {
-  const all = houseBoxes();
+  const all = joinParts(houseBoxes());
   const house = extent(all);
   const boxes = cutBoxes(all, cut);
   const [cx, cy, cz] = [house.x + house.width / 2, house.y + house.depth / 2, (house.low + house.high) / 2];
@@ -1716,36 +1729,44 @@ function draw3d(root, width, fill = null, cut = "outside") {
   };
 
   const order = paintOrder(boxes, view);
-  const faces = new Map(order.map((r) => [r, boxFaces(r, project, view)]));
-  /** @param {Face} face */
-  const pointList = (face) => face.points.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ");
+  const faces = new Map(order.map((r) => [r, boxFaces(r, project, view, boxes.filter((o) => o.place === r.place && o !== r))]));
+  /** @param {Spot[]} points */
+  const pointList = (points) => points.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ");
+  /** @param {Spot[][]} edges */
+  const edgePath = (edges) => edges.map((e) => `M${pointList(e).replace(" ", "L")}`).join("");
   for (const r of order) {
     const group = svg("g", r.sensor ? { "data-sensor": r.sensor.id } : {});
     const fill = r.sensor && roomFill(r.sensor, null);
     for (const face of /** @type {Face[]} */ (faces.get(r))) {
-      const polygon = svg("polygon", { points: pointList(face), "stroke-linejoin": "round" });
+      const polygon = svg("polygon", { points: pointList(face.points), "stroke-linejoin": "round" });
+      // Its edges apart from it, as those it shares with another of its place's boxes aren't drawn.
+      const edges = svg("path", { d: edgePath(face.edges), fill: "none", "stroke-linecap": "round" });
       if (fill) {
-        // Walls are shaded darker the more they turn away to the right.
-        polygon.style.fill = face.shade ? `color-mix(in oklab, ${fill} ${100 - face.shade}%, black)` : fill;
-        polygon.setAttribute("stroke", "var(--surface)");
+        // Walls are shaded darker the more they turn away to the right. Stroked in their own color as wide as the
+        // edges, so where two of a place's faces meet with no edge drawn between them, they leave no seam, nor any of
+        // an edge of a face they hide on the line; elsewhere, the faces' own edges are drawn over it.
+        const color = face.shade ? `color-mix(in oklab, ${fill} ${100 - face.shade}%, black)` : fill;
+        polygon.style.fill = polygon.style.stroke = color;
         polygon.setAttribute("stroke-width", "1.5");
+        edges.setAttribute("stroke", "var(--surface)");
+        edges.setAttribute("stroke-width", "1.5");
       } else {
         // No sensor, or no reading yet: an empty frame, not a color on the scale.
         polygon.setAttribute("fill", "none");
-        polygon.setAttribute("stroke", "var(--wall)");
         polygon.setAttribute("pointer-events", "visible");
+        edges.setAttribute("stroke", "var(--wall)");
       }
-      group.append(polygon);
+      group.append(polygon, edges);
     }
     root.append(group);
   }
-  // The focus outline goes over every room, so a hidden room shows through, but under the labels.
+  // The focus outline goes over every room, so a hidden room shows through, but under the labels: the edges drawn.
   const focus = svg("g", { "pointer-events": "none" });
   root.append(focus);
   /** @type {Record<string, string[]>} */
   const outlines = {};
   for (const r of order.filter((r) => r.sensor)) (outlines[/** @type {Room} */ (r.sensor).id] ??= [])
-    .push(.../** @type {Face[]} */ (faces.get(r)).map(pointList));
+    .push(.../** @type {Face[]} */ (faces.get(r)).flatMap((face) => face.edges.map(pointList)));
 
   // Each label goes on the first part of the room nothing in front hides: the
   // middle of a top, then of the wall facing the viewer most, then nearer
@@ -1754,9 +1775,9 @@ function draw3d(root, width, fill = null, cut = "outside") {
   const candidates = new Map(); // for each room or area: [its first box, [{facing, at}], its top's middle]
   order.forEach((r, k) => {
     const hiding = order.slice(k + 1).flatMap((other) => /** @type {Face[]} */ (faces.get(other)).map((face) => face.points));
-    // A box shows at least one face from any angle: a wall, its top or its floor.
-    const entry = candidates.get(r.place)
-      ?? [r, [], project(.../** @type {Face} */ (/** @type {Face[]} */ (faces.get(r)).at(-1)).center)];
+    // A box may show no face, as one in a place in pieces seen level from where another of its boxes stands.
+    const z = state.mapTilt < 0 ? r.elevation : ceilingOf(r)(r.x + r.width / 2, r.y + r.depth / 2);
+    const entry = candidates.get(r.place) ?? [r, [], project(r.x + r.width / 2, r.y + r.depth / 2, z)];
     entry[1].push(.../** @type {Face[]} */ (faces.get(r))
       .flatMap((face) => LABEL_SPOTS.map(([u, v]) => ({ facing: face.facing, at: along(face.points, u, v) })))
       .filter(({ at }) => !hiding.some((polygon) => inside(at, polygon))));
@@ -1876,33 +1897,90 @@ function paintOrder(boxes, view) {
 
 // The faces of a room's box the viewer can see: the walls facing them, and
 // its top from above or its floor from below. A ceiling with a drop slopes
-// down to that wall, from its full height at the wall across from it.
-/** @param {HouseBox} r @param {Project} project @param {number[]} view */
-function boxFaces(r, project, view) {
+// down to that wall, from its full height at the wall across from it. A place
+// in pieces looks like one: a wall another of its boxes stands against, floor
+// to ceiling, is inside it, so it's left out, and an edge where a face runs on
+// into one of another of its boxes in the same plane isn't drawn, as where
+// two tops meet at one height or two walls in line meet end to end.
+/** @param {HouseBox} r @param {Project} project @param {number[]} view @param {HouseBox[]} [group] its place's other boxes */
+function boxFaces(r, project, view, group = []) {
   const [x0, x1, y0, y1] = [r.x, r.x + r.width, r.y, r.y + r.depth];
   const z0 = r.elevation;
   const z1 = ceilingOf(r);
   const [fallX, fallY] = [z1(x0, y0) - z1(x0 + 1, y0), z1(x0, y0) - z1(x0, y0 + 1)]; // per foot
-  const walls = [
+  /** @param {number} a @param {number} b */
+  const level = (a, b) => Math.abs(a - b) < 1e-6;
+  // Each side by its outward normal: the line it's on, the axis it runs along, and its corners as a wall's go.
+  const sides = [
     { normal: [0, -1], ends: [[x1, y0], [x0, y0]] },
     { normal: [1, 0], ends: [[x1, y1], [x1, y0]] },
     { normal: [0, 1], ends: [[x0, y1], [x1, y1]] },
     { normal: [-1, 0], ends: [[x0, y0], [x0, y1]] },
-  ];
+  ].map(({ normal, ends: [a, b] }) => {
+    const axis = normal[0] ? 1 : 0; // the side runs along y, or x
+    /** @param {number} u @returns {[number, number]} a point on the side's line */
+    const at = (u) => (axis ? [a[0], u] : [u, a[1]]);
+    return { normal, a, b, axis, at, line: a[1 - axis], lo: Math.min(a[axis], b[axis]), hi: Math.max(a[axis], b[axis]) };
+  });
+  /** @param {HouseBox} o @param {number[]} normal @returns {number} the line o's side facing that way is on */
+  const sideOf = (o, [nx, ny]) => (nx ? (nx > 0 ? o.x + o.width : o.x) : ny > 0 ? o.y + o.depth : o.y);
+  /**
+   * The stretches of a side another of the boxes touches across it, where `same` holds at both ends.
+   * @param {(typeof sides)[number]} side @param {(o: HouseBox, x: number, y: number) => boolean} same
+   * @returns {[number, number][]}
+   */
+  const shared = (side, same) => group.flatMap((o) => {
+    if (!level(sideOf(o, side.normal.map((n) => -n)), side.line)) return [];
+    const [s, e] = [Math.max(side.lo, side.axis ? o.y : o.x), Math.min(side.hi, side.axis ? o.y + o.depth : o.x + o.width)];
+    return e - s > 1e-6 && same(o, ...side.at(s)) && same(o, ...side.at(e)) ? [/** @type {[number, number]} */ ([s, e])] : [];
+  });
+  /**
+   * Whether the side, at u, an end of it, runs on into the same side of another of the boxes, in line with it, where
+   * `same` holds, as opposed to turning a corner or meeting one standing against it.
+   * @param {(typeof sides)[number]} side @param {number} u @param {(o: HouseBox, x: number, y: number) => boolean} same
+   */
+  const runsOn = (side, u, same) => (level(u, side.lo) || level(u, side.hi)) && group.some((o) => level(sideOf(o, side.normal), side.line)
+    && (level(side.axis ? o.y : o.x, u) || level(side.axis ? o.y + o.depth : o.x + o.width, u)) && same(o, ...side.at(u)));
+  /** @type {(o: HouseBox, x: number, y: number) => boolean} its floor and ceiling where it meets o */
+  const wall = (o, x, y) => level(o.elevation, z0) && level(ceilingOf(o)(x, y), z1(x, y));
   /** @type {Face[]} */
   const faces = [];
   const across = Math.hypot(view[0], view[1]) || 1;
-  for (const { normal: [nx, ny], ends: [[ax, ay], [bx, by]] } of walls) {
+  for (const side of sides) {
+    const [nx, ny] = side.normal;
     const facing = nx * view[0] + ny * view[1];
     if (facing <= 1e-6) continue;
     const right = (nx * view[1] - ny * view[0]) / across; // -1 faces left, 1 faces right
-    faces.push({
-      points: [project(ax, ay, z0), project(bx, by, z0), project(bx, by, z1(bx, by)), project(ax, ay, z1(ax, ay))],
-      center: [(ax + bx) / 2, (ay + by) / 2, (z0 + z1((ax + bx) / 2, (ay + by) / 2)) / 2],
-      facing,
-      shade: Math.round(8 + 10 * (1 + right)),
-    });
+    // Inside where another of the boxes stands against it from below its floor to above its ceiling.
+    const inside = shared(side, (o, x, y) => o.elevation <= z0 + 1e-6 && ceilingOf(o)(x, y) >= z1(x, y) - 1e-6);
+    const forward = side.a[side.axis] < side.b[side.axis]; // the wall's corners go up its axis
+    for (const [s, e] of uncovered(side.lo, side.hi, inside)) {
+      const [ua, ub] = forward ? [s, e] : [e, s];
+      const [[ax, ay], [bx, by]] = [side.at(ua), side.at(ub)];
+      const corners = [project(ax, ay, z0), project(bx, by, z0), project(bx, by, z1(bx, by)), project(ax, ay, z1(ax, ay))];
+      // Where it runs on into another box's wall in line with it, its end isn't drawn, and its foot and top run on
+      // into that wall's.
+      const [onA, onB] = [runsOn(side, ua, wall), runsOn(side, ub, wall)];
+      const edges = [edgeLine(corners[0], corners[1], onA, onB), edgeLine(corners[2], corners[3], onB, onA)];
+      if (!onB) edges.push([corners[1], corners[2]]);
+      if (!onA) edges.push([corners[3], corners[0]]);
+      faces.push({
+        points: corners,
+        center: [(ax + bx) / 2, (ay + by) / 2, (z0 + z1((ax + bx) / 2, (ay + by) / 2)) / 2],
+        facing,
+        shade: Math.round(8 + 10 * (1 + right)),
+        edges,
+      });
+    }
   }
+  /**
+   * A top's or floor's edges but where they're shared with another of the boxes at the same height.
+   * @param {(o: HouseBox, x: number, y: number) => boolean} same @param {(x: number, y: number) => number} z
+   */
+  const rim = (same, z) => sides.flatMap((side) => uncovered(side.lo, side.hi, shared(side, same)).map(([s, e]) => {
+    const [p, q] = [side.at(s), side.at(e)];
+    return edgeLine(project(...p, z(...p)), project(...q, z(...q)), runsOn(side, s, same), runsOn(side, e, same));
+  }));
   // A top steep enough to face away from the viewer is hidden.
   if (view[2] + fallX * view[0] + fallY * view[1] > 1e-6) {
     faces.push({
@@ -1910,6 +1988,7 @@ function boxFaces(r, project, view) {
       center: [(x0 + x1) / 2, (y0 + y1) / 2, z1((x0 + x1) / 2, (y0 + y1) / 2)],
       facing: 2, // a label's first choice
       shade: 0,
+      edges: rim((o, x, y) => level(ceilingOf(o)(x, y), z1(x, y)), z1),
     });
   }
   if (view[2] < -1e-6) {
@@ -1918,9 +1997,35 @@ function boxFaces(r, project, view) {
       center: [(x0 + x1) / 2, (y0 + y1) / 2, z0],
       facing: 2,
       shade: 36, // the underside, darker than any wall
+      edges: rim((o) => level(o.elevation, z0), () => z0),
     });
   }
   return faces;
+}
+
+// An edge of a face in the 3D view, from one spot to another, run on past
+// either end that meets another edge in line, by half its stroke and a
+// little, so whichever is drawn last covers where they meet, and the fill
+// drawn between them doesn't nick it.
+/** @param {Spot} p @param {Spot} q @param {boolean} back @param {boolean} on @returns {Spot[]} */
+function edgeLine(p, q, back, on) {
+  const [dx, dy] = [q[0] - p[0], q[1] - p[1]];
+  const k = 1 / (Math.hypot(dx, dy) || 1); // a pixel
+  return [back ? [p[0] - dx * k, p[1] - dy * k] : p, on ? [q[0] + dx * k, q[1] + dy * k] : q];
+}
+
+// The stretches of lo to hi left once the spans are taken out, in order.
+/** @param {number} lo @param {number} hi @param {[number, number][]} spans @returns {[number, number][]} */
+function uncovered(lo, hi, spans) {
+  /** @type {[number, number][]} */
+  const left = [];
+  let at = lo;
+  for (const [s, e] of [...spans].sort((a, b) => a[0] - b[0])) {
+    if (s > at + 1e-6) left.push([at, s]);
+    at = Math.max(at, e);
+  }
+  if (hi > at + 1e-6) left.push([at, hi]);
+  return left;
 }
 
 // A point on a projected four-cornered face, u along its first edge and v up its second.
