@@ -797,6 +797,9 @@ html.map-full { overflow: hidden; }
 .garden-bed .sun-3, .swatch.sun-3 { fill: var(--garden-sun-3); background: var(--garden-sun-3); }
 .garden-bed [class^="sun-"] { stroke: var(--garden-line); stroke-width: 1; }
 .garden-bed .edging { fill: none; stroke: var(--garden-edge); stroke-width: 3; }
+.garden-bed .edging.active { stroke: var(--text-primary); } /* the bed shown, of those drawn together */
+.garden-bed .bed-name { fill: var(--text-secondary); font-size: 12px; }
+.garden-bed .bed-name.active { fill: var(--text-primary); font-weight: 600; }
 /* Text over the soil or sun keeps a halo of the surface's color, so it reads on any of them. */
 .garden-bed text { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
 .garden-bed .hours { fill: var(--text-primary); font-size: 10px; font-variant-numeric: tabular-nums; }
