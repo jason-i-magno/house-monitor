@@ -169,11 +169,24 @@ def check_file(mime: str, data: bytes) -> None:
         raise ManualError(f"That file isn't a {mime.split('/')[1].upper()}.", 415)
 
 
+def _owner_only(path: Path) -> None:
+    """Makes the manual's database file readable only by its owner, as the sign-ins are (it holds serial numbers,
+    manuals and receipts): created that way, or one made before tightened, with SQLite's files beside it. SQLite gives
+    the files it makes later (-wal, -shm) the database's own permissions."""
+    if not path.exists():
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600))
+    for file in (path, path.with_name(f"{path.name}-wal"), path.with_name(f"{path.name}-shm")):
+        if file.exists() and file.stat().st_mode & 0o077:
+            file.chmod(0o600)
+
+
 class Manual:
     """The home manual's database. One connection shared by the server's threads, guarded by a lock, as the readings'
-    store is."""
+    store is. Its file is readable only by its owner (_owner_only)."""
 
     def __init__(self, path: Path | str):
+        if str(path) != ":memory:":
+            _owner_only(Path(path))
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
