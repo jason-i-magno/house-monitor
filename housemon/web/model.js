@@ -3018,18 +3018,34 @@ function panModel(dx, dy) {
   drawMapSoon();
 }
 
-// The buttons that cut the house away to a level, and under them the box that
-// shows or hides the trees and the buttons for their season, there only for
-// the whole house, since cut away they're off. The season isn't kept, so the
-// page always opens on today's. Under them, for a house with proposals, the
-// buttons that show one in place of things as they are, which isn't kept
-// either, so the page opens on the house as it is.
-/** @param {Scene | NoScene} scene */
-function renderModelCuts(scene) {
-  const levels = scene.levels ?? [];
+// The buttons that show the house whole, from outside, or cut away to one of
+// its levels, highest first, under the detailed view and the 3D view, which
+// share the cut, kept for each viewer. Returns the cut shown: the whole house
+// for a level this house hasn't got.
+/** @param {[string, number][]} levels @returns {string} */
+function renderModelLevels(levels) {
   /** @type {[string, string][]} */
   const options = [["outside", "Outside"], ...levels.map(([floor]) => /** @type {[string, string]} */ ([floor, `${floor} level`]))];
   const current = options.some(([id]) => id === state.modelCut) ? state.modelCut : "outside";
+  renderModelButtons(/** @type {HTMLElement} */ (state.map.cuts.querySelector(".levels .segmented")), options, current, (id) => {
+    state.modelCut = id;
+    try {
+      localStorage.setItem("house-monitor-model-cut", id);
+    } catch {}
+    drawMap();
+  });
+  return current;
+}
+
+// The detailed view's levels, and under them the box that shows or hides the
+// trees and the buttons for their season, there only for the whole house,
+// since cut away they're off. The season isn't kept, so the page always opens
+// on today's. Under them, for a house with proposals, the buttons that show
+// one in place of things as they are, which isn't kept either, so the page
+// opens on the house as it is.
+/** @param {Scene | NoScene} scene */
+function renderModelCuts(scene) {
+  const current = renderModelLevels(scene.levels ?? []);
   const row = /** @type {HTMLElement} */ (state.map.cuts.querySelector(".tree-options"));
   row.hidden = current !== "outside" || !(scene.trees?.length || scene.hedges?.length);
   /** @type {HTMLInputElement} */ (row.querySelector("input")).checked = state.modelTrees;
@@ -3048,13 +3064,6 @@ function renderModelCuts(scene) {
   renderModelButtons(/** @type {HTMLElement} */ (changes.querySelector(".segmented")), choices, modelProposal()?.name ?? "", (id) => {
     state.modelProposal = id;
     state.modelScene = null; // built again with it
-    drawMap();
-  });
-  renderModelButtons(/** @type {HTMLElement} */ (state.map.cuts.querySelector(".levels .segmented")), options, current, (id) => {
-    state.modelCut = id;
-    try {
-      localStorage.setItem("house-monitor-model-cut", id);
-    } catch {}
     drawMap();
   });
 }

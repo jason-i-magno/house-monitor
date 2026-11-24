@@ -119,10 +119,11 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
  */
 /** @typedef {[HouseBox & {sensor: Room}, Spot[], Spot]} RoomSpots a room's, as opposed to an area's */
 /**
- * The floor plan's or 3D view's layout: its height, where each room is for its readout, and its focus outline.
+ * The floor plan's or 3D view's layout: its height, where each room is for its readout, and its focus outline, and
+ * for the 3D view, the rooms it shows, which the arrow keys step through: those left when it's cut away to a level.
  * @typedef {{
  *   height: number, anchors: Record<string, MapRect>, outlines: Record<string, string[]>, focus: SVGGElement,
- *   keys?: undefined, item?: undefined, highlight?: undefined, centerOf?: undefined, pick?: undefined,
+ *   keys?: string[], item?: undefined, highlight?: undefined, centerOf?: undefined, pick?: undefined,
  *   anchorOf?: undefined,
  * }} RoomsLayout
  */
@@ -1359,6 +1360,45 @@ function houseBoxes() {
   });
 }
 
+// The levels, highest first, each at its highest floor's elevation, as the
+// detailed view has them: a place's floor is its first box's, and a garage a
+// step down is on the main floor's level.
+/** @param {HouseBox[]} boxes @returns {[string, number][]} */
+function boxLevels(boxes) {
+  /** @type {Map<Room | Area, HouseBox>} */
+  const first = new Map();
+  for (const r of boxes) if (!first.has(r.place)) first.set(r.place, r);
+  /** @type {Map<string, number>} */
+  const levels = new Map();
+  for (const r of first.values()) levels.set(r.floor, Math.max(levels.get(r.floor) ?? -Infinity, r.elevation));
+  return [...levels].sort((a, b) => b[1] - a[1]);
+}
+
+// The boxes cut away to a level, as the detailed view cuts the house: the
+// places on the levels above come off, and each box left stops MODEL_CUT ft
+// above its floor, a sloped ceiling sloping down from there to its low wall if
+// that's lower, but for one under a box still shown, as a lower level under an
+// upper one, which stands whole up to it. "outside", the whole house.
+/** @param {HouseBox[]} boxes @param {string} cut @returns {HouseBox[]} */
+function cutBoxes(boxes, cut) {
+  const level = boxLevels(boxes).find(([floor]) => floor === cut)?.[1];
+  if (level == null) return boxes;
+  /** @type {Map<Room | Area, number>} */
+  const floors = new Map();
+  for (const r of boxes) if (!floors.has(r.place)) floors.set(r.place, r.elevation);
+  const shown = boxes.filter((r) => /** @type {number} */ (floors.get(r.place)) <= level + 1e-6);
+  return shown.map((r) => {
+    const [top, cap] = [r.elevation + r.height, r.elevation + MODEL_CUT];
+    const under = shown.some((o) => o.place !== r.place && o.elevation >= top - 1e-6
+      && o.x < r.x + r.width - 1e-6 && r.x < o.x + o.width - 1e-6 && o.y < r.y + r.depth - 1e-6 && r.y < o.y + o.depth - 1e-6);
+    if (under || top <= cap) return r;
+    const low = r.height - (r.drop?.[1] ?? 0); // the ceiling's height at its low wall
+    /** @type {Plan["drop"]} */
+    const drop = r.drop && low < MODEL_CUT ? [r.drop[0], MODEL_CUT - low] : null;
+    return { ...r, height: MODEL_CUT, drop };
+  });
+}
+
 // The outline of boxes from above, grown by d, as loops of [x, y] corners:
 // the edges between covered and uncovered cells of the grid their sides
 // make, each loop going clockwise on screen.
@@ -1419,8 +1459,8 @@ function drawMap() {
   const view = state.mapView;
   const model = view === "model";
   map.figure.classList.toggle("is-model", model);
-  map.turns.hidden = view === "plan";
-  map.cuts.hidden = map.list.hidden = map.coverage.hidden = !model;
+  map.turns.hidden = map.cuts.hidden = view === "plan";
+  map.list.hidden = map.coverage.hidden = !model;
   map.svg.style.display = model ? "none" : "";
   if (model) {
     map.layout = drawModel(width, fill);
@@ -1437,9 +1477,13 @@ function drawMap() {
     map.canvas.style.display = "none";
     map.note.hidden = true;
     map.svg.replaceChildren();
-    map.svg.setAttribute("aria-label", `House map${view === "3d" ? " in 3D" : ""}, each room colored by its temperature. `
-      + `Arrow keys step through the rooms${view === "3d" ? ", and with shift turn and tilt it" : ""}; the room cards above list every reading.`);
-    map.layout = view === "3d" ? draw3d(map.svg, width, fill) : drawPlan(map.svg, width, fill);
+    // The 3D view has the detailed view's levels, but none of its other choices.
+    for (const row of /** @type {NodeListOf<HTMLElement>} */ (map.cuts.querySelectorAll(".tree-options, .proposals"))) row.hidden = true;
+    const cut = view === "3d" ? renderModelLevels(boxLevels(houseBoxes())) : "outside";
+    map.svg.setAttribute("aria-label", `House map${view === "3d" ? " in 3D" : ""}${cut === "outside" ? "" : `, cut away to the ${cut} level`}, `
+      + `each room colored by its temperature. Arrow keys step through the rooms${view === "3d" ? ", and with shift turn and tilt it" : ""}; `
+      + "the room cards above list every reading.");
+    map.layout = view === "3d" ? draw3d(map.svg, width, fill, cut) : drawPlan(map.svg, width, fill);
     map.svg.setAttribute("viewBox", `0 0 ${width} ${map.layout.height}`);
     map.svg.setAttribute("height", String(map.layout.height));
   }
@@ -1639,11 +1683,17 @@ function nameLines(group, name, room) {
 }
 
 // The house seen from any direction, each room a box: turned by
-// state.mapAngle, and tilted by state.mapTilt from straight below to straight above.
-/** @param {SVGSVGElement} root @param {number} width @param {number | null} [fill] @returns {RoomsLayout} */
-function draw3d(root, width, fill = null) {
-  const boxes = houseBoxes();
-  const house = extent(boxes);
+// state.mapAngle, and tilted by state.mapTilt from straight below to straight
+// above, whole or cut away to a level (cutBoxes), placed and sized as the
+// whole house either way, so a cut doesn't move it.
+/**
+ * @param {SVGSVGElement} root @param {number} width @param {number | null} [fill] @param {string} [cut]
+ * @returns {RoomsLayout}
+ */
+function draw3d(root, width, fill = null, cut = "outside") {
+  const all = houseBoxes();
+  const house = extent(all);
+  const boxes = cutBoxes(all, cut);
   const [cx, cy, cz] = [house.x + house.width / 2, house.y + house.depth / 2, (house.low + house.high) / 2];
   const [turn, tilt] = [state.mapAngle, state.mapTilt].map((degrees) => (degrees * Math.PI) / 180);
   const toward = [Math.sin(turn), Math.cos(turn)]; // the viewer's direction across the plan
@@ -1718,7 +1768,8 @@ function draw3d(root, width, fill = null) {
   // Compact, every room gets an anchor, so none is null.
   const anchors = placeChips(root, spots, rooms, false)
     ?? /** @type {Record<string, MapRect>} */ (placeChips(root, spots.reverse(), rooms, true));
-  return { height, anchors, outlines, focus };
+  const keys = indoors().map((s) => s.id).filter((id) => boxes.some((r) => r.sensor?.id === id)); // a cut's rooms
+  return { height, anchors, outlines, focus, keys };
 }
 
 // Full labels if none collide. Otherwise just temperatures, front rooms first,

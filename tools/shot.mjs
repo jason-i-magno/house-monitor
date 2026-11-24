@@ -7,7 +7,7 @@
 //     --hide-simulated  with the simulator's readings hidden
 //     --range NAME      the charts' range, as its button names it: 6 h, 24 h, 7 d or 30 d (default: as it loads)
 //     --view NAME       the map's view: plan, 3d or detailed (default: the page as it loads, all of it)
-//     --level NAME      in the detailed view, cut away to a level by its floor's name, as Upper or Main; or outside
+//     --level NAME      in the 3D or detailed view, cut away to a level by its floor's name, as Upper or Main; or outside
 //     --no-trees        in the detailed view, the whole house with its trees hidden
 //     --season NAME     or with its trees in a season: spring, summer, fall or winter (default: today's)
 //     --proposal NAME   in the detailed view, a proposal shown in place of things as they are, by name
