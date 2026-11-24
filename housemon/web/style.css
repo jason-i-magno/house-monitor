@@ -911,3 +911,100 @@ html.map-full { overflow: hidden; }
 .garden-upcoming .empty { color: var(--text-muted); }
 .garden .table-view { margin-top: 8px; }
 .garden .table-wrap th, .garden .table-wrap td { text-align: left; white-space: normal; }
+
+/* The home manual (manual.html): its sections, equipment cards, tasks and forms. */
+
+a.toggle { color: var(--text-secondary); text-decoration: none; }
+.manual { display: grid; gap: 20px; }
+.manual-section {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.manual-section h2 { margin-bottom: 10px; font-size: 1.0625rem; font-weight: 600; }
+.manual h4 { margin: 14px 0 6px; color: var(--text-secondary); font-size: 0.8125rem; font-weight: 600; }
+.manual-note { color: var(--text-secondary); font-size: 0.875rem; }
+.manual-error { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.manual .icon { color: var(--status-warning); }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.section-head h2 { margin-bottom: 0; }
+
+.manual button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.manual button:hover { background: var(--hover); }
+.manual button { white-space: nowrap; }
+.manual button:disabled { cursor: default; opacity: 0.6; }
+.manual button.primary { border-color: var(--series-1); background: var(--series-1); color: #fff; }
+.manual button.primary:hover { filter: brightness(1.08); }
+.manual button.danger { color: var(--text-secondary); }
+
+.manual input[type="text"], .manual input[type="number"], .manual input[type="date"], .manual select, .manual textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.875rem;
+}
+.manual textarea { resize: vertical; }
+.field { display: grid; gap: 3px; }
+.field > span { color: var(--text-secondary); font-size: 0.8125rem; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin: 10px 0; }
+.form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.check { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; font-size: 0.875rem; }
+.check input { margin-top: 3px; }
+
+.task-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.task { display: flex; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 8px 10px; border-radius: 8px; background: var(--page); }
+.task-actions { display: flex; flex: none; gap: 6px; }
+.task-main { display: grid; min-width: 0; }
+.task-title { font-weight: 500; }
+.task-meta { color: var(--text-secondary); font-size: 0.8125rem; }
+.task.later .task-title { font-weight: 400; }
+.task-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 10px; }
+/* In an equipment card, narrower: the task on a row of its own, then how often, when last done, and the button. */
+.equipment .task-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.equipment .task-form .field:first-child { grid-column: 1 / -1; }
+.equipment .task { flex-wrap: wrap; }
+
+.equipment-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.equipment { padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--page); }
+.equipment .task { background: var(--surface); }
+.equipment-head { display: grid; margin-bottom: 6px; }
+.equipment-head h3 { font-size: 1rem; font-weight: 600; }
+.equipment-detail, .equipment-notes { color: var(--text-secondary); font-size: 0.875rem; }
+.equipment-notes { margin-top: 6px; white-space: pre-wrap; }
+.equipment-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.specs { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 8px 0 0; font-size: 0.875rem; }
+.specs dt { color: var(--text-secondary); }
+.specs dd { margin: 0; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.thumb { display: grid; gap: 4px; margin: 0; }
+.thumb img { display: block; width: 96px; height: 72px; border: 1px solid var(--border); border-radius: 6px; object-fit: cover; }
+.documents { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 0.875rem; }
+.documents li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.documents a, .manual a:not(.toggle) { color: var(--series-1); }
+.equipment-form { padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--page); }
+.equipment-form h3 { font-size: 1rem; font-weight: 600; }
+.suggestions, .ask { margin-top: 10px; }
+.answer { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--page); white-space: pre-wrap; font-size: 0.9375rem; }
+.equipment .answer { background: var(--surface); }
+
+@media (max-width: 600px) {
+  .task-form, .equipment .task-form { grid-template-columns: 1fr 1fr; }
+  .task-form .field:first-child { grid-column: 1 / -1; }
+  .task { flex-wrap: wrap; }
+  .equipment-grid { grid-template-columns: 1fr; }
+}

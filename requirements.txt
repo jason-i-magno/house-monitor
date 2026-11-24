@@ -1,3 +1,6 @@
 # Optional: hearing Govee H5075 sensors over Bluetooth (housemon/govee.py). Everything else is standard library.
 # Tested with bleak 3.1.
 bleak
+# Optional: Claude for the home manual (housemon/manual.py): reading labels, suggesting maintenance, answering
+# questions. Needs an API key in ANTHROPIC_API_KEY.
+anthropic

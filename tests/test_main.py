@@ -12,10 +12,11 @@ class MainTest(unittest.TestCase):
         """As a container is stopped: the collectors stopped and the database closed, at once, not killed later."""
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "house.sqlite3"
+            manual = Path(tmp) / "manual.sqlite3"
             none = str(Path(tmp) / "none")
             app = subprocess.Popen(
                 [sys.executable, "-m", "housemon", "--house", "housemon/example_house.py", "--db", str(db), "--port", "0",
-                 "--backfill-hours", "0", "--ecobee", none, "--whisker", none, "--mova", none, "--uplink", none],
+                 "--backfill-hours", "0", "--ecobee", none, "--whisker", none, "--mova", none, "--uplink", none, "--manual", str(manual)],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             )
             try:
@@ -29,6 +30,8 @@ class MainTest(unittest.TestCase):
                 app.stderr.close()
             self.assertTrue(db.exists())
             self.assertFalse(Path(f"{db}-wal").exists())  # SQLite removes it when the last connection closes cleanly
+            self.assertTrue(manual.exists())
+            self.assertFalse(Path(f"{manual}-wal").exists())
 
 
 if __name__ == "__main__":

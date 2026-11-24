@@ -10,5 +10,5 @@
     "lib": ["es2023", "dom", "dom.iterable"],
     "types": []
   },
-  "files": ["housemon/web/model.js", "housemon/web/garden.js", "housemon/web/app.js"]
+  "files": ["housemon/web/model.js", "housemon/web/garden.js", "housemon/web/app.js", "housemon/web/manual.js"]
 }
