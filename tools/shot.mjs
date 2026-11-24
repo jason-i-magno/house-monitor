@@ -20,9 +20,9 @@
 //     --water           and of the water they put down, not the heads reaching each spot
 //     --focus NAME      and a part of it focused, by name, with its readout, as Zone 1 (front lawn), or by name
 //                       and where, as Head 2, Zone 1 (front lawn)
-//     --garden          the garden planner, not the map: with --bed NAME a bed by its name, --sun MON its sun in a
-//                       month (Apr to Oct), and --plant NAME a plant picked from the list, or --pick X,Y the one
-//                       planted at that square
+//     --garden          the garden planner's page (garden.html beside --url), not the house's: with --bed NAME a bed
+//                       by its name, --sun MON its sun in a month (Apr to Oct), and --plant NAME a plant picked from
+//                       the list, or --pick NAME the first of that plant in the bed picked, clicked as a mouse would
 //     --full            the map full screen, the browser's own (with --fallback, fixed over the page instead)
 //     --width PX        the window's width (default 1100), under 500 as a phone
 //     --height PX       the window's height (default 800 full screen, else 3000, for the whole page)
@@ -73,6 +73,8 @@ if (opt.help) {
   process.exit(0);
 }
 const out = positionals[0] ?? join(tmpdir(), "housemon-shot.png");
+// With a plant picked from the list, a click on the bed would plant it, and save that.
+if (opt.plant && opt.pick) throw new Error("--plant and --pick go one at a time, since a click with a plant picked plants it");
 
 function chromium() {
   if (process.env.CHROME) return process.env.CHROME;
@@ -122,7 +124,7 @@ try {
   const height = Number(opt.height ?? (opt.full ? 800 : 3000));
   await page("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 2, mobile: width < 500 });
   await page("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opt.dark ? "dark" : "light" }] });
-  await page("Page.navigate", { url: opt.url });
+  await page("Page.navigate", { url: opt.garden ? new URL("garden.html", opt.url).href : opt.url });
   await wait(2500);
 
   const view = { plan: "Floor plan", "3d": "3D", detailed: "Detailed" }[opt.view?.toLowerCase()];
@@ -155,20 +157,26 @@ try {
     steps.push(`{ const item = state.modelScene?.items.find((i) => [i.name, i.name + ", " + i.where].includes(${JSON.stringify(opt.focus)})); if (!item) throw new Error("Nothing named " + ${JSON.stringify(opt.focus)} + " in the detailed view"); setMapFocus(item.key); await new Promise((r) => setTimeout(r, 400)); }`);
   }
   if (opt.garden) {
-    // The planner, once its plants have loaded, on the bed asked for, its sun worked out if it's to be shown.
-    steps.push(`for (let i = 0; i < 50 && !state.planner.plants.size; i++) await new Promise((r) => setTimeout(r, 100));`);
+    // The planner, by its own buttons, once its plants have loaded (garden.js is a module, so nothing of it is global):
+    // the bed asked for, its sun worked out and shown, each square's hours written in it.
+    steps.push(`for (let i = 0; i < 50 && !document.querySelector(".garden-plants button"); i++) await new Promise((r) => setTimeout(r, 100));`);
     if (opt.bed) steps.push(click(".garden-beds button", opt.bed));
     if (opt.sun) {
-      steps.push(`if (!state.planner.showSun) state.planner.sunButton.click(); ${click(".garden-tools .segmented button", opt.sun[0].toUpperCase() + opt.sun.slice(1, 3).toLowerCase())}`);
-      steps.push(`for (let i = 0; i < 300 && (!state.planner.sun.get(state.planner.bed) || state.planner.sun.get(state.planner.bed) === "working"); i++) await new Promise((r) => setTimeout(r, 100));`);
+      steps.push(`{ const b = [...document.querySelectorAll(".garden-tools button")].find((b) => b.textContent === "Sun"); if (b?.getAttribute("aria-pressed") !== "true") b?.click(); }`);
+      steps.push(click(".garden-tools .segmented button", opt.sun[0].toUpperCase() + opt.sun.slice(1, 3).toLowerCase()));
+      steps.push(`for (let i = 0; i < 300 && !document.querySelector(".garden-bed .hours"); i++) await new Promise((r) => setTimeout(r, 100)); if (!document.querySelector(".garden-bed .hours")) throw new Error("The sun wasn't worked out");`);
     }
     if (opt.plant) steps.push(`{ const b = [...document.querySelectorAll(".garden-plants button")].find((b) => b.querySelector(".name")?.firstChild?.textContent === ${JSON.stringify(opt.plant)}); if (!b) throw new Error("No plant " + ${JSON.stringify(opt.plant)}); b.click(); await new Promise((r) => setTimeout(r, 300)); }`);
     if (opt.pick) {
-      const [x, y] = opt.pick.split(",").map(Number);
-      steps.push(`{ const k = plantingAt(plantingsOf(), ${x}, ${y}); if (k < 0) throw new Error("Nothing planted at ${x},${y}"); state.planner.selected = k; renderPlanner(); await new Promise((r) => setTimeout(r, 300)); }`);
+      // A click in the middle of its tile, a tile's title its plant's name, then how many are in its square.
+      steps.push(async () => {
+        const at = await run(`const name = ${JSON.stringify(opt.pick)}; const g = [...document.querySelectorAll(".garden-bed .planting")].find((g) => { const t = g.querySelector("title")?.textContent ?? ""; return t === name || t.startsWith(name + ", "); }); if (!g) throw new Error("No " + name + " planted in the bed"); g.scrollIntoView({ block: "center" }); const r = g.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 };`);
+        for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await page("Input.dispatchMouseEvent", { type, ...at, button: "left", clickCount: type === "mouseMoved" ? 0 : 1 });
+        await wait(300);
+      });
     }
   }
-  for (const step of steps) await run(step);
+  for (const step of steps) await (typeof step === "string" ? run(step) : step());
   if (opt.full) {
     // As a click would: the browser's full screen, which needs one, or without it the fallback, over the page.
     await run(`${opt.fallback ? "Object.defineProperty(document, \"fullscreenEnabled\", { value: false }); " : ""}state.map.full.click(); await new Promise((r) => setTimeout(r, 900));`, !opt.fallback);
@@ -176,15 +184,15 @@ try {
   await wait(300);
 
   if (opt.garden) {
-    // Tall enough to hold the whole page, so the planner at its foot is on screen when it's captured.
+    // Tall enough to hold the whole page, so all of the planner is on screen when it's captured.
     const tall = await run("return document.documentElement.scrollHeight;");
     await page("Emulation.setDeviceMetricsOverride", { width, height: Math.max(height, tall + 20), deviceScaleFactor: 2, mobile: width < 500 });
     await wait(600);
   }
   const rect = opt.full
     ? { x: 0, y: 0, width, height }
-    : await run(`const r = document.querySelector(${JSON.stringify(opt.garden ? "#garden" : view ? "#map" : "body")}).getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height };`);
-  const pad = (view || opt.garden) && !opt.full ? 8 : 0;
+    : await run(`const r = document.querySelector(${JSON.stringify(view && !opt.garden ? "#map" : "body")}).getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height };`);
+  const pad = view && !opt.garden && !opt.full ? 8 : 0;
   const clip = { x: Math.max(0, rect.x - pad), y: Math.max(0, rect.y - pad), width: rect.width + 2 * pad, height: rect.height + 2 * pad, scale: 1 };
   const shot = await page("Page.captureScreenshot", { format: "png", clip });
   writeFileSync(out, Buffer.from(shot.result.data, "base64"));

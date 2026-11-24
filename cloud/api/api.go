@@ -2,7 +2,8 @@
 // them (housemon/server.py), under /houses/{house}/, and the API a house's uplink writes its readings and layout to.
 //
 //	GET  /                                the default house, if there is one
-//	GET  /houses/{house}/                 the page, and its app.js, model.js, garden.js, plants.json and style.css
+//	GET  /houses/{house}/                 the page, and its app.js, model.js and style.css, and the garden planner's
+//	                                      garden.html, garden.js and plants.json, and the home manual's page
 //	GET  /houses/{house}/api/sensors      the house and each sensor's latest reading
 //	GET  /houses/{house}/api/history      bucketed history, ?hours=24&simulated=0
 //	GET  /houses/{house}/api/stream       new readings, as Server-Sent Events
@@ -402,12 +403,14 @@ type asset struct {
 }
 
 var assetTypes = map[string]string{
-	"index.html":  "text/html; charset=utf-8",
-	"app.js":      "text/javascript; charset=utf-8",
-	"model.js":    "text/javascript; charset=utf-8",
+	"index.html": "text/html; charset=utf-8",
+	"app.js":     "text/javascript; charset=utf-8",
+	"model.js":   "text/javascript; charset=utf-8",
+	"style.css":  "text/css; charset=utf-8",
+	// The garden planner's page; with no API for its plans here, it keeps them in the viewer's browser.
+	"garden.html": "text/html; charset=utf-8",
 	"garden.js":   "text/javascript; charset=utf-8",
 	"plants.json": "application/json",
-	"style.css":   "text/css; charset=utf-8",
 	// The home manual's page; its API stays at the house, so in the cloud it says to open it there.
 	"manual.html": "text/html; charset=utf-8",
 	"manual.js":   "text/javascript; charset=utf-8",

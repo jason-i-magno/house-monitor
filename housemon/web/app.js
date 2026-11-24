@@ -163,7 +163,7 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
  *   mapFocus: string | null, modelCut: string, modelTrees: boolean, modelSeason: Season,
  *   modelCoverage: boolean, modelCoverageBy: Measure, modelProposal: string,
  *   modelScene: ReturnType<typeof modelScene> | null, modelZoom: number | null, modelTarget: number[] | null,
- *   tempStops: number[][] | null, gardenSite: Garden | null, planner: Planner,
+ *   tempStops: number[][] | null,
  * }} State
  */
 
@@ -200,8 +200,6 @@ const state = {
   modelZoom: null, // how far the detailed view is zoomed in, 1 showing the whole lot, or null to frame the house
   modelTarget: null, // the point in feet the zoomed-in view centers on, or null for the middle
   tempStops: null, // the scale's colors in OKLab, read from the theme when first needed
-  gardenSite: null, // where the garden is and its frost dates, if the house file says (garden.py)
-  planner: /** @type {Planner} */ (/** @type {unknown} */ (null)), // the garden planner (garden.js)
 };
 
 // --- DOM helpers ---------------------------------------------------------
@@ -2047,7 +2045,7 @@ async function loadSensors() {
   // and litter box's card is.
   ({
     sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null,
-    vacuums: state.vacuums = [], garden: state.gardenSite = null,
+    vacuums: state.vacuums = [],
   } = /** @type {House & {sensors: Room[], vacuums: VacuumCard[]}} */ (house));
   state.litterBoxes = Object.entries(house.litter_boxes ?? {}).map(([name, latest]) => {
     return /** @type {LitterBox} */ ({
@@ -2063,7 +2061,6 @@ async function loadSensors() {
   renderRooms();
   state.charts.forEach(renderLegend);
   drawMap();
-  renderPlanner();
 }
 
 async function loadHistory() {
@@ -2169,15 +2166,12 @@ async function main() {
   renderRanges();
   state.charts = CHARTS.map(createChart);
   /** @type {HTMLElement} */ (document.getElementById("charts")).append(...state.charts.map((c) => c.figure));
-  state.planner = createPlanner();
-  /** @type {HTMLElement} */ (document.getElementById("garden")).append(state.planner.root);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     state.tempStops = null; // the theme's colors
     state.modelScene = null;
     drawMap();
   });
   await loadSensors();
-  loadPlanner(); // the plants and plans, while the history loads
   await loadHistory();
   connect();
   setInterval(() => {

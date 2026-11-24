@@ -124,7 +124,7 @@ source ──► Hub ──► Store (SQLite)
 - **Page** (`web/`):
   - Room cards grouped by floor, and a card for each robot vacuum, with its battery, what it's doing, how far along a clean is, and what needs looking at. A card is flagged if its room, or vacuum, goes 5 minutes without a reading. A room's card warns while it's colder than its house file says it should get.
   - A house map: a floor plan of each level, or a 3D view of the house you can drag, or turn with shift and the arrow keys, to turn and tilt, from any side, above or below, with each room colored by its temperature on a gradient (blue colder, red warmer, through gray at a comfortable 68 °F) and the outside temperature in its corner and as the tint of its background. Its detailed view shows the house as it looks, with its doors, windows, vents, appliances, closets, roof and yard: whole from outside, or cut away to any level, as it is or with a change you're thinking of making, and zoomed with the scroll wheel, about the pointer, with the + and − keys, or in on whatever you double-click, and panned by dragging with shift or the right button held, or with two fingers on a touch screen. The button beside the views makes the map full screen.
-  - A garden planner for each of your planted beds (in soil or mulch), drawn to scale a square foot at a time from about 50 vegetables, herbs, fruits and flowers (`web/plants.json`): pick one and click, tap or drag across squares to plant it, drag a plant to move it, or use the arrow keys. It says how much room each plant takes, its height, the sun and water it needs, when to start, plant and harvest it from your frost dates, whether it's food, and which plants it grows well with or is best kept from. For the bed it notes neighbors that clash or help, plants getting less sun than they need, worked out from the shade your house, trees and fences cast in each month, tall plants shading short ones, plants that want very different water, and what water your sprinklers or drip line put on it. A calendar shows each plant's season, and a list what's coming up. Plans are saved on the server, so every device sees the same ones.
+  - A garden planner, on a page of its own (`garden.html`, linked from the top of the house page), for each of your planted beds (in soil or mulch), drawn to scale a square foot at a time from about 50 vegetables, herbs, fruits and flowers (`web/plants.json`): pick one and click, tap or drag across squares to plant it, drag a plant to move it, or use the arrow keys. It says how much room each plant takes, its height, the sun and water it needs, when to start, plant and harvest it from your frost dates, whether it's food, and which plants it grows well with or is best kept from. For the bed it notes neighbors that clash or help, plants getting less sun than they need, worked out from the shade your house, trees and fences cast in each month, tall plants shading short ones, plants that want very different water, and what water your sprinklers or drip line put on it. A calendar shows each plant's season, and a list what's coming up. Plans are saved on the server, so every device sees the same ones.
   - Temperature and humidity charts for 6 hours to 30 days, with a hover or keyboard readout and a table view. Unheated spaces like the garage get a temperature chart of their own. Click a room in a chart's legend to hide or show its line.
   - Light and dark mode follow the system setting.
 
@@ -135,7 +135,7 @@ Readings are stored in the sensors' own units (°C and percent relative humidity
 The page's JavaScript is typed in JSDoc comments, so it runs as it's written, with no build, and TypeScript checks it, with Node:
 
 ```sh
-npx -p typescript@7.0.2 tsc -p .   # type-check app.js, model.js and garden.js, as tsconfig.json sets
+npx -p typescript@7.0.2 tsc -p .   # type-check app.js, model.js, garden.js and manual.js, as tsconfig.json sets
 ```
 
 Two tools in `tools/` help check changes to the house map and the garden planner, with Node 22 or newer:
@@ -144,7 +144,7 @@ Two tools in `tools/` help check changes to the house map and the garden planner
 node tools/scan.mjs [house file]   # faces in the detailed view that would flicker against each other
 node tools/scan.mjs --proposal NAME [house file]   # with a proposal shown in place of things as they are
 node tools/shot.mjs --view detailed --level Main --top --room Kitchen kitchen.png  # a screenshot of a running server's map
-node tools/shot.mjs --garden --bed "Vegetable bed" --sun Jun garden.png  # or of its garden planner
+node tools/shot.mjs --garden --bed "Vegetable bed" --sun Jun garden.png  # or of its garden planner's page
 ```
 
 `scan.mjs` builds the detailed view without a browser or server. `shot.mjs` needs Chromium (`$CHROME`, or one on the PATH or from Playwright); its options are listed at the top of the file.

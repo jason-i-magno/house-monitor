@@ -118,8 +118,8 @@ func TestServesThePageUnderEachHouse(t *testing.T) {
 		t.Errorf("the page's links aren't relative:\n%s", body)
 	}
 	files := map[string]string{
-		"app.js": "text/javascript", "model.js": "text/javascript", "garden.js": "text/javascript",
-		"plants.json": "application/json", "style.css": "text/css",
+		"app.js": "text/javascript", "model.js": "text/javascript", "style.css": "text/css",
+		"garden.html": "text/html", "garden.js": "text/javascript", "plants.json": "application/json",
 	}
 	for file, kind := range files {
 		resp, body := f.get("/houses/example/" + file)
