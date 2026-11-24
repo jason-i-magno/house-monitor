@@ -1,6 +1,8 @@
 import base64
 import http.client
 import json
+import os
+import stat
 import tempfile
 import threading
 import unittest
@@ -111,6 +113,37 @@ class ManualTest(unittest.TestCase):
         self.assertEqual(furnace["files"], ["manual: Furnace manual.pdf"])
         self.assertNotIn("serial", furnace)  # empty fields are left out
         self.assertEqual(house["maintenance"][0]["due"], "2027-04-01")
+
+
+@unittest.skipUnless(os.name == "posix", "file modes are POSIX's")
+class PermissionsTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "manual.sqlite3"
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def mode(self, path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_a_new_database_is_readable_only_by_its_owner_and_so_are_sqlites_files(self):
+        manual = Manual(self.path)
+        manual.save_equipment({"name": "Furnace", "kind": "furnace"})
+        self.assertEqual(self.mode(self.path), 0o600)
+        for suffix in ("-wal", "-shm"):
+            sibling = self.path.with_name(self.path.name + suffix)
+            if sibling.exists():
+                self.assertEqual(self.mode(sibling), 0o600, suffix)
+        manual.close()
+
+    def test_one_made_before_is_tightened_when_opened(self):
+        Manual(self.path).close()
+        for file in (self.path, self.path.with_name(self.path.name + "-wal")):
+            file.touch()
+            file.chmod(0o644)
+        Manual(self.path).close()
+        self.assertEqual(self.mode(self.path), 0o600)
 
 
 class FakeClient:
