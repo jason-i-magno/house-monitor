@@ -52,8 +52,8 @@ class ServerTest(unittest.TestCase):
 
     def test_serves_the_page_and_its_assets(self):
         assets = [
-            ("/", "text/html"), ("/app.js", "text/javascript"), ("/model.js", "text/javascript"),
-            ("/garden.js", "text/javascript"), ("/plants.json", "application/json"), ("/style.css", "text/css"),
+            ("/", "text/html"), ("/app.js", "text/javascript"), ("/model.js", "text/javascript"), ("/style.css", "text/css"),
+            ("/garden.html", "text/html"), ("/garden.js", "text/javascript"), ("/plants.json", "application/json"),
         ]
         for path, kind in assets:
             status, content_type, body = self.get(path)

@@ -615,6 +615,7 @@ html.map-full { overflow: hidden; }
 .area-name { fill: var(--text-muted); font-size: 11px; }
 
 .map .tooltip { z-index: 1; }
+.map canvas.opens { cursor: pointer; } /* over a planted bed, which a click opens in the garden planner */
 
 /* Readings from outside, which have no room to color, in the map's top-right
    corner: the floor plan's first title row, or the space around the 3D house.
@@ -715,6 +716,7 @@ html.map-full { overflow: hidden; }
 .tooltip .head { margin-bottom: 4px; }
 .tooltip .head span { color: var(--text-muted); }
 .tooltip .stale { margin-top: 2px; }
+.tooltip .hint { margin-top: 4px; color: var(--text-muted); }
 
 .scale {
   display: flex;

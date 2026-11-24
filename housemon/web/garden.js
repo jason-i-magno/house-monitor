@@ -4,6 +4,11 @@
 // view's scene), what water reaches the bed from the sprinklers, and when to start, plant and harvest, from the house
 // file's GARDEN (garden.py). What's planted is saved on the server (api/garden), a bed at a time, or where the
 // server keeps no plans, as in the cloud service, in this browser.
+//
+// It's a page of its own (garden.html), the house from api/sensors as the house page has it, and its scene built by
+// model.js, loaded first. A module, so its names stay its own and don't meet app.js's: of model.js, it uses only what
+// needs nothing of the house page, as modelScene and buildModel.
+export {};
 
 /**
  * A plant, as plants.json has it: how many fit in a square foot (perSquare), or for a big one, how many squares it
@@ -77,6 +82,92 @@ const GARDEN_STEP = 0.25; // hours between the sun's positions as it's worked ou
 const GARDEN_UNDO = 50;
 const DAY = 86400000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/**
+ * The page's state: the house, as /api/sensors sends it, as far as the planner needs it, whether it's loaded and why
+ * not; the scene built from it, with the sprinklers as they are, for the house as it was then; and the planner.
+ * @type {{
+ *   sensors: Sensor[], areas: Area[], details: Details | null, wall: number | null, gardenSite: Garden | null,
+ *   loaded: boolean, houseError: string | null, scene: Scene | NoScene | null, sceneFor: string | null, planner: Planner,
+ * }}
+ */
+const state = {
+  sensors: [], areas: [], details: null, wall: null, gardenSite: null, loaded: false, houseError: null, scene: null, sceneFor: null,
+  planner: /** @type {Planner} */ (/** @type {unknown} */ (null)), // made first thing, in main
+};
+
+// --- DOM helpers, as app.js's
+
+/**
+ * @template {keyof HTMLElementTagNameMap} K
+ * @param {K} tag @param {Record<string, string | number>} [attrs] @param {...(Node | string)} children
+ */
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
+  node.append(...children);
+  return node;
+}
+
+/** @template {keyof SVGElementTagNameMap} K @param {K} tag @param {Record<string, string | number>} [attrs] */
+function svg(tag, attrs = {}) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
+  return node;
+}
+
+// A group of buttons, one pressed, as the detailed view's (renderModelButtons, which builds with app.js's el): each
+// option its id, label and tooltip, if any. Made again only when the options change, so a button keeps its focus.
+/**
+ * @param {HTMLElement} group @param {[string, string, (string | null)?][]} options @param {string} current
+ * @param {(id: string) => void} pick
+ */
+function renderButtons(group, options, current, pick) {
+  const key = options.map((o) => o.join("/")).join();
+  if (group.dataset.options !== key) {
+    group.dataset.options = key;
+    group.replaceChildren(...options.map(([id, label, title]) => {
+      const button = el("button", { type: "button", "data-id": id, ...(title ? { title } : {}) }, label);
+      button.addEventListener("click", () => pick(id));
+      return button;
+    }));
+  }
+  for (const button of /** @type {HTMLCollectionOf<HTMLElement>} */ (group.children)) button.setAttribute("aria-pressed", String(button.dataset.id === current));
+}
+
+// --- The house
+
+// The house as /api/sensors sends it, for its beds, the shade on them and the water they get. Once it's loaded, one
+// that doesn't, as with the network down for a moment, leaves it as it was.
+async function loadHouse() {
+  try {
+    const response = await fetch("api/sensors");
+    if (!response.ok) throw new Error(String(response.status));
+    /** @type {House} */
+    const house = await response.json();
+    ({ sensors: state.sensors, areas: state.areas = [], details: state.details = null, wall: state.wall = null, garden: state.gardenSite = null } = house);
+    state.loaded = true;
+    state.houseError = null;
+  } catch {
+    if (!state.loaded) state.houseError = "Couldn't load the house.";
+  }
+}
+
+// The rooms, as the detailed view has them: not the outside, or a sensor beside a room's own.
+function indoors() {
+  return state.sensors.filter((s) => !s.outside && !s.beside);
+}
+
+// The house's scene, with the sprinklers as they are, built again only when the house changes.
+function houseScene() {
+  const key = houseKey();
+  if (!state.scene || state.sceneFor !== key) {
+    state.scene = modelScene({ rooms: indoors(), areas: state.areas, details: state.details, wall: state.wall ?? MODEL_WALL, colors: modelColors });
+    state.sceneFor = key;
+  }
+  return state.scene;
+}
 
 // --- The planner's elements
 
@@ -115,7 +206,7 @@ function createPlanner() {
   // The bed and its tools, beside them the plants and the one picked, and under the bed its notes; on a narrow
   // screen the plants come straight after the bed, to pick from, and the notes after them.
   const root = el("section", { class: "chart garden", "aria-labelledby": "garden-title" },
-    el("div", { class: "garden-head" }, el("h2", { id: "garden-title" }, "Garden planner"), beds),
+    el("div", { class: "garden-head" }, el("h2", { id: "garden-title" }, "Beds"), beds),
     note,
     el("div", { class: "garden-body" },
       el("div", { class: "garden-main" }, tools, plot, key, status),
@@ -177,14 +268,17 @@ function createPlanner() {
       setCalendarRow(planner.row == null ? (step > 0 ? 0 : rows.length - 1) : (planner.row + step + rows.length) % rows.length);
     } else if (event.key === "Escape") setCalendarRow(null);
   });
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible" || planner.store !== "server" || planner.saving.size) return;
-    // Another device may have changed them meanwhile, so what's picked or moving here, by its place, is let go.
-    loadPlans().then(() => {
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible") return;
+    // The house file may have changed meanwhile, and another device the plans, so what's picked or moving here, by
+    // its place, is let go; but not while this page's own saves are still going.
+    const plans = planner.store === "server" && !planner.saving.size;
+    await Promise.all([loadHouse(), plans && loadPlans()]);
+    if (plans) {
       planner.selected = planner.moving = null;
       planner.ghost = null;
-      renderPlanner();
-    });
+    }
+    renderPlanner();
   });
   new ResizeObserver(() => {
     drawBed();
@@ -193,8 +287,8 @@ function createPlanner() {
   return planner;
 }
 
-// The plants and the saved plans, then the planner drawn.
-async function loadPlanner() {
+// The plants the planner knows.
+async function loadPlants() {
   const planner = state.planner;
   try {
     const response = await fetch("plants.json");
@@ -205,8 +299,6 @@ async function loadPlanner() {
   } catch {
     planner.error = "Couldn't load the plants.";
   }
-  await loadPlans();
-  renderPlanner();
 }
 
 // The saved plans: the server's, or where it keeps none, this browser's.
@@ -263,26 +355,33 @@ function renderPlanner() {
   if (!planner) return;
   const beds = gardenBeds();
   if (!beds.some((b) => b.name === planner.bed)) {
+    // The bed the address names (garden.html?bed=NAME, as a click on one in the house page's detailed view opens),
+    // else the one this viewer last looked at, else the first.
+    const asked = beds.find((b) => b.name === new URLSearchParams(location.search).get("bed"));
     let saved = null;
     try {
       saved = localStorage.getItem(GARDEN_BED_KEY);
     } catch {}
-    planner.bed = (beds.find((b) => b.name === saved) ?? beds[0])?.name ?? null;
+    planner.bed = (asked ?? beds.find((b) => b.name === saved) ?? beds[0])?.name ?? null;
     planner.selected = planner.moving = null;
+    if (asked) keepBed(asked.name);
   }
-  renderModelButtons(planner.beds, beds.map((b) => [b.name, b.name, `${b.w} × ${b.d} ft${b.soil ? "" : ", mulch"}`]), planner.bed ?? "", (name) => {
+  renderButtons(planner.beds, beds.map((b) => [b.name, b.name, `${b.w} × ${b.d} ft${b.soil ? "" : ", mulch"}`]), planner.bed ?? "", (name) => {
     planner.bed = name;
     planner.selected = planner.moving = null;
     planner.cursor = [0, 0];
-    try {
-      localStorage.setItem(GARDEN_BED_KEY, name);
-    } catch {}
+    keepBed(name);
+    // The address follows, so a reload, or a bookmark, comes back to it.
+    const url = new URL(location.href);
+    url.searchParams.set("bed", name);
+    history.replaceState(null, "", url);
     renderPlanner();
   });
   const site = state.gardenSite;
   const says = [
     planner.error,
-    !beds.length && "The house has no beds to plan: give its details a ground of the kind \"bed\", in soil or mulch.",
+    state.houseError,
+    state.loaded && !beds.length && "The house has no beds to plan: give its details a ground of the kind \"bed\", in soil or mulch.",
     beds.length && !site && "Add GARDEN to the house file, with its latitude, which way it faces and its frost dates, for the sun on each square and the dates to plant.",
     planner.store === "browser" && "Saved in this browser only, as the server here keeps no plans.",
   ].filter((s) => s);
@@ -299,17 +398,25 @@ function renderPlanner() {
   ensureSun(); // for the notes on sun, whether or not it's shown
 }
 
-// The house as it bears on the sun and water, as JSON: its details and garden. What's worked out from it is kept
-// until it changes, not just until the page loads it again.
+// The bed this viewer last looked at, for the next time the page opens without one in its address.
+/** @param {string} name */
+function keepBed(name) {
+  try {
+    localStorage.setItem(GARDEN_BED_KEY, name);
+  } catch {}
+}
+
+// The house as it bears on the sun and water, as JSON: its rooms (but their readings), areas, walls, details and
+// garden. What's worked out from it is kept until it changes, not just until the page loads it again.
 function houseKey() {
-  return JSON.stringify([state.details, state.gardenSite]);
+  return JSON.stringify([indoors().map(({ reading, ...room }) => room), state.areas, state.wall, state.details, state.gardenSite]);
 }
 
 // --- The palette: the plants to plant, filtered
 
 function renderKinds() {
   const planner = state.planner;
-  renderModelButtons(planner.kinds, /** @type {[string, string][]} */ (GARDEN_KINDS), planner.kind, (kind) => {
+  renderButtons(planner.kinds, /** @type {[string, string][]} */ (GARDEN_KINDS), planner.kind, (kind) => {
     planner.kind = kind;
     renderKinds();
     renderPalette();
@@ -379,7 +486,7 @@ function renderTools() {
   planner.sunButton.disabled = !site;
   planner.sunButton.title = site ? "Shade each square by the hours of direct sun it gets, from the house, trees and fences" : "Needs GARDEN in the house file";
   planner.months.hidden = !planner.showSun;
-  renderModelButtons(planner.months, GARDEN_MONTHS.map((m) => [String(m), MONTH_NAMES[m], null]), String(planner.sunMonth), (m) => {
+  renderButtons(planner.months, GARDEN_MONTHS.map((m) => [String(m), MONTH_NAMES[m], null]), String(planner.sunMonth), (m) => {
     planner.sunMonth = Number(m);
     renderTools();
     drawBed();
@@ -1251,7 +1358,7 @@ async function ensureSun() {
   planner.sun.set(bed.name, "working");
   drawBed();
   await new Promise((resolve) => setTimeout(resolve, 30));
-  const scene = /** @type {Scene | NoScene} */ (state.modelScene ??= pageModelScene());
+  const scene = houseScene();
   if (scene.note) {
     planner.sun.delete(bed.name);
     return;
@@ -1644,3 +1751,12 @@ function renderUpcoming(rows) {
     el("span", { class: "when" }, i.from <= now ? `Now – ${dateText(i.to)}` : `${dateText(i.from)} – ${dateText(i.to)}`), i.text)));
   if (!coming.length) planner.upcoming.append(el("li", { class: "empty" }, rows.length ? "Nothing more this season." : "Nothing planted yet."));
 }
+
+async function main() {
+  state.planner = createPlanner();
+  /** @type {HTMLElement} */ (document.getElementById("garden")).append(state.planner.root);
+  await Promise.all([loadHouse(), loadPlants(), loadPlans()]);
+  renderPlanner();
+}
+
+main();

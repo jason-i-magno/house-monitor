@@ -27,6 +27,7 @@ STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/model.js": ("model.js", "text/javascript; charset=utf-8"),
+    "/garden.html": ("garden.html", "text/html; charset=utf-8"),
     "/garden.js": ("garden.js", "text/javascript; charset=utf-8"),
     "/plants.json": ("plants.json", "application/json"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
