@@ -11,7 +11,9 @@ family room. A thermostat on the main floor keeps it at 64 to 68 °F; upstairs
 runs warm, the basement cold, the office has a space heater for the work day,
 and the garage is unheated. Sprinklers water the front and back lawns and the
 flower bed, run from a controller in the garage, and a proposal turns the
-flower bed's spray heads into a drip line. The first eight rooms get the eight series
+flower bed's spray heads into a drip line. A raised vegetable bed in the back
+yard is the garden planner's to plan, the house facing north at 40° north.
+The first eight rooms get the eight series
 colors, and the garage, bathroom and outside share the gray.
 """
 
@@ -19,6 +21,7 @@ from housemon.details import (
     Closet, Details, Drip, Fence, Finish, Fixture, Ground, Head, Hedge, Opening, Proposal, Roof, RoofVent, Shed, Slope,
     Sprinklers, Steps, Tree,
 )
+from housemon.garden import Garden
 from housemon.readings import Area, Plan, Sensor
 from housemon.simulator import SimulatedRoom
 
@@ -215,6 +218,7 @@ DETAILS = Details(
         Ground("Deck", "deck", 32, -10, 12, 10, height=0.9, paving="wood", railings=("right",)),
         Ground("Patio", "patio", 0, -10, 14, 10, paving="flagstone"),
         Ground("Flower bed", "bed", 0, 28, 26, 3, height=0.75, paving="mulch", edging="stone"),  # raised, along the front
+        Ground("Vegetable bed", "bed", 26, -28, 12, 4, height=1, paving="dirt", edging="metal"),  # in the back yard's sun
         # From the side gate to the patio.
         Ground("Gravel path", "walk", -12, -10, 12, 30, paving="gravel", outline=((-12, 20), (-8, 20), (0, -6), (0, -10))),
     ),
@@ -255,3 +259,7 @@ DETAILS = Details(
         ),
     ),
 )
+
+# Where the garden is, for the planner: the front faces north, so the back yard gets the sun, and frost dates as in
+# much of the middle of the country.
+GARDEN = Garden(latitude=40, facing=0, last_frost=(4, 30), first_frost=(10, 15))

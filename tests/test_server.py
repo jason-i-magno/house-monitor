@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from housemon.details import Details, Finish, Fixture, Opening, Roof
+from housemon.garden import Garden, Plans
 from housemon.hub import Hub
 from housemon.layout import house_layout
 from housemon.readings import Area, LitterBox, Plan, Reading, Sensor, Vacuum
@@ -50,7 +51,10 @@ class ServerTest(unittest.TestCase):
         return result
 
     def test_serves_the_page_and_its_assets(self):
-        assets = [("/", "text/html"), ("/app.js", "text/javascript"), ("/model.js", "text/javascript"), ("/style.css", "text/css")]
+        assets = [
+            ("/", "text/html"), ("/app.js", "text/javascript"), ("/model.js", "text/javascript"),
+            ("/garden.js", "text/javascript"), ("/plants.json", "application/json"), ("/style.css", "text/css"),
+        ]
         for path, kind in assets:
             status, content_type, body = self.get(path)
             self.assertEqual(status, 200, path)
@@ -132,6 +136,42 @@ class ServerTest(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_the_house_says_where_its_garden_is(self):
+        self.assertIsNone(json.loads(self.get("/api/sensors")[2])["garden"])  # unless the house file says
+        site = Garden(latitude=40, facing=0, last_frost=(4, 30), first_frost=(10, 15))
+        self.server.garden = site
+        self.assertEqual(json.loads(self.get("/api/sensors")[2])["garden"], {"latitude": 40, "facing": 0, "last_frost": [4, 30], "first_frost": [10, 15]})
+        self.assertEqual(house_json(self.sensors, self.areas, self.details, garden=site)["garden"]["facing"], 0)
+
+    def test_the_gardens_plans_are_kept_a_bed_at_a_time(self):
+        self.assertEqual(self.get("/api/garden")[0], 404)  # a server given nowhere to keep them has none
+        self.server.plans = Plans(Path(self.dir.name) / "garden.json")
+        self.assertEqual(json.loads(self.get("/api/garden")[2]), {"beds": {}})
+        tomato = [{"plant": "tomato", "x": 0, "y": 0}]
+        status, body = self.put("/api/garden", json.dumps({"bed": "North bed", "plants": tomato}).encode())
+        self.assertEqual((status, json.loads(body)), (200, {"beds": {"North bed": tomato}}))
+        status, _ = self.put("/api/garden", json.dumps({"bed": "South bed", "plants": [{"plant": "carrot", "x": 1, "y": 1}]}).encode())
+        self.assertEqual(json.loads(self.get("/api/garden")[2])["beds"]["North bed"], tomato)  # the other bed stays
+        for bad in (b"not json", b"[]", b'{"bed": "North bed"}', json.dumps({"bed": "North bed", "plants": [{"plant": "\u00e9", "x": 0, "y": 0}]}).encode()):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.put("/api/garden", bad)[0], 400)
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        conn.putrequest("PUT", "/api/garden")
+        conn.putheader("Content-Length", "300000")  # said, not sent: it's refused before it's read
+        conn.endheaders()
+        self.assertEqual(conn.getresponse().status, 413)
+        conn.close()
+        self.assertEqual(json.loads(self.get("/api/garden")[2])["beds"]["North bed"], tomato)
+        self.assertEqual(self.put("/api/sensors", b"{}")[0], 404)
+
+    def put(self, path: str, body: bytes) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        conn.request("PUT", path, body, {"Content-Type": "application/json"})
+        response = conn.getresponse()
+        result = response.status, response.read()
+        conn.close()
+        return result
 
     def test_details_are_null_for_a_source_without_them(self):
         server = HouseServer(("127.0.0.1", 0), self.hub, self.store, self.sensors)
