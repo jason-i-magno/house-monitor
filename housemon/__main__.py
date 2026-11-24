@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from . import ecobee, govee, manual, mova, uplink, whisker
+from . import garden as gardens
 from . import house as houses
 from .hub import Hub
 from .server import HouseServer, house_json
@@ -82,6 +83,12 @@ def main(argv: list[str] | None = None) -> None:
         " and exit",
     )
     parser.add_argument(
+        "--garden",
+        type=Path,
+        default=Path("data") / "garden.json",
+        help="where the garden planner keeps what's planted in each bed (default: %(default)s)",
+    )
+    parser.add_argument(
         "--manual",
         type=Path,
         default=Path("data") / "manual.sqlite3",
@@ -131,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
     house = house_file.module
     source = SimulatedSource(house.HOUSE, args.interval, getattr(house, "AREAS", ()), getattr(house, "DETAILS", None))
     if args.dump:
-        print(json.dumps(house_json(source.sensors, source.areas, source.details)))
+        print(json.dumps(house_json(source.sensors, source.areas, source.details, garden=gardens.garden(house))))
         return
 
     def govee_rooms() -> dict[str, str]:
@@ -197,6 +204,7 @@ def main(argv: list[str] | None = None) -> None:
             source.details = getattr(changed, "DETAILS", None)
             source.skip_boxes = set(litter_robots().values()) if with_whisker else set()
             server.sensors, server.areas, server.details = source.sensors, source.areas, source.details
+            server.garden = gardens.garden(changed)
 
     args.manual.parent.mkdir(parents=True, exist_ok=True)
     home_manual = manual.Manual(args.manual)
@@ -209,6 +217,8 @@ def main(argv: list[str] | None = None) -> None:
         getattr(source, "areas", []),
         getattr(source, "details", None),
         refresh,
+        gardens.garden(house),
+        gardens.Plans(args.garden),
         manual=home_manual,
         assistant=assistant,
         assistant_problem=assistant_problem,
@@ -239,7 +249,7 @@ def main(argv: list[str] | None = None) -> None:
     # Set up, the uplink sends the house, as it is when each round starts, and the readings the store keeps.
     def house_now() -> dict:
         refresh()
-        return house_json(source.sensors, source.areas, source.details)
+        return house_json(source.sensors, source.areas, source.details, garden=server.garden)
 
     sending = args.uplink.exists()
     if sending:

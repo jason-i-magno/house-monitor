@@ -93,6 +93,23 @@
   --model-water-3: #2a78d6;
   --model-water-4: #1c5cab;
   --model-water-5: #0d366b;
+  /* The garden planner: each kind of plant, the soil and a bed's edge, the sun on a square (under 4 h, 4–6, 6–8,
+     8 or more), and the calendar's bars and lines. */
+  --garden-vegetable: #4f8a3a;
+  --garden-herb: #2a8a80;
+  --garden-fruit: #c2493f;
+  --garden-flower: #b0539a;
+  --garden-soil: #9a7e62;
+  --garden-line: #b39a80;
+  --garden-edge: #5f5348;
+  --garden-sun-0: #b7b3a8;
+  --garden-sun-1: #f2e2a6;
+  --garden-sun-2: #f0c64e;
+  --garden-sun-3: #e5961f;
+  --garden-start: #52514e;
+  --garden-plant: #52514e;
+  --garden-harvest: #d98a2b;
+  --garden-frost: #2a78d6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -182,6 +199,21 @@
     --model-water-3: #3987e5;
     --model-water-4: #6da7ec;
     --model-water-5: #9ec5f4;
+    --garden-vegetable: #7fb865;
+    --garden-herb: #5bbfb2;
+    --garden-fruit: #e5786e;
+    --garden-flower: #d886c2;
+    --garden-soil: #5e4b3a;
+    --garden-line: #786250;
+    --garden-edge: #b3a595;
+    --garden-sun-0: #474641;
+    --garden-sun-1: #6d6137;
+    --garden-sun-2: #a3862c;
+    --garden-sun-3: #d6951f;
+    --garden-start: #c3c2b7;
+    --garden-plant: #c3c2b7;
+    --garden-harvest: #e8953a;
+    --garden-frost: #86b6ef;
   }
 }
 
@@ -711,6 +743,174 @@ html.map-full { overflow: hidden; }
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* The garden planner: the bed and its tools beside the plants and the one picked, and under them the bed's notes and
+   its calendar, side by side on a wide screen, one over the other on a narrow one. */
+.garden-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.garden-beds { display: flex; flex-wrap: wrap; gap: 4px; }
+.garden-note { margin-top: 8px; color: var(--text-secondary); font-size: 0.8125rem; }
+.garden h3 { margin: 0 0 6px; color: var(--text-secondary); font-size: 0.875rem; font-weight: 600; }
+.garden-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-areas: "bed side" "notes side";
+  grid-template-rows: auto 1fr;
+  gap: 16px 20px;
+  margin-top: 12px;
+}
+.garden-main { grid-area: bed; }
+.garden-side { grid-area: side; }
+.garden-bed-notes { grid-area: notes; }
+.garden-calendar { margin-top: 20px; }
+@media (max-width: 800px) {
+  .garden-body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "bed" "side" "notes"; grid-template-rows: auto; }
+}
+
+.garden-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.garden-tools[hidden], .garden-tools [hidden] { display: none; }
+.garden-tool-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.garden-tools > .garden-tool-group > button:not(.toggle), .card-actions button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.garden button:hover:not(:disabled) { background: var(--hover); }
+.garden button:disabled { opacity: 0.45; cursor: default; }
+.garden-compass { display: inline-flex; align-items: center; gap: 2px; color: var(--text-secondary); font-size: 0.75rem; font-weight: 600; }
+.garden-compass path { fill: currentColor; }
+
+.garden-plot { overflow-x: auto; }
+.garden-bed { display: block; touch-action: pan-y; }
+.garden-bed:focus { outline: none; }
+.garden-bed:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; border-radius: 4px; }
+.garden-bed .soil { fill: var(--garden-soil); stroke: var(--garden-line); stroke-width: 1; }
+.garden-bed .sun-0, .swatch.sun-0 { fill: var(--garden-sun-0); background: var(--garden-sun-0); }
+.garden-bed .sun-1, .swatch.sun-1 { fill: var(--garden-sun-1); background: var(--garden-sun-1); }
+.garden-bed .sun-2, .swatch.sun-2 { fill: var(--garden-sun-2); background: var(--garden-sun-2); }
+.garden-bed .sun-3, .swatch.sun-3 { fill: var(--garden-sun-3); background: var(--garden-sun-3); }
+.garden-bed [class^="sun-"] { stroke: var(--garden-line); stroke-width: 1; }
+.garden-bed .edging { fill: none; stroke: var(--garden-edge); stroke-width: 3; }
+/* Text over the soil or sun keeps a halo of the surface's color, so it reads on any of them. */
+.garden-bed text { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+.garden-bed .hours { fill: var(--text-primary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.garden-bed .label { fill: var(--text-primary); font-weight: 600; pointer-events: none; }
+.garden-bed .count { fill: var(--text-secondary); font-size: 10px; pointer-events: none; }
+.garden-bed .badge { fill: var(--status-warning); font-size: 12px; pointer-events: none; }
+.garden-bed .planting rect { fill: color-mix(in oklab, var(--kind) 30%, var(--surface)); stroke: var(--kind); stroke-width: 1.5; cursor: pointer; }
+.garden-bed .planting.over-sun rect { fill: color-mix(in oklab, var(--kind) 30%, transparent); fill-opacity: 0.35; }
+.garden-bed .planting .seed { fill: var(--kind); opacity: 0.3; pointer-events: none; }
+.garden-bed .planting.selected rect { stroke: var(--text-primary); stroke-width: 3; }
+.garden-bed .planting.lit rect { stroke: var(--text-primary); stroke-width: 2.5; stroke-dasharray: 5 3; }
+.garden-bed .planting.moving { opacity: 0.45; }
+.garden-bed .ghost { fill: none; stroke: var(--text-primary); stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+.garden-bed .ghost.misfit { stroke: var(--status-warning); }
+.garden-bed .cursor { fill: none; stroke: var(--text-primary); stroke-width: 2; pointer-events: none; }
+.kind-vegetable { --kind: var(--garden-vegetable); }
+.kind-herb { --kind: var(--garden-herb); }
+.kind-fruit { --kind: var(--garden-fruit); }
+.kind-flower { --kind: var(--garden-flower); }
+.garden-key { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.garden-key .swatch, .garden-calendar-key .swatch { width: 10px; height: 10px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--border); }
+.garden-key [class^="kind-"] .swatch { background: color-mix(in oklab, var(--kind) 30%, var(--surface)); box-shadow: inset 0 0 0 1.5px var(--kind); }
+.garden-status { min-height: 1.4em; margin-top: 4px; color: var(--text-secondary); font-size: 0.8125rem; }
+
+.garden-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.garden-filters input {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.875rem;
+}
+.garden-filters .segmented { display: flex; flex-wrap: wrap; gap: 4px; }
+.garden-plants { max-height: 340px; margin: 8px 0 0; padding: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; list-style: none; }
+.garden-plants li + li { border-top: 1px solid var(--border); }
+.garden-plants .empty { padding: 8px 10px; color: var(--text-muted); font-size: 0.8125rem; }
+.garden-plants button {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  column-gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+.garden-plants button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: -2px; }
+.garden-plants button[aria-pressed="true"] { background: var(--hover); box-shadow: inset 3px 0 0 var(--text-secondary); font-weight: 600; }
+.garden-plants .swatch { grid-row: span 2; align-self: center; width: 10px; height: 10px; border-radius: 3px; background: color-mix(in oklab, var(--kind) 30%, var(--surface)); box-shadow: inset 0 0 0 1.5px var(--kind); }
+.garden-plants .count { color: var(--text-muted); font-weight: 400; }
+.garden-plants .meta { grid-column: 2; color: var(--text-muted); font-size: 0.75rem; font-weight: 400; }
+
+.garden-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.875rem; }
+.garden-card .hint { color: var(--text-muted); }
+.garden-card .card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.garden-card h3 { margin: 0; color: var(--text-primary); font-size: 1rem; }
+.garden-card .meta { color: var(--text-muted); font-size: 0.8125rem; }
+.garden-card dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; margin: 8px 0; }
+.garden-card .row { display: contents; }
+.garden-card dt { color: var(--text-muted); }
+.garden-card dd { margin: 0; }
+.garden-card .tips, .garden-card .here { margin-top: 6px; color: var(--text-secondary); }
+.garden-card .garden-notes { margin-top: 6px; }
+.card-actions { display: flex; gap: 6px; margin-top: 10px; }
+
+.garden-notes { margin: 0; padding: 0; font-size: 0.875rem; list-style: none; }
+.garden-notes li { display: flex; gap: 6px; }
+.garden-notes li + li { margin-top: 4px; }
+.garden-notes .icon { flex: none; width: 1em; text-align: center; }
+.garden-notes .warn .icon { color: var(--status-warning); }
+.garden-notes .good .icon { color: var(--status-good); }
+.garden-notes .tip .icon { color: var(--text-muted); }
+.garden-notes .summary { color: var(--text-secondary); }
+.garden-water h3 { margin-top: 16px; }
+.garden-water p { margin-top: 4px; color: var(--text-secondary); font-size: 0.875rem; }
+.garden-water .system { margin-top: 8px; color: var(--text-primary); font-weight: 600; }
+.garden-water ul { margin: 2px 0 0; padding: 0; color: var(--text-secondary); font-size: 0.875rem; list-style: none; }
+.garden-water .amount { display: inline-block; min-width: 4.5em; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+.garden-calendar[hidden] { display: none; }
+.garden-calendar .plot { margin-top: 6px; }
+.garden-calendar-chart { display: block; }
+.garden-calendar-chart:focus { outline: none; }
+.garden-calendar-chart:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; border-radius: 4px; }
+.garden-calendar-chart .tick { fill: var(--text-muted); font-size: 11px; }
+.garden-calendar-chart .name { fill: var(--text-secondary); font-size: 12px; }
+.garden-calendar-chart .empty { fill: var(--text-muted); font-size: 12px; }
+.garden-calendar-chart .row-band { fill: transparent; }
+.garden-calendar-chart .lit .row-band { fill: var(--hover); }
+.garden-calendar-chart .month-line { stroke: var(--grid); }
+.garden-calendar-chart .frost-line { stroke: var(--garden-frost); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.garden-calendar-chart .today { stroke: var(--text-primary); stroke-width: 1.5; }
+.garden-calendar-chart .bar-start { fill: none; stroke: var(--garden-start); stroke-width: 1.5; }
+.garden-calendar-chart .bar-plant { fill: var(--garden-plant); }
+.garden-calendar-chart .bar-harvest { fill: var(--garden-harvest); }
+.garden-calendar-key .swatch.bar-start { background: none; box-shadow: inset 0 0 0 1.5px var(--garden-start); }
+.garden-calendar-key .swatch.bar-plant { background: var(--garden-plant); }
+.garden-calendar-key .swatch.bar-harvest { background: var(--garden-harvest); }
+.garden-calendar-key .swatch.frost-line { width: 12px; height: 0; border-top: 2px dashed var(--garden-frost); box-shadow: none; border-radius: 0; }
+.garden-calendar-key .swatch.today { width: 2px; height: 12px; background: var(--text-primary); box-shadow: none; border-radius: 0; }
+.garden-readout { left: 110px; }
+.garden-readout .row { line-height: 1.5; }
+.garden-upcoming { margin: 0; padding: 0; font-size: 0.875rem; list-style: none; }
+.garden-upcoming li + li { margin-top: 3px; }
+.garden-upcoming .when { display: inline-block; min-width: 9.5em; margin-right: 8px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.garden-upcoming .empty { color: var(--text-muted); }
+.garden .table-view { margin-top: 8px; }
+.garden .table-wrap th, .garden .table-wrap td { text-align: left; white-space: normal; }
 
 /* The home manual (manual.html): its sections, equipment cards, tasks and forms. */
 
