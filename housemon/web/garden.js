@@ -355,20 +355,26 @@ function renderPlanner() {
   if (!planner) return;
   const beds = gardenBeds();
   if (!beds.some((b) => b.name === planner.bed)) {
+    // The bed the address names (garden.html?bed=NAME, as a click on one in the house page's detailed view opens),
+    // else the one this viewer last looked at, else the first.
+    const asked = beds.find((b) => b.name === new URLSearchParams(location.search).get("bed"));
     let saved = null;
     try {
       saved = localStorage.getItem(GARDEN_BED_KEY);
     } catch {}
-    planner.bed = (beds.find((b) => b.name === saved) ?? beds[0])?.name ?? null;
+    planner.bed = (asked ?? beds.find((b) => b.name === saved) ?? beds[0])?.name ?? null;
     planner.selected = planner.moving = null;
+    if (asked) keepBed(asked.name);
   }
   renderButtons(planner.beds, beds.map((b) => [b.name, b.name, `${b.w} × ${b.d} ft${b.soil ? "" : ", mulch"}`]), planner.bed ?? "", (name) => {
     planner.bed = name;
     planner.selected = planner.moving = null;
     planner.cursor = [0, 0];
-    try {
-      localStorage.setItem(GARDEN_BED_KEY, name);
-    } catch {}
+    keepBed(name);
+    // The address follows, so a reload, or a bookmark, comes back to it.
+    const url = new URL(location.href);
+    url.searchParams.set("bed", name);
+    history.replaceState(null, "", url);
     renderPlanner();
   });
   const site = state.gardenSite;
@@ -390,6 +396,14 @@ function renderPlanner() {
   renderWater();
   drawCalendar();
   ensureSun(); // for the notes on sun, whether or not it's shown
+}
+
+// The bed this viewer last looked at, for the next time the page opens without one in its address.
+/** @param {string} name */
+function keepBed(name) {
+  try {
+    localStorage.setItem(GARDEN_BED_KEY, name);
+  } catch {}
 }
 
 // The house as it bears on the sun and water, as JSON: its rooms (but their readings), areas, walls, details and

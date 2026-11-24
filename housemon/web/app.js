@@ -58,6 +58,9 @@ const ROOM_HEIGHT = 8; // feet, floor to ceiling, for rooms without a plan, as i
 const MAP_HOME = { angle: 35, tilt: 30 }; // the 3D view's first angle, and where Reset goes back to
 const MAP_KEY_TURN = 15; // degrees the 3D view turns or tilts for a press of shift and an arrow key
 const MAP_KEY_ZOOM = 1.25; // times the detailed view zooms in, or out, for a press of plus or minus
+const MAP_OPEN_WAIT = 300; // ms a click on a planted bed waits to open it, for a second click, to zoom in on it instead
+// What a planted bed's readout says to do to open it in the garden planner, by what the map was last used with.
+const MAP_OPEN_HINT = { mouse: "Click to plan it in the garden planner", touch: "Tap again to plan it in the garden planner", key: "Enter to plan it in the garden planner" };
 // Where to try a room's label on a face of its box, as fractions across it: the middle first.
 const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
 
@@ -136,15 +139,16 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
  */
 /** @typedef {{x: number, y: number, apart: number}} Fingers two pointers' middle, and how far apart */
 /**
- * A drag on the map: two fingers panning and pinching, or one pointer turning and tilting it, or panning it.
+ * A drag on the map: two fingers panning and pinching, or one pointer turning and tilting it, or panning it; and for
+ * a press on a planted bed already focused, its key, to open it in the garden planner if it's let go without moving.
  * @typedef {{fingers: Fingers, moved: boolean} | {
  *   fingers?: undefined, x: number, y: number, last: {x: number, y: number}, angle: number, tilt: number,
- *   touch: boolean, pan: boolean, moved: boolean,
+ *   touch: boolean, pan: boolean, moved: boolean, open: string | null,
  * }} MapDrag
  */
 /**
  * The house map's elements, the layout it last drew, a drag on it, and the detailed view's WebGL, camera and the
- * part under the pointer.
+ * part under the pointer; what it was last used with, for what its readout says to do; and a bed about to open.
  * @typedef {{
  *   figure: HTMLElement, svg: SVGSVGElement, canvas: HTMLCanvasElement, note: HTMLParagraphElement,
  *   plot: HTMLDivElement, tooltip: HTMLDivElement, outside: HTMLDivElement, views: HTMLDivElement,
@@ -152,6 +156,7 @@ const LABEL_SPOTS = [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0
  *   list: HTMLDetailsElement, listWrap: HTMLDivElement, layout: MapLayout | null,
  *   drag: MapDrag | null, pointers: Map<number, {x: number, y: number}>, gl?: ReturnType<typeof modelGL>,
  *   camera?: ReturnType<typeof modelCamera> & {base: number}, pointer?: {key: string, x: number, y: number} | null,
+ *   input: "mouse" | "touch" | "key", opening: number,
  * }} HouseMap
  */
 /** @typedef {"plan" | "3d" | "model"} MapView */
@@ -1087,7 +1092,7 @@ function createMap() {
     list,
   );
   /** @type {HouseMap} */
-  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, coverage, turns, list, listWrap, layout: null, drag: null, pointers: new Map() };
+  const map = { figure, svg: root, canvas, note, plot, tooltip, outside, views, full, cuts, coverage, turns, list, listWrap, layout: null, drag: null, pointers: new Map(), input: /** @type {HouseMap["input"]} */ ("mouse"), opening: 0 };
   for (const surface of /** @type {(GlobalEventHandlers & Element)[]} */ ([root, canvas])) {
     surface.addEventListener("focus", () => setMapFocus(state.mapFocus ?? map.layout?.keys?.[0] ?? indoors()[0]?.id ?? null));
     surface.addEventListener("blur", () => setMapFocus(null));
@@ -1095,6 +1100,10 @@ function createMap() {
     // A drag turns and tilts the 3D and detailed views. In the detailed view, one with the right or middle button,
     // or with shift, pans it instead, and two fingers pan it and pinch to zoom it.
     surface.addEventListener("pointerdown", (event) => {
+      map.input = event.pointerType === "touch" ? "touch" : "mouse";
+      clearTimeout(map.opening); // the second press of a double-click
+      // A press on a planted bed already focused, by the pointer over it or a tap before, may open it.
+      const focused = state.mapFocus;
       mapPointerHover(event); // a tap on a phone
       if (state.mapView === "plan") return;
       const { clientX: x, clientY: y, pointerType, pointerId } = event;
@@ -1110,10 +1119,12 @@ function createMap() {
       if (map.pointers.size > 1) return;
       const pan = model && (event.button === 1 || event.button === 2 || event.shiftKey);
       // A touch drags only sideways, as up and down scrolls the page, but for full screen, where there's none to scroll.
-      map.drag = { x, y, last: { x, y }, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, pan, moved: false };
+      const open = event.button === 0 && !pan && focused === state.mapFocus && plantedBed(focused) ? focused : null;
+      map.drag = { x, y, last: { x, y }, angle: state.mapAngle, tilt: state.mapTilt, touch: pointerType === "touch" && !state.mapFull, pan, moved: false, open };
     });
     surface.addEventListener("pointermove", (event) => {
       const drag = map.drag;
+      if (!drag) map.input = event.pointerType === "touch" ? "touch" : "mouse";
       if (map.pointers.has(event.pointerId)) map.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (drag?.fingers) { // panning as far as their middle moves, zooming about it as far as they spread
         const now = fingers(map.pointers);
@@ -1143,18 +1154,26 @@ function createMap() {
     /** @param {PointerEvent} event */
     const lift = (event) => {
       map.pointers.delete(event.pointerId);
-      const moved = map.drag?.moved;
-      if (map.drag?.fingers || !map.pointers.size) map.drag = null;
+      const drag = map.drag;
+      const moved = drag?.moved;
+      if (drag?.fingers || !map.pointers.size) map.drag = null;
+      // A planted bed pressed and let go without moving opens in the garden planner, unless a second press follows.
+      const open = event.type === "pointerup" && !map.pointers.size && drag && !drag.fingers && !drag.moved ? drag.open : null;
+      if (open) map.opening = setTimeout(() => openBed(open), MAP_OPEN_WAIT);
       if (moved && !map.pointers.size) renderMapTooltip(); // back, beside the room's new place
     };
     surface.addEventListener("pointerup", lift);
     surface.addEventListener("pointercancel", lift);
-    surface.addEventListener("pointerleave", () => {
-      if (!map.drag && document.activeElement !== surface) setMapFocus(null);
+    // A pointer leaving lets go of what it was over, but not a finger lifted, which leaves as it lifts: a tap shows
+    // the readout of what it tapped (and only after it does the browser focus the map, from the mouse events it makes
+    // up for the tap, which would otherwise find nothing focused and fall back on the first room).
+    surface.addEventListener("pointerleave", (event) => {
+      if (event.pointerType !== "touch" && !map.drag && document.activeElement !== surface) setMapFocus(null);
     });
   }
   canvas.addEventListener("contextmenu", (event) => event.preventDefault()); // the right button pans
   canvas.addEventListener("dblclick", (event) => {
+    clearTimeout(map.opening); // a double-click on a planted bed zooms in on it, rather than opening it
     const box = canvas.getBoundingClientRect();
     const key = map.layout?.pick?.(event.clientX - box.left, event.clientY - box.top);
     zoomModel(key ? 1.75 : 0, key && /** @type {DrawnModelLayout} */ (map.layout).centerOf(key)); // on nothing, back out to the whole scene
@@ -1951,7 +1970,12 @@ function mapKey(event) {
   const turns = { ArrowLeft: [-MAP_KEY_TURN, 0], ArrowRight: [MAP_KEY_TURN, 0], ArrowUp: [0, MAP_KEY_TURN], ArrowDown: [0, -MAP_KEY_TURN] };
   /** @type {Record<string, number>} */
   const zooms = { "+": MAP_KEY_ZOOM, "=": MAP_KEY_ZOOM, "-": 1 / MAP_KEY_ZOOM, _: 1 / MAP_KEY_ZOOM };
+  state.map.input = "key";
   if (event.key === "Escape") return setMapFocus(null);
+  if (event.key === "Enter" && plantedBed(state.mapFocus)) {
+    event.preventDefault();
+    return openBed(/** @type {string} */ (state.mapFocus));
+  }
   if (event.key in zooms && state.mapView === "model" && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     return zoomModel(zooms[event.key]);
@@ -1975,10 +1999,28 @@ function setMapFocus(id) {
   if (state.map.layout) drawMapFocus();
 }
 
+// The planted bed a part of the detailed view is, one the garden planner plans (garden.js: in soil or mulch, and a
+// square foot at least), or null.
+/** @param {string | null} key */
+function plantedBed(key) {
+  const scene = state.mapView === "model" ? state.modelScene : null;
+  const ground = key && scene && !scene.note ? scene.grounds.find((g) => g.item.key === key) : null;
+  return ground && watered(ground) && Math.floor(ground.width + 1e-6) > 0 && Math.floor(ground.depth + 1e-6) > 0 ? ground : null;
+}
+
+// The garden planner's page, on a planted bed.
+/** @param {string} key */
+function openBed(key) {
+  const bed = plantedBed(key);
+  if (bed) location.href = `garden.html?${new URLSearchParams({ bed: bed.name })}`;
+}
+
 function renderMapTooltip() {
-  const { tooltip, layout, drag, plot } = state.map;
+  const { tooltip, layout, drag, plot, canvas, input } = state.map;
   const sensor = state.sensors.find((s) => s.id === state.mapFocus);
   const anchor = layout?.anchorOf ? layout.anchorOf(state.mapFocus) : sensor && layout?.anchors[sensor.id];
+  const bed = anchor && !drag?.moved ? plantedBed(state.mapFocus) : null;
+  canvas.classList.toggle("opens", Boolean(bed) && input === "mouse"); // a click on it opens it
   if (!anchor || drag?.moved) {
     tooltip.hidden = true;
     return;
@@ -1988,7 +2030,7 @@ function renderMapTooltip() {
   const box = item && state.litterBoxes.find((b) => b.name === item.name && item.kind === MODEL_KINDS["litter box"]);
   tooltip.replaceChildren(...(sensor
     ? roomReadout(sensor)
-    : [...modelReadout(/** @type {Item} */ (item)), ...(box ? litterBoxReadout(box) : [])]));
+    : [...modelReadout(/** @type {Item} */ (item)), ...(box ? litterBoxReadout(box) : []), ...(bed ? [el("div", { class: "hint" }, MAP_OPEN_HINT[input])] : [])]));
   tooltip.hidden = false;
   // Beside the room if there's room, else below it, else above it.
   const [w, h, gap] = [tooltip.offsetWidth, tooltip.offsetHeight, 8];
