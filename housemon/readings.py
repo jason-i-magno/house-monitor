@@ -53,6 +53,9 @@ class Area:
     name: str
     floor: str
     plan: Plan | tuple[Plan, ...]
+    # The room it's a part of, as a closet or half bath off it, which the 3D view draws it as: one shape with it,
+    # colored by its reading. The floor plan and the detailed view still draw it on its own.
+    part_of: str | None = None
 
 
 @dataclass(frozen=True)

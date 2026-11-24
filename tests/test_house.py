@@ -305,6 +305,22 @@ class PlacesTest(HouseTestCase):
                 elevations = {plan.elevation for place, plan in h.pieces if place.floor == floor}
                 self.assertLessEqual(max(elevations) - min(elevations), 1, floor)
 
+    def test_an_area_part_of_a_room_is_beside_it_on_its_floor(self):
+        # So the 3D view can draw them as one shape.
+        def touching(a, b):  # sharing a stretch of a side
+            (ax, ay, aw, ad), (bx, by, bw, bd) = rect(a), rect(b)
+            across = min(ax + aw, bx + bw) - max(ax, bx)
+            along = min(ay + ad, by + bd) - max(ay, by)
+            return (across > 0 and math.isclose(along, 0, abs_tol=1e-9)) or (along > 0 and math.isclose(across, 0, abs_tol=1e-9))
+
+        for h in self.each():
+            rooms = {room.sensor.name: room.sensor for room in h.rooms if room.sensor.plan}
+            for area in (q for q in h.places if getattr(q, "part_of", None)):
+                self.assertIn(area.part_of, rooms, area.name)
+                room = rooms[area.part_of]
+                self.assertEqual(area.floor, room.floor, area.name)
+                self.assertTrue(any(touching(a, r) for a in pieces(area.plan) for r in pieces(room.plan)), area.name)
+
     def test_every_room_named_is_in_the_house(self):
         for h in self.each():
             d = h.details
