@@ -41,6 +41,17 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--anthropic-sign-in` | | Ask for an Anthropic API key, check it, save it to `--anthropic`, and exit. |
 | `--allow-host` | | A name besides this computer's own the home manual and the garden's plans answer at, as one `tailscale serve` gives it. May be given more than once. |
 
+### Keeping it running
+
+On Linux it can run as a systemd user service, with `--host 0.0.0.0`, so it comes back after a crash or a reboot without a terminal left open:
+
+```sh
+make install-service    # install, enable at login, and (re)start, from this clone
+journalctl --user -u house-monitor -f
+```
+
+It runs from the clone you install it from, with that clone's `data/` and house file, as `python3 -m housemon` run there does. Run it again after pulling changes; it reinstalls and restarts. It stops at logout unless lingering is on (`loginctl enable-linger`), which also starts it at boot. Stop it (`systemctl --user stop house-monitor`) before running `python3 -m housemon` yourself, as both want port 8000. For other options, add them with `systemctl --user edit house-monitor`. `make uninstall-service` removes it. Without `make`, copy `contrib/systemd/house-monitor.service` to `~/.config/systemd/user/` and replace `@DIR@` and `@PYTHON@` with the clone's path and python3's.
+
 ## ecobee sensors
 
 A room with an ecobee thermostat or SmartSensor in it can show that sensor's readings in place of simulated ones. Sign in once; it asks for your ecobee email, password and, if your account has one, the code from your second factor:
