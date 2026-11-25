@@ -95,6 +95,18 @@ def main(argv: list[str] | None = None) -> None:
         help="the home manual's database: the house's equipment, its labels and manuals, and its maintenance (default: %(default)s)",
     )
     parser.add_argument(
+        "--anthropic",
+        type=Path,
+        default=Path("data") / "anthropic.json",
+        help="the saved Anthropic API key, for Claude in the home manual; ANTHROPIC_API_KEY takes its place when set"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--anthropic-sign-in",
+        action="store_true",
+        help="ask for an Anthropic API key, check it, save it to --anthropic, and exit",
+    )
+    parser.add_argument(
         "--allow-host",
         action="append",
         default=[],
@@ -109,6 +121,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    if args.anthropic_sign_in:
+        try:
+            manual.sign_in_interactively(args.anthropic)
+        except manual.ManualError as e:
+            raise SystemExit(f"Couldn't save the Anthropic key: {e}") from None
+        return
     if args.ecobee_sign_in:
         try:
             ecobee.sign_in_interactively(args.ecobee)
@@ -208,7 +226,7 @@ def main(argv: list[str] | None = None) -> None:
 
     args.manual.parent.mkdir(parents=True, exist_ok=True)
     home_manual = manual.Manual(args.manual)
-    assistant, assistant_problem = manual.assistant_from_environment()
+    assistant, assistant_problem = manual.assistant_from_environment(args.anthropic)
     server = HouseServer(
         (args.host, args.port),
         hub,

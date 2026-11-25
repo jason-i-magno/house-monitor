@@ -16,7 +16,7 @@ class MainTest(unittest.TestCase):
             none = str(Path(tmp) / "none")
             app = subprocess.Popen(
                 [sys.executable, "-m", "housemon", "--house", "housemon/example_house.py", "--db", str(db), "--port", "0",
-                 "--backfill-hours", "0", "--ecobee", none, "--whisker", none, "--mova", none, "--uplink", none, "--manual", str(manual)],
+                 "--backfill-hours", "0", "--ecobee", none, "--whisker", none, "--mova", none, "--uplink", none, "--manual", str(manual), "--anthropic", none],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             )
             try:

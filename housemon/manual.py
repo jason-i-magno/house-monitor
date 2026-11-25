@@ -536,14 +536,67 @@ def _describe(err: Exception) -> tuple[str, int]:
     return str(err), 502
 
 
-def assistant_from_environment() -> tuple[Assistant | None, str | None]:
-    """Claude, when the anthropic package is installed and there's an API key (ANTHROPIC_API_KEY), or an `ant auth
-    login` profile, which the SDK finds itself; else None and why, for the page."""
+def saved_key(path: Path | None) -> str | None:
+    """The API key --anthropic-sign-in saved (save_key), or None."""
+    if not path:
+        return None
+    try:
+        key = json.loads(Path(path).read_text()).get("api_key")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return key.strip() if isinstance(key, str) and key.strip() else None
+
+
+def save_key(path: Path, key: str) -> None:
+    """Keeps an API key in `path`, readable only by its owner, replacing the file whole, as the sign-ins are kept."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(path.name + ".part")
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as file:
+        json.dump({"api_key": key}, file)
+    os.replace(part, path)
+
+
+def check_key(key: str) -> None:
+    """Asks Anthropic whether it takes the key and has the model the manual uses (free: no tokens)."""
     try:
         import anthropic
     except ImportError:
-        return None, "Claude needs the anthropic package (pip install anthropic) and an API key in ANTHROPIC_API_KEY."
+        raise ManualError("Install the anthropic package first: pip install anthropic") from None
+    try:
+        anthropic.Anthropic(api_key=key).models.retrieve(MODEL)
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+        raise ManualError("Anthropic didn't accept that key.") from None
+    except anthropic.NotFoundError:
+        raise ManualError(f"Anthropic took the key, but {MODEL} isn't available to it.") from None
+    except anthropic.APIConnectionError:
+        raise ManualError("Couldn't reach Anthropic to check the key. Check the internet connection and try again.") from None
+    except anthropic.APIStatusError as e:
+        raise ManualError(f"Anthropic couldn't check the key: {e.message}") from None
+
+
+def sign_in_interactively(path: Path, ask_secret=None, check=check_key) -> None:
+    """Asks for an Anthropic API key, hidden as it's typed, checks Anthropic takes it, and saves it to `path`."""
+    import getpass
+
+    key = (ask_secret or getpass.getpass)("Anthropic API key (from platform.claude.com; hidden as you type or paste): ").strip()
+    if not key:
+        raise ManualError("No key given.")
+    check(key)
+    save_key(Path(path), key)
+    print(f"Saved to {path}, readable only by you. Restart the house monitor for the home manual to use Claude.")
+
+
+def assistant_from_environment(key_file: Path | None = None) -> tuple[Assistant | None, str | None]:
+    """Claude, when the anthropic package is installed and there's an API key: ANTHROPIC_API_KEY, else the one
+    --anthropic-sign-in saved to `key_file`, else an `ant auth login` profile, which the SDK finds itself; else None and
+    why, for the page."""
+    try:
+        import anthropic
+    except ImportError:
+        return None, "Claude needs the anthropic package (pip install anthropic) and an API key (python3 -m housemon --anthropic-sign-in)."
+    key = os.environ.get("ANTHROPIC_API_KEY") or saved_key(key_file)
     profile = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "anthropic"
-    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN") and not profile.exists():
-        return None, "Claude needs an API key: set ANTHROPIC_API_KEY and restart the house monitor."
-    return Assistant(anthropic.Anthropic()), None
+    if not key and not os.environ.get("ANTHROPIC_AUTH_TOKEN") and not profile.exists():
+        return None, "Claude needs an API key: run python3 -m housemon --anthropic-sign-in, then restart the house monitor."
+    return Assistant(anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()), None
