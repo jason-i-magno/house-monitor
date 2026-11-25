@@ -37,6 +37,8 @@ The first start fills an empty database with 24 hours of simulated history, so t
 | `--garden` | `data/garden.json` | Where the garden planner keeps what's planted in each bed. |
 | `--govee-scan` | | List the Govee sensors heard over Bluetooth, with their readings, and exit. |
 | `--manual` | `data/manual.sqlite3` | The [home manual](#home-manual)'s database. |
+| `--anthropic` | `data/anthropic.json` | The saved Anthropic API key, for Claude in the home manual. |
+| `--anthropic-sign-in` | | Ask for an Anthropic API key, check it, save it to `--anthropic`, and exit. |
 | `--allow-host` | | A name besides this computer's own the home manual and the garden's plans answer at, as one `tailscale serve` gives it. May be given more than once. |
 
 ## ecobee sensors
@@ -82,12 +84,14 @@ If you sign in to MOVAhome with Apple or Google, set a password in the app first
 
 `manual.html` (the Manual link at the top of the page) keeps the house's equipment: the furnace, the water heater, appliances, each with where it is, its brand, model and serial, photos of its label, its manuals as PDFs, and its maintenance, every so many months. Adding a piece of equipment can add its kind's usual maintenance (replacing a furnace's filter every 3 months, flushing a water heater every year, testing smoke alarms every month), and Coming up lists what's overdue, not done yet and due soon, each with Done today. Tasks for the house as a whole, like the gutters, go under House tasks. It's all kept in `data/manual.sqlite3` (gitignored, and readable only by you, as the sign-ins are), photos and PDFs included, and never sent to the cloud service.
 
-With Claude, adding equipment can start from a photo of its label, which Claude reads into the form for you to check; Suggest maintenance asks what else it needs, from its manual when it has one; and you can ask questions, about one piece of equipment (its manual and label go with the question) or the whole house. That takes the `anthropic` package and an API key:
+With Claude, adding equipment can start from a photo of its label, which Claude reads into the form for you to check; Suggest maintenance asks what else it needs, from its manual when it has one; and you can ask questions, about one piece of equipment (its manual and label go with the question) or the whole house. That takes the `anthropic` package and an API key from [platform.claude.com](https://platform.claude.com), saved once, readable only by you, as the sign-ins are:
 
 ```sh
 pip install anthropic
-ANTHROPIC_API_KEY=sk-ant-... python3 -m housemon
+python3 -m housemon --anthropic-sign-in   # asks for the key (hidden), checks it, saves it to data/anthropic.json
 ```
+
+`ANTHROPIC_API_KEY`, when set, takes its place.
 
 Without them everything else works, and the page says how to set Claude up. Only what you ask about is sent to Anthropic: a label's photo, or the question with the inventory and, for one piece of equipment, its manual and label.
 

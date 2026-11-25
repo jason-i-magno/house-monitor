@@ -7,12 +7,13 @@ import tempfile
 import threading
 import unittest
 from datetime import date
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
 from housemon.example_house import HOUSE
 from housemon.hub import Hub
-from housemon.manual import Assistant, Manual, ManualError, add_months, schedule
+from housemon.manual import Assistant, Manual, ManualError, add_months, save_key, saved_key, schedule, sign_in_interactively
 from housemon.readings import Area, Plan
 from housemon.server import HouseServer, known_host
 from housemon.store import Store
@@ -144,6 +145,40 @@ class PermissionsTest(unittest.TestCase):
             file.chmod(0o644)
         Manual(self.path).close()
         self.assertEqual(self.mode(self.path), 0o600)
+
+
+class KeyTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "anthropic.json"
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    @unittest.skipUnless(os.name == "posix", "file modes are POSIX's")
+    def test_a_saved_key_is_readable_only_by_its_owner_and_read_back(self):
+        save_key(self.path, "sk-ant-made-up")
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+        self.assertEqual(saved_key(self.path), "sk-ant-made-up")
+        self.assertIsNone(saved_key(Path(self.dir.name) / "none.json"))
+        self.path.write_text("not json")
+        self.assertIsNone(saved_key(self.path))
+
+    def test_signing_in_checks_the_key_before_saving_it(self):
+        checked = []
+        with mock.patch("builtins.print"):
+            sign_in_interactively(self.path, ask_secret=lambda _: "  sk-ant-made-up\n", check=checked.append)
+        self.assertEqual((checked, saved_key(self.path)), (["sk-ant-made-up"], "sk-ant-made-up"))
+
+        def refuse(key):
+            raise ManualError("Anthropic didn't accept that key.")
+
+        other = Path(self.dir.name) / "other.json"
+        with self.assertRaises(ManualError):
+            sign_in_interactively(other, ask_secret=lambda _: "sk-ant-wrong", check=refuse)
+        with self.assertRaises(ManualError):
+            sign_in_interactively(other, ask_secret=lambda _: "   ", check=checked.append)
+        self.assertFalse(other.exists())  # nothing saved unless it's taken
 
 
 class FakeClient:
