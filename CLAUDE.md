@@ -20,6 +20,7 @@ python3 -m housemon --anthropic-sign-in                  # an Anthropic API key 
 python3 -m housemon --uplink-sign-in                     # set up the uplink to the cloud service (it asks), save it to data/uplink.json
 python3 -m housemon --govee-scan                         # with bleak, list the Govee sensors heard over Bluetooth, with their readings
 python3 -m housemon --db :memory: --manual :memory: --port 0  # a throwaway run that writes nothing, the manual too
+make install-service                                     # run it from this clone, --host 0.0.0.0, as a systemd user service (journalctl --user -u house-monitor)
 npx -p typescript@7.0.2 tsc -p .                         # type-check app.js, model.js, garden.js and manual.js from their JSDoc, strict; builds nothing
 node tools/scan.mjs [house file]                         # faces in the detailed view that would flicker, no server needed
 node tools/scan.mjs --proposal NAME [house file]         # the same with a proposal shown in place of things as they are

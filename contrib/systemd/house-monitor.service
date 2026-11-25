@@ -1,0 +1,35 @@
+# A systemd user service that keeps house-monitor running: the readings, the home manual
+# and the garden planner, on every interface at port 8000, for a phone on the home network.
+#
+# `make install-service` installs it with @DIR@ replaced by the clone's path and @PYTHON@
+# by python3's. It reads and writes the clone's data/, and models the house file, as
+# `python3 -m housemon` run there does. For other options (`--port`, `--allow-host`),
+# add an override with `systemctl --user edit house-monitor`.
+#
+#   systemctl --user stop house-monitor      # before running `python3 -m housemon` yourself
+#   journalctl --user -u house-monitor -f    # its output
+
+[Unit]
+Description=house-monitor: room readings, home manual and garden planner over HTTP
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=@DIR@
+# --host 0.0.0.0: reachable from a phone. There is no login, so keep it off the internet.
+ExecStart=@PYTHON@ -m housemon --host 0.0.0.0
+# Python buffers stdout when it isn't a terminal; this sends output to the journal as it happens.
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10s
+# housemon stops on SIGTERM.
+TimeoutStopSec=10s
+
+# The filesystem sandboxing options need user namespaces in a user service, which some
+# distributions restrict, so they would stop the unit starting there. NoNewPrivileges
+# needs nothing.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
