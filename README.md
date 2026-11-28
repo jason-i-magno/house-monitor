@@ -1,4 +1,4 @@
-# house-monitor
+# <img src="housemon/web/logo.svg" alt="" width="40" align="top"> house-monitor
 
 [![CI](https://github.com/jason-i-magno/house-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/jason-i-magno/house-monitor/actions/workflows/ci.yml)
 
