@@ -3,7 +3,7 @@
 //
 //	GET  /                                the default house, if there is one
 //	GET  /houses/{house}/                 the page, and its app.js, model.js and style.css, and the garden planner's
-//	                                      garden.html, garden.js and plants.json, and the home manual's page
+//	                                      garden.html, garden.js and plants.json, the home manual's page, and logo.svg
 //	GET  /houses/{house}/api/sensors      the house and each sensor's latest reading
 //	GET  /houses/{house}/api/history      bucketed history, ?hours=24&simulated=0
 //	GET  /houses/{house}/api/stream       new readings, as Server-Sent Events
@@ -414,6 +414,8 @@ var assetTypes = map[string]string{
 	// The home manual's page; its API stays at the house, so in the cloud it says to open it there.
 	"manual.html": "text/html; charset=utf-8",
 	"manual.js":   "text/javascript; charset=utf-8",
+	// The pages' icon.
+	"logo.svg": "image/svg+xml",
 }
 
 func loadAssets(page fs.FS) (map[string]asset, error) {

@@ -10,12 +10,12 @@ import (
 
 // The files the Python server serves, as its STATIC whitelist in housemon/server.py lists them.
 //
-//go:embed housemon/web/index.html housemon/web/app.js housemon/web/model.js housemon/web/garden.html housemon/web/garden.js housemon/web/plants.json housemon/web/style.css housemon/web/manual.html housemon/web/manual.js
+//go:embed housemon/web/index.html housemon/web/app.js housemon/web/model.js housemon/web/garden.html housemon/web/garden.js housemon/web/plants.json housemon/web/style.css housemon/web/manual.html housemon/web/manual.js housemon/web/logo.svg
 var web embed.FS
 
 // Web is the page: index.html, app.js, model.js and style.css; the garden planner's garden.html, garden.js and
 // plants.json, which in the cloud keeps its plans in the browser; and the home manual's manual.html and manual.js,
-// which in the cloud says the manual is kept at the house (its API is the house's own).
+// which in the cloud says the manual is kept at the house (its API is the house's own); and logo.svg, their icon.
 func Web() fs.FS {
 	page, err := fs.Sub(web, "housemon/web")
 	if err != nil {

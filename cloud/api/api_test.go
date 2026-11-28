@@ -120,6 +120,7 @@ func TestServesThePageUnderEachHouse(t *testing.T) {
 	files := map[string]string{
 		"app.js": "text/javascript", "model.js": "text/javascript", "style.css": "text/css",
 		"garden.html": "text/html", "garden.js": "text/javascript", "plants.json": "application/json",
+		"logo.svg": "image/svg+xml",
 	}
 	for file, kind := range files {
 		resp, body := f.get("/houses/example/" + file)

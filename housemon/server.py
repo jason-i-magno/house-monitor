@@ -33,6 +33,7 @@ STATIC = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/manual.html": ("manual.html", "text/html; charset=utf-8"),
     "/manual.js": ("manual.js", "text/javascript; charset=utf-8"),
+    "/logo.svg": ("logo.svg", "image/svg+xml"),
 }
 KEEPALIVE = 15.0  # seconds between comments on an idle stream, so nothing in between closes it
 MAX_HISTORY_HOURS = 24 * 366
