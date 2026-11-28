@@ -977,6 +977,7 @@ a.toggle { color: var(--text-secondary); text-decoration: none; }
 .task-main { display: grid; min-width: 0; }
 .task-title { font-weight: 500; }
 .task-meta { color: var(--text-secondary); font-size: 0.8125rem; }
+.task-notes { max-width: 70ch; margin-top: 2px; color: var(--text-secondary); font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task.later .task-title { font-weight: 400; }
 .task-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 10px; }
 /* In an equipment card, narrower: the task on a row of its own, then how often, when last done, and the button. */
