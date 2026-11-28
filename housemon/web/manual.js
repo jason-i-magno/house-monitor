@@ -162,7 +162,7 @@ function standing(task) {
 }
 
 /**
- * One task: its status, title and what it's for, Done today, and where it's managed, Delete.
+ * One task: its status, title and what it's for, its notes, Done today, and where it's managed, Delete.
  * @param {Task} task
  * @param {{ owner?: string, deletable?: boolean }} [options] what it's for, in Coming up
  */
@@ -173,7 +173,8 @@ function taskRow(task, options = {}) {
       el("span", { class: "task-title" }, task.title),
       el("span", { class: "task-meta" },
         task.status === "overdue" ? el("span", { class: "icon", "aria-hidden": "true" }, "⚠ ") : null,
-        [words, options.owner, everyText(task.every_months), task.last_done && `last done ${dateText(task.last_done)}`].filter(Boolean).join(" · "))),
+        [words, options.owner, everyText(task.every_months), task.last_done && `last done ${dateText(task.last_done)}`].filter(Boolean).join(" · ")),
+      task.notes && el("span", { class: "task-notes" }, task.notes)),
     el("span", { class: "task-actions" },
       actionButton("Done today", `done:${task.id}`, () => api("/task-done", { id: task.id }), { doing: "Saving…" }),
       options.deletable && deleteButton("Delete", `task-delete:${task.id}`, () => api("/task-delete", { id: task.id }))));
