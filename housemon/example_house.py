@@ -219,6 +219,7 @@ DETAILS = Details(
         Ground("Patio", "patio", 0, -10, 14, 10, paving="flagstone"),
         Ground("Flower bed", "bed", 0, 28, 26, 3, height=0.75, paving="mulch", edging="stone"),  # raised, along the front
         Ground("Vegetable bed", "bed", 26, -28, 12, 4, height=1, paving="dirt", edging="metal"),  # in the back yard's sun
+        Ground("Herb bed", "bed", 28, -34, 8, 4, height=1, paving="dirt", edging="metal"),  # behind it, a path between
         # From the side gate to the patio.
         Ground("Gravel path", "walk", -12, -10, 12, 30, paving="gravel", outline=((-12, 20), (-8, 20), (0, -6), (0, -10))),
     ),

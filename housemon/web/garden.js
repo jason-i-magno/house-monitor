@@ -42,8 +42,9 @@ export {};
  */
 /**
  * The planner: its elements; the plants, by id and in order; each bed's plantings, by name, and where they're saved;
- * the bed shown; the brush (a plant's id, "remove", or null), the planting selected and one being moved, by index;
- * the keyboard's square; the palette's filters; each bed's undo steps; the sun worked out for each bed, each month
+ * the bed shown, and its tools, card and notes are for, of those drawn with it; the brush (a plant's id, "remove", or
+ * null), the planting selected, by index, and one being moved, by its bed and index; the keyboard's square; the
+ * palette's filters; the steps to undo, each beds' plantings as they were before it; the sun worked out for each bed, each month
  * April to October a list of hours a square, and the month shown, and each season's scene for rays to be cast in;
  * the scenes the water's worked out from (both for
  * the house as it was then, its details and garden as JSON); the pointer's drag; the calendar's row in the readout;
@@ -54,16 +55,16 @@ export {};
  *   soon: HTMLButtonElement, list: HTMLElement, card: HTMLElement, notes: HTMLElement, water: HTMLElement,
  *   calendar: HTMLElement, calendarSvg: SVGSVGElement, readout: HTMLElement, upcoming: HTMLElement,
  *   table: HTMLElement, sunButton: HTMLButtonElement, months: HTMLElement, removeButton: HTMLButtonElement,
- *   undoButton: HTMLButtonElement, clearButton: HTMLButtonElement, compass: HTMLElement,
+ *   undoButton: HTMLButtonElement, clearButton: HTMLButtonElement, compass: HTMLElement, notesTitle: HTMLElement,
  *   plants: Map<string, Plant>, catalog: Plant[], plans: Record<string, Planting[]>, store: "server" | "browser" | null,
- *   bed: string | null, brush: string | null, selected: number | null, moving: number | null,
- *   cursor: [number, number], kind: string, onlySoon: boolean, undo: Record<string, Planting[][]>,
+ *   bed: string | null, brush: string | null, selected: number | null, moving: {bed: string, k: number} | null,
+ *   cursor: [number, number], kind: string, onlySoon: boolean, undo: {bed: string, before: Planting[]}[][],
  *   sun: Map<string, Float32Array[] | "working">, sunFor: string | null, sunMonth: number, showSun: boolean,
  *   casters: Map<Season, (o: number[], dir: number[]) => boolean>,
  *   scenes: Map<string, Scene | NoScene>, scenesFor: string | null, row: number | null,
- *   drag: {x: number, y: number, at: number, dx: number, dy: number, moved: boolean, paint: string | null,
- *     painted: Set<string>, changed: boolean, before: Planting[]} | null,
- *   ghost: {x: number, y: number, size: number} | null, saving: Map<string, number>, error: string | null,
+ *   drag: {x: number, y: number, from: string, at: number, dx: number, dy: number, moved: boolean, paint: string | null,
+ *     painted: Set<string>, before: Map<string, Planting[]>} | null,
+ *   ghost: {bed: string, x: number, y: number, size: number} | null, saving: Map<string, number>, error: string | null,
  *   highlight: number[],
  * }} Planner
  */
@@ -80,6 +81,7 @@ const GARDEN_SUN_KEY = ["Under 4 h", "4–6 h", "6–8 h", "8 h or more"];
 const GARDEN_SOON = 6; // weeks ahead "Plant soon" looks
 const GARDEN_STEP = 0.25; // hours between the sun's positions as it's worked out
 const GARDEN_UNDO = 50;
+const GARDEN_TOGETHER = 6; // ft at most between beds drawn and planted together, as with a path between them
 const DAY = 86400000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -194,6 +196,7 @@ function createPlanner() {
   const list = el("ul", { class: "garden-plants", "aria-label": "Plants" });
   const card = el("div", { class: "garden-card" });
   const notes = el("ul", { class: "garden-notes" });
+  const notesTitle = el("h3", {}, "This bed");
   const water = el("div", { class: "garden-water" });
   const calendarSvg = svg("svg", { class: "garden-calendar-chart", tabindex: 0, role: "img" });
   const readout = el("div", { class: "tooltip garden-readout", hidden: "" });
@@ -211,14 +214,14 @@ function createPlanner() {
     el("div", { class: "garden-body" },
       el("div", { class: "garden-main" }, tools, plot, key, status),
       el("div", { class: "garden-side" }, el("div", { class: "garden-filters" }, search, kinds, soon), list, card),
-      el("div", { class: "garden-bed-notes" }, el("h3", {}, "This bed"), notes, water)),
+      el("div", { class: "garden-bed-notes" }, notesTitle, notes, water)),
     calendar);
   /** @type {Planner} */
   const planner = {
     root, beds, note, tools, plot, svg: svgNode, key, status, search, kinds, soon, list, card, notes, water, calendar,
     calendarSvg, readout, upcoming, table, sunButton, months, removeButton, undoButton, clearButton, compass: compassNode,
-    plants: new Map(), catalog: [], plans: {}, store: null, bed: null, brush: null,
-    selected: null, moving: null, cursor: [0, 0], kind: "", onlySoon: false, undo: {}, sun: new Map(), casters: new Map(),
+    notesTitle, plants: new Map(), catalog: [], plans: {}, store: null, bed: null, brush: null,
+    selected: null, moving: null, cursor: [0, 0], kind: "", onlySoon: false, undo: [], sun: new Map(), casters: new Map(),
     sunFor: null,
     sunMonth: Math.min(9, Math.max(3, new Date().getMonth())), showSun: false, scenes: new Map(), scenesFor: null,
     row: null, drag: null, ghost: null, saving: new Map(), error: null, highlight: [],
@@ -333,9 +336,44 @@ function gardenBeds() {
 }
 
 function currentBed() {
-  const planner = state.planner;
+  return bedNamed(state.planner.bed);
+}
+
+/** @param {string | null} name */
+function bedNamed(name) {
+  return gardenBeds().find((b) => b.name === name) ?? null;
+}
+
+// The beds drawn: the one shown and those lying together with it, as a vegetable garden's do, each within
+// GARDEN_TOGETHER of another of them, planted together; for a bed on its own, just it.
+function shownBeds() {
   const beds = gardenBeds();
-  return beds.find((b) => b.name === planner.bed) ?? null;
+  const bed = beds.find((b) => b.name === state.planner.bed);
+  if (!bed) return [];
+  /** @param {Bed} a @param {Bed} b */
+  const gap = (a, b) => Math.hypot(
+    Math.max(0, b.ground.x - (a.ground.x + a.w), a.ground.x - (b.ground.x + b.w)),
+    Math.max(0, b.ground.y - (a.ground.y + a.d), a.ground.y - (b.ground.y + b.d)));
+  const together = [bed];
+  for (let i = 0; i < together.length; i++) {
+    for (const b of beds) if (!together.includes(b) && gap(together[i], b) <= GARDEN_TOGETHER) together.push(b);
+  }
+  return beds.filter((b) => together.includes(b));
+}
+
+// A bed made the one shown, that its tools, card and notes are for, and the address names.
+/** @param {string} name */
+function pickBed(name) {
+  const planner = state.planner;
+  if (planner.bed === name) return;
+  planner.bed = name;
+  planner.selected = null;
+  planner.cursor = [0, 0];
+  keepBed(name);
+  // The address follows, so a reload, or a bookmark, comes back to it.
+  const url = new URL(location.href);
+  url.searchParams.set("bed", name);
+  history.replaceState(null, "", url);
 }
 
 /** @param {string} [bed] */
@@ -364,17 +402,13 @@ function renderPlanner() {
     } catch {}
     planner.bed = (asked ?? beds.find((b) => b.name === saved) ?? beds[0])?.name ?? null;
     planner.selected = planner.moving = null;
+    planner.ghost = null;
     if (asked) keepBed(asked.name);
   }
   renderButtons(planner.beds, beds.map((b) => [b.name, b.name, `${b.w} × ${b.d} ft${b.soil ? "" : ", mulch"}`]), planner.bed ?? "", (name) => {
-    planner.bed = name;
-    planner.selected = planner.moving = null;
-    planner.cursor = [0, 0];
-    keepBed(name);
-    // The address follows, so a reload, or a bookmark, comes back to it.
-    const url = new URL(location.href);
-    url.searchParams.set("bed", name);
-    history.replaceState(null, "", url);
+    planner.moving = null;
+    planner.ghost = null;
+    pickBed(name);
     renderPlanner();
   });
   const site = state.gardenSite;
@@ -427,8 +461,8 @@ function renderPalette() {
   const planner = state.planner;
   planner.soon.setAttribute("aria-pressed", String(planner.onlySoon));
   const words = planner.search.value.trim().toLowerCase();
-  const counts = new Map();
-  for (const p of plantingsOf()) counts.set(p.plant, (counts.get(p.plant) ?? 0) + plantOf(p.plant).perSquare);
+  const counts = new Map(); // in the beds drawn
+  for (const bed of shownBeds()) for (const p of plantingsOf(bed.name)) counts.set(p.plant, (counts.get(p.plant) ?? 0) + plantOf(p.plant).perSquare);
   const shown = planner.catalog.filter((p) => (!planner.kind || p.kind === planner.kind)
     && (!words || `${p.name} ${p.family}`.toLowerCase().includes(words))
     && (!planner.onlySoon || plantSoon(p)));
@@ -437,7 +471,7 @@ function renderPalette() {
     const count = counts.get(p.id);
     const button = el("button", { type: "button", "aria-pressed": String(planner.brush === p.id), class: `kind-${p.kind}`, "data-plant": p.id },
       el("span", { class: "swatch", "aria-hidden": "true" }),
-      el("span", { class: "name" }, p.name, ...(count ? [el("span", { class: "count" }, ` · ${count} in bed`)] : [])),
+      el("span", { class: "name" }, p.name, ...(count ? [el("span", { class: "count" }, ` · ${count} planted`)] : [])),
       el("span", { class: "meta" }, `${roomText(p, true)} · sun ${p.sun[0]}+ h · water ${p.water}`));
     button.addEventListener("click", () => setBrush(planner.brush === p.id ? null : p.id));
     return el("li", {}, button);
@@ -492,7 +526,7 @@ function renderTools() {
     drawBed();
   });
   planner.removeButton.setAttribute("aria-pressed", String(planner.brush === "remove"));
-  planner.undoButton.disabled = !(planner.undo[bed.name] ?? []).length;
+  planner.undoButton.disabled = !planner.undo.length;
   planner.clearButton.disabled = !plantingsOf().length;
   planner.compass.hidden = !site;
   if (site) {
@@ -504,45 +538,69 @@ function renderTools() {
   }
 }
 
-// --- The bed: its squares, plantings, sun, and the keyboard's square
+// --- The beds: their squares, plantings, sun, and the keyboard's square
 
-/** @typedef {{cell: number, cols: number, rows: number, turned: boolean, bed: Bed}} BedLayout */
+/**
+ * How the beds shown are drawn: as they lie, in a plot w by d feet across them all, each bed's back-left corner ox,
+ * oy feet into it, and each square foot cell px on a side; across, or on a narrow screen turned to run down the page;
+ * and top px over them, for the beds' names, where there's more than one.
+ * @typedef {{cell: number, turned: boolean, w: number, d: number, top: number, beds: {bed: Bed, ox: number, oy: number}[]}} BedLayout
+ */
 
-// How the bed is drawn: its long side across, or on a narrow screen, turned so it runs down the page.
-/** @param {Bed} bed @returns {BedLayout} */
-function bedLayout(bed) {
+// How the beds are drawn: their long side across, or on a narrow screen, turned so they run down the page.
+/** @param {Bed[]} [beds] @returns {BedLayout} */
+function bedLayout(beds = shownBeds()) {
+  const x0 = Math.min(...beds.map((b) => b.ground.x));
+  const y0 = Math.min(...beds.map((b) => b.ground.y));
+  const w = Math.max(...beds.map((b) => b.ground.x + b.w)) - x0;
+  const d = Math.max(...beds.map((b) => b.ground.y + b.d)) - y0;
   const width = Math.max(200, state.planner.plot.clientWidth || 600);
-  const across = Math.min(GARDEN_CELL[1], Math.floor(width / bed.w));
-  const down = Math.min(GARDEN_CELL[1], Math.floor(width / bed.d));
+  const across = Math.min(GARDEN_CELL[1], Math.floor(width / w));
+  const down = Math.min(GARDEN_CELL[1], Math.floor(width / d));
   const turned = across < 40 && down > across;
-  const cell = Math.max(turned ? Math.min(down, GARDEN_CELL[1]) : across, 16);
-  return turned ? { cell, cols: bed.d, rows: bed.w, turned, bed } : { cell, cols: bed.w, rows: bed.d, turned, bed };
+  const cell = Math.max(turned ? down : across, 16);
+  return { cell, turned, w, d, top: beds.length > 1 ? 18 : 0, beds: beds.map((bed) => ({ bed, ox: bed.ground.x - x0, oy: bed.ground.y - y0 })) };
 }
 
-// A square of the bed, x along it and y from its back, to its column and row as drawn, and back. Turned, the bed's
-// back is on the right and its left end at the top, as if turned a quarter clockwise.
-/** @param {BedLayout} L @param {number} x @param {number} y @returns {[number, number]} */
-function toScreen(L, x, y) {
-  return L.turned ? [L.bed.d - 1 - y, x] : [x, y];
+// A point of the plot, in feet from its back-left corner, to px as drawn, and back. Turned, its back is on the right
+// and its left end at the top, as if turned a quarter clockwise.
+/** @param {BedLayout} L @param {number} px @param {number} py @returns {[number, number]} */
+function toScreen(L, px, py) {
+  return L.turned ? [(L.d - py) * L.cell, px * L.cell + L.top] : [px * L.cell, py * L.cell + L.top];
 }
-/** @param {BedLayout} L @param {number} col @param {number} row @returns {[number, number]} */
-function fromScreen(L, col, row) {
-  return L.turned ? [row, L.bed.d - 1 - col] : [col, row];
+/** @param {BedLayout} L @param {number} sx @param {number} sy @returns {[number, number]} */
+function fromScreen(L, sx, sy) {
+  return L.turned ? [(sy - L.top) / L.cell, L.d - sx / L.cell] : [sx / L.cell, (sy - L.top) / L.cell];
 }
 // A direction on the plan as drawn.
 /** @param {number[]} v */
 function toScreenVector([vx, vy]) {
-  const bed = currentBed();
-  const turned = bed ? bedLayout(bed).turned : false;
+  const turned = currentBed() ? bedLayout().turned : false;
   return turned ? [-vy, vx] : [vx, vy];
 }
 
-// A planting's squares, as drawn: its left column, top row, and how many squares it takes on a side.
-/** @param {BedLayout} L @param {Planting} p */
-function screenBox(L, p) {
-  const size = plantOf(p.plant).size;
-  const corners = [toScreen(L, p.x, p.y), toScreen(L, p.x + size - 1, p.y + size - 1)];
-  return { col: Math.min(corners[0][0], corners[1][0]), row: Math.min(corners[0][1], corners[1][1]), size };
+// A stretch of the plot, from one corner to the one across, as drawn: its left, top, width and height in px.
+/** @param {BedLayout} L @param {number} x0 @param {number} y0 @param {number} x1 @param {number} y1 */
+function screenRect(L, x0, y0, x1, y1) {
+  const [a, b] = [toScreen(L, x0, y0), toScreen(L, x1, y1)];
+  return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) };
+}
+
+// Squares of a bed, from x along it and y from its back, size on a side, as drawn.
+/** @param {BedLayout} L @param {string} bed @param {number} x @param {number} y @param {number} [size] */
+function squaresRect(L, bed, x, y, size = 1) {
+  const { ox, oy } = /** @type {BedLayout["beds"][number]} */ (L.beds.find((b) => b.bed.name === bed));
+  return screenRect(L, ox + x, oy + y, ox + x + size, oy + y + size);
+}
+
+// The bed and square at a point of the plot, in feet, or null between the beds.
+/** @param {BedLayout} L @param {number} px @param {number} py @returns {{bed: string, at: [number, number]} | null} */
+function plotSquare(L, px, py) {
+  for (const { bed, ox, oy } of L.beds) {
+    const [x, y] = [Math.floor(px - ox), Math.floor(py - oy)];
+    if (x >= 0 && y >= 0 && x < bed.w && y < bed.d) return { bed: bed.name, at: [x, y] };
+  }
+  return null;
 }
 
 function drawBed() {
@@ -555,83 +613,99 @@ function drawBed() {
     planner.key.replaceChildren();
     return;
   }
-  const L = bedLayout(bed);
+  const L = bedLayout();
   const { cell } = L;
-  const [W, H] = [L.cols * cell, L.rows * cell];
+  const [W, H] = L.turned ? [L.d * cell, L.w * cell + L.top] : [L.w * cell, L.d * cell + L.top];
   root.setAttribute("width", String(W + 4));
   root.setAttribute("height", String(H + 4));
   root.setAttribute("viewBox", `-2 -2 ${W + 4} ${H + 4}`);
-  root.setAttribute("aria-label", `${bed.name}, ${bed.w} by ${bed.d} feet${L.turned ? ", turned to run down the page" : ""}. Arrow keys move between squares; Enter plants or picks, Delete takes out, M moves the plant picked, Escape lets go.`);
-  const plantings = plantingsOf();
-  const sun = planner.showSun ? sunHours(bed, planner.sunMonth) : null;
-  const notes = bedNotes(bed, plantings);
-  const warned = new Set(notes.filter((n) => n.level === "warn").flatMap((n) => n.at));
-  // The soil, a square a foot, shaded by its sun when that's shown.
-  const ground = svg("g", { class: "squares" });
-  for (let col = 0; col < L.cols; col++) {
-    for (let row = 0; row < L.rows; row++) {
-      const [x, y] = fromScreen(L, col, row);
-      const hours = sun ? sun[y * bed.w + x] : null;
-      const bin = hours == null ? null : GARDEN_SUN_BINS.filter((b) => hours >= b).length;
-      ground.append(svg("rect", { x: col * cell, y: row * cell, width: cell, height: cell, class: bin == null ? "soil" : `sun-${bin}` }));
-      if (hours != null) {
-        const text = svg("text", { x: col * cell + 4, y: row * cell + 12, class: "hours" });
-        text.textContent = hours.toFixed(1);
-        ground.append(text);
+  const others = L.beds.filter((b) => b.bed.name !== bed.name).map((b) => b.bed.name);
+  root.setAttribute("aria-label", `${bed.name}, ${bed.w} by ${bed.d} feet${others.length ? `, drawn with ${listText(others)}, as they lie` : ""}${L.turned ? ", turned to run down the page" : ""}. Arrow keys move between squares${others.length ? ", and on into the next bed" : ""}; Enter plants or picks, Delete takes out, M moves the plant picked, Escape lets go.`);
+  const rects = L.beds.map(({ bed: b, ox, oy }) => screenRect(L, ox, oy, ox + b.w, oy + b.d));
+  L.beds.forEach(({ bed: b }, n) => {
+    const active = b.name === bed.name;
+    const box = rects[n];
+    const plantings = plantingsOf(b.name);
+    const sun = planner.showSun ? sunHours(b, planner.sunMonth) : null;
+    const warned = new Set(bedNotes(b, plantings).filter((note) => note.level === "warn").flatMap((note) => note.at));
+    // Its name over it, where there's room, among several; the one shown's in bold, and its edging marked too.
+    if (others.length) {
+      const over = rects.filter((r, m) => m !== n && r.y + r.height <= box.y + 0.5 && r.x < box.x + box.width && box.x < r.x + r.width);
+      if (box.y - Math.max(0, ...over.map((r) => r.y + r.height)) >= 16) {
+        const name = svg("text", { x: box.x, y: box.y - 5, class: `bed-name${active ? " active" : ""}` });
+        name.textContent = b.name;
+        root.append(name);
       }
     }
-  }
-  root.append(ground, svg("rect", { x: 0, y: 0, width: W, height: H, class: "edging" }));
-  // The plantings, each a tile over its squares: its name, how many it holds, and a warning sign if a note warns of it.
-  plantings.forEach((p, k) => {
-    const plant = plantOf(p.plant);
-    const { col, row, size } = screenBox(L, p);
-    const [x, y, s] = [col * cell, row * cell, size * cell];
-    const classes = ["planting", `kind-${plant.kind}`, k === planner.selected && "selected", planner.highlight.includes(k) && "lit", planner.moving === k && "moving", sun && "over-sun"];
-    const g = svg("g", { class: classes.filter((c) => c).join(" ") });
-    const title = svg("title");
-    title.textContent = `${plant.name}${plant.perSquare > 1 ? `, ${plant.perSquare} in this square` : ""}`;
-    g.append(title, svg("rect", { x: x + 2, y: y + 2, width: s - 4, height: s - 4, rx: 6 }));
-    if (plant.perSquare > 1 && !sun) {
-      const n = Math.ceil(Math.sqrt(plant.perSquare));
-      for (let i = 0; i < plant.perSquare; i++) {
-        const [cx, cy] = [x + ((i % n) + 0.5) * (s / n), y + (Math.floor(i / n) + 0.5) * (s / n)];
-        g.append(svg("circle", { cx, cy, r: Math.max(1.5, s / n / 7), class: "seed" }));
+    // The soil, a square a foot, shaded by its sun when that's shown.
+    const ground = svg("g", { class: "squares" });
+    for (let x = 0; x < b.w; x++) {
+      for (let y = 0; y < b.d; y++) {
+        const r = squaresRect(L, b.name, x, y);
+        const hours = sun ? sun[y * b.w + x] : null;
+        const bin = hours == null ? null : GARDEN_SUN_BINS.filter((h) => hours >= h).length;
+        ground.append(svg("rect", { x: r.x, y: r.y, width: cell, height: cell, class: bin == null ? "soil" : `sun-${bin}` }));
+        if (hours != null) {
+          const text = svg("text", { x: r.x + 4, y: r.y + 12, class: "hours" });
+          text.textContent = hours.toFixed(1);
+          ground.append(text);
+        }
       }
     }
-    const lines = tileLines(plant.name, s - 8, size > 1 ? 3 : 2, cell < 44 ? 10 : 11);
-    const text = svg("text", { x: x + s / 2, y: y + s / 2 - ((lines.length - 1) * 12) / 2 + 4, class: "label", "text-anchor": "middle", "font-size": cell < 44 ? 10 : 11 });
-    lines.forEach((line, i) => {
-      const span = svg("tspan", { x: x + s / 2, dy: i ? 12 : 0 });
-      span.textContent = line;
-      text.append(span);
+    root.append(ground, svg("rect", { ...box, class: `edging${active && others.length ? " active" : ""}` }));
+    // The plantings, each a tile over its squares: its name, how many it holds, and a warning sign if a note warns of it.
+    plantings.forEach((p, k) => {
+      const plant = plantOf(p.plant);
+      const size = plant.size;
+      const r = squaresRect(L, b.name, p.x, p.y, size);
+      const [x, y, s] = [r.x, r.y, size * cell];
+      const moving = planner.moving?.bed === b.name && planner.moving.k === k;
+      const classes = ["planting", `kind-${plant.kind}`, active && k === planner.selected && "selected", active && planner.highlight.includes(k) && "lit", moving && "moving", sun && "over-sun"];
+      const g = svg("g", { class: classes.filter((c) => c).join(" ") });
+      const title = svg("title");
+      title.textContent = `${plant.name}${plant.perSquare > 1 ? `, ${plant.perSquare} in this square` : ""}`;
+      g.append(title, svg("rect", { x: x + 2, y: y + 2, width: s - 4, height: s - 4, rx: 6 }));
+      if (plant.perSquare > 1 && !sun) {
+        const n = Math.ceil(Math.sqrt(plant.perSquare));
+        for (let i = 0; i < plant.perSquare; i++) {
+          const [cx, cy] = [x + ((i % n) + 0.5) * (s / n), y + (Math.floor(i / n) + 0.5) * (s / n)];
+          g.append(svg("circle", { cx, cy, r: Math.max(1.5, s / n / 7), class: "seed" }));
+        }
+      }
+      const lines = tileLines(plant.name, s - 8, size > 1 ? 3 : 2, cell < 44 ? 10 : 11);
+      const text = svg("text", { x: x + s / 2, y: y + s / 2 - ((lines.length - 1) * 12) / 2 + 4, class: "label", "text-anchor": "middle", "font-size": cell < 44 ? 10 : 11 });
+      lines.forEach((line, i) => {
+        const span = svg("tspan", { x: x + s / 2, dy: i ? 12 : 0 });
+        span.textContent = line;
+        text.append(span);
+      });
+      g.append(text);
+      if (plant.perSquare > 1 && cell >= 40) {
+        const count = svg("text", { x: x + s - 6, y: y + s - 6, class: "count", "text-anchor": "end" });
+        count.textContent = `×${plant.perSquare}`;
+        g.append(count);
+      }
+      if (warned.has(k)) {
+        const badge = svg("text", { x: x + s - 6, y: y + 15, class: "badge", "text-anchor": "end" });
+        badge.textContent = "⚠";
+        g.append(badge);
+      }
+      root.append(g);
     });
-    g.append(text);
-    if (plant.perSquare > 1 && cell >= 40) {
-      const count = svg("text", { x: x + s - 6, y: y + s - 6, class: "count", "text-anchor": "end" });
-      count.textContent = `×${plant.perSquare}`;
-      g.append(count);
-    }
-    if (warned.has(k)) {
-      const badge = svg("text", { x: x + s - 6, y: y + 15, class: "badge", "text-anchor": "end" });
-      badge.textContent = "⚠";
-      g.append(badge);
-    }
-    root.append(g);
   });
   // Where a dragged or moved plant would go, and the keyboard's square.
-  if (planner.ghost) {
-    const ghost = planner.ghost;
-    const size = ghost.size;
-    const [a, b] = [toScreen(L, ghost.x, ghost.y), toScreen(L, ghost.x + size - 1, ghost.y + size - 1)];
-    const fits = ghost.x >= 0 && ghost.y >= 0 && ghost.x + size <= bed.w && ghost.y + size <= bed.d;
-    root.append(svg("rect", { x: Math.min(a[0], b[0]) * cell + 1, y: Math.min(a[1], b[1]) * cell + 1, width: size * cell - 2, height: size * cell - 2, rx: 6, class: `ghost${fits ? "" : " misfit"}` }));
+  const ghost = planner.ghost;
+  const there = ghost && L.beds.find((b) => b.bed.name === ghost.bed)?.bed;
+  if (ghost && there) {
+    const fits = ghost.x >= 0 && ghost.y >= 0 && ghost.x + ghost.size <= there.w && ghost.y + ghost.size <= there.d;
+    const r = squaresRect(L, there.name, ghost.x, ghost.y, ghost.size);
+    root.append(svg("rect", { x: r.x + 1, y: r.y + 1, width: r.width - 2, height: r.height - 2, rx: 6, class: `ghost${fits ? "" : " misfit"}` }));
   }
   if (document.activeElement === root) {
-    const [col, row] = toScreen(L, ...planner.cursor);
-    root.append(svg("rect", { x: col * cell + 1, y: row * cell + 1, width: cell - 2, height: cell - 2, class: "cursor" }));
+    const r = squaresRect(L, bed.name, ...planner.cursor);
+    root.append(svg("rect", { x: r.x + 1, y: r.y + 1, width: cell - 2, height: cell - 2, class: "cursor" }));
   }
-  renderSunKey(sun != null || (planner.showSun && planner.sun.get(bed.name) === "working"));
+  renderSunKey(planner.showSun);
 }
 
 // The tile's name in lines that fit its width, each word whole but a long one cut short.
@@ -652,8 +726,7 @@ function tileLines(name, width, most, size) {
 /** @param {boolean} sun */
 function renderSunKey(sun) {
   const planner = state.planner;
-  const bed = currentBed();
-  const working = bed && planner.sun.get(bed.name) === "working";
+  const working = shownBeds().some((b) => !sunHours(b, planner.sunMonth)); // worked out a bed at a time
   const kinds = el("ul", { class: "coverage-key", "aria-label": "Kinds of plants" },
     ...GARDEN_KINDS.slice(1).map(([kind, label]) => el("li", { class: `kind-${kind}` }, el("span", { class: "swatch" }), label)));
   /** @type {HTMLElement[]} */
@@ -670,15 +743,14 @@ function renderSunKey(sun) {
 
 // --- Planting: by pointer, a click, tap or drag, and by keyboard
 
-/** @param {PointerEvent} event @returns {[number, number] | null} */
+// The bed and square under the pointer, or null between the beds or off them.
+/** @param {PointerEvent} event */
 function squareAt(event) {
-  const bed = currentBed();
-  if (!bed) return null;
-  const L = bedLayout(bed);
+  if (!currentBed()) return null;
+  const L = bedLayout();
   const box = state.planner.svg.getBoundingClientRect();
-  const [col, row] = [Math.floor((event.clientX - box.left - 2) / L.cell), Math.floor((event.clientY - box.top - 2) / L.cell)];
-  if (col < 0 || row < 0 || col >= L.cols || row >= L.rows) return null;
-  return fromScreen(L, col, row);
+  const [px, py] = fromScreen(L, event.clientX - box.left - 2, event.clientY - box.top - 2);
+  return plotSquare(L, px, py);
 }
 
 /** @param {Planting[]} plantings @param {number} x @param {number} y */
@@ -692,32 +764,37 @@ function plantingAt(plantings, x, y) {
 /** @param {PointerEvent} event */
 function bedPointerDown(event) {
   const planner = state.planner;
-  const bed = currentBed();
-  const at = squareAt(event);
-  if (!bed || !at || event.button !== 0) return;
-  const plantings = plantingsOf();
-  planner.cursor = at;
+  const hit = squareAt(event);
+  if (!hit || event.button !== 0) return;
   // Focused by hand, and the press's own default left out: drawing the bed again takes the square pressed out from
   // under it, and the browser, finding it gone, would move the focus off the bed. That keeps a drag from selecting
   // text too.
   event.preventDefault();
   planner.svg.focus({ preventScroll: true });
-  if (planner.moving != null) {
-    movePlanting(planner.moving, at[0], at[1]);
+  if (planner.moving) {
+    movePlanting(planner.moving, hit.bed, ...hit.at);
     return;
   }
-  const k = plantingAt(plantings, ...at);
+  // A press in another of the beds drawn makes it the one shown.
+  if (hit.bed !== planner.bed) {
+    pickBed(hit.bed);
+    renderPlanner();
+  }
+  planner.cursor = hit.at;
+  const plantings = plantingsOf();
+  const k = plantingAt(plantings, ...hit.at);
   if (planner.brush) {
-    // Planting or taking out, here and wherever the pointer's dragged to before it lets go, as one step to undo.
+    // Planting or taking out, here and wherever the pointer's dragged to before it lets go, in any of the beds drawn,
+    // as one step to undo.
     planner.svg.setPointerCapture(event.pointerId);
-    planner.drag = { x: event.clientX, y: event.clientY, at: -1, dx: 0, dy: 0, moved: false, paint: planner.brush, painted: new Set(), changed: false, before: plantings };
-    paint(at);
+    planner.drag = { x: event.clientX, y: event.clientY, from: hit.bed, at: -1, dx: 0, dy: 0, moved: false, paint: planner.brush, painted: new Set(), before: new Map() };
+    paint(hit);
     return;
   }
   planner.selected = k >= 0 ? k : null;
   if (k >= 0 && event.pointerType !== "touch") {
     planner.svg.setPointerCapture(event.pointerId);
-    planner.drag = { x: event.clientX, y: event.clientY, at: k, dx: at[0] - plantings[k].x, dy: at[1] - plantings[k].y, moved: false, paint: null, painted: new Set(), changed: false, before: plantings };
+    planner.drag = { x: event.clientX, y: event.clientY, from: hit.bed, at: k, dx: hit.at[0] - plantings[k].x, dy: hit.at[1] - plantings[k].y, moved: false, paint: null, painted: new Set(), before: new Map() };
   }
   renderCard();
   drawBed();
@@ -728,23 +805,23 @@ function bedPointerDown(event) {
 function bedPointerMove(event) {
   const planner = state.planner;
   const drag = planner.drag;
-  const at = squareAt(event);
+  const hit = squareAt(event);
   if (!drag) {
-    if (planner.moving != null && at) {
-      planner.ghost = { x: at[0], y: at[1], size: plantOf(plantingsOf()[planner.moving].plant).size };
+    if (planner.moving && hit) {
+      planner.ghost = { bed: hit.bed, x: hit.at[0], y: hit.at[1], size: movingPlant(planner.moving).size };
       drawBed();
     }
     return;
   }
-  if (!at) return;
+  if (!hit) return;
   if (drag.paint) {
-    paint(at);
+    paint(hit);
     return;
   }
   if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
   drag.moved = true;
-  const p = plantingsOf()[drag.at];
-  planner.ghost = { x: at[0] - drag.dx, y: at[1] - drag.dy, size: plantOf(p.plant).size };
+  const p = plantingsOf(drag.from)[drag.at];
+  planner.ghost = { bed: hit.bed, x: hit.at[0] - drag.dx, y: hit.at[1] - drag.dy, size: plantOf(p.plant).size };
   drawBed();
 }
 
@@ -754,48 +831,50 @@ function bedPointerUp(event) {
   const drag = planner.drag;
   planner.drag = null;
   if (!drag) return;
-  const bed = /** @type {Bed} */ (currentBed());
   if (drag.paint) {
-    // The step to undo is from before the drag began.
-    if (drag.changed) pushUndo(bed.name, drag.before);
-    saveBed(bed.name);
+    // The step to undo is from before the drag began, in each bed it changed.
+    if (drag.before.size) pushUndo([...drag.before].map(([bed, before]) => ({ bed, before })));
+    for (const bed of drag.before.keys()) saveBed(bed);
     renderPlanner();
     return;
   }
-  const at = squareAt(event);
+  const hit = squareAt(event);
   planner.ghost = null;
-  if (drag.moved && at) movePlanting(drag.at, at[0] - drag.dx, at[1] - drag.dy);
+  if (drag.moved && hit) movePlanting({ bed: drag.from, k: drag.at }, hit.bed, hit.at[0] - drag.dx, hit.at[1] - drag.dy);
   else drawBed();
 }
 
-// The brush applied at a square while painting: a plant planted there, or what's there taken out.
-/** @param {[number, number]} at */
-function paint([x, y]) {
+// The brush applied at a square of a bed while painting: a plant planted there, or what's there taken out.
+/** @param {{bed: string, at: [number, number]}} hit */
+function paint({ bed: name, at: [x, y] }) {
   const planner = state.planner;
   const drag = /** @type {NonNullable<Planner["drag"]>} */ (planner.drag);
-  const bed = /** @type {Bed} */ (currentBed());
-  const key = `${x},${y}`;
+  const bed = /** @type {Bed} */ (bedNamed(name));
+  const key = `${name}:${x},${y}`;
   if (drag.painted.has(key)) return;
   drag.painted.add(key);
-  const plantings = plantingsOf();
+  const plantings = plantingsOf(name);
+  /** @param {Planting[]} next */
+  const change = (next) => {
+    if (!drag.before.has(name)) drag.before.set(name, plantings);
+    setPlantings(name, next);
+  };
   if (drag.paint === "remove") {
     const k = plantingAt(plantings, x, y);
     if (k < 0) return;
     say(`Took out ${plantOf(plantings[k].plant).name}.`);
-    setPlantings(bed.name, plantings.filter((_, i) => i !== k));
-    drag.changed = true;
+    change(plantings.filter((_, i) => i !== k));
   } else {
     const plant = plantOf(/** @type {string} */ (drag.paint));
     const size = plant.size;
     const [px, py] = [Math.min(x, bed.w - size), Math.min(y, bed.d - size)];
-    if (px < 0 || py < 0) return say(`${plant.name} takes ${size} × ${size} ft, more than this bed has.`);
+    if (px < 0 || py < 0) return say(`${plant.name} takes ${size} × ${size} ft, more than ${name} has.`);
     // A big plant painted again where it already is leaves it; else it takes the squares, whatever was in them.
     if (plantings.some((p) => p.plant === plant.id && p.x === px && p.y === py)) return;
     const kept = plantings.filter((p) => !overlaps(p, { plant: plant.id, x: px, y: py }));
-    for (let dx = 0; dx < size; dx++) for (let dy = 0; dy < size; dy++) drag.painted.add(`${px + dx},${py + dy}`);
+    for (let dx = 0; dx < size; dx++) for (let dy = 0; dy < size; dy++) drag.painted.add(`${name}:${px + dx},${py + dy}`);
     say(`Planted ${plant.name}${plant.perSquare > 1 ? `, ${plant.perSquare} to the square foot` : ""}.`);
-    setPlantings(bed.name, [...kept, { plant: plant.id, x: px, y: py }]);
-    drag.changed = true;
+    change([...kept, { plant: plant.id, x: px, y: py }]);
   }
   drawBed();
 }
@@ -806,13 +885,19 @@ function overlaps(a, b) {
   return a.x < b.x + sb && b.x < a.x + sa && a.y < b.y + sb && b.y < a.y + sa;
 }
 
-// A planting moved so its back-left square is at x, y, taking those squares, if it fits in the bed.
-/** @param {number} k @param {number} x @param {number} y */
-function movePlanting(k, x, y) {
+/** @param {{bed: string, k: number}} moving */
+function movingPlant({ bed, k }) {
+  return plantOf(plantingsOf(bed)[k].plant);
+}
+
+// A planting moved so its back-left square is at x, y of a bed, its own or another drawn with it, taking those
+// squares, if it fits there.
+/** @param {{bed: string, k: number}} from @param {string} to @param {number} x @param {number} y */
+function movePlanting(from, to, x, y) {
   const planner = state.planner;
-  const bed = /** @type {Bed} */ (currentBed());
-  const plantings = plantingsOf();
-  const p = plantings[k];
+  const bed = /** @type {Bed} */ (bedNamed(to));
+  const source = plantingsOf(from.bed);
+  const p = source[from.k];
   const plant = plantOf(p.plant);
   planner.moving = null;
   planner.ghost = null;
@@ -821,11 +906,20 @@ function movePlanting(k, x, y) {
     drawBed();
     return;
   }
-  if (x === p.x && y === p.y) return drawBed();
+  if (to === from.bed && x === p.x && y === p.y) return drawBed();
   const moved = { ...p, x, y };
-  const kept = plantings.filter((q, i) => i !== k && !overlaps(q, moved));
+  if (to === from.bed) {
+    const kept = source.filter((q, i) => i !== from.k && !overlaps(q, moved));
+    planner.selected = kept.length;
+    commit(to, [...kept, moved], `Moved ${plant.name}.`);
+    return;
+  }
+  // To another bed: out of the one, into the other, as one step to undo.
+  const kept = plantingsOf(to).filter((q) => !overlaps(q, moved));
+  pickBed(to);
   planner.selected = kept.length;
-  commit(bed.name, [...kept, moved], `Moved ${plant.name}.`);
+  planner.cursor = [x, y];
+  commitBeds([[from.bed, source.filter((_, i) => i !== from.k)], [to, [...kept, moved]]], `Moved ${plant.name} to ${to}.`);
 }
 
 /** @param {KeyboardEvent} event */
@@ -833,29 +927,42 @@ function bedKey(event) {
   const planner = state.planner;
   const bed = currentBed();
   if (!bed) return;
-  const L = bedLayout(bed);
-  const plantings = plantingsOf();
-  const [col, row] = toScreen(L, ...planner.cursor);
   const steps = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   const step = steps[/** @type {keyof typeof steps} */ (event.key)];
   if (step) {
     event.preventDefault();
-    const [c, r] = [Math.min(L.cols - 1, Math.max(0, col + step[0])), Math.min(L.rows - 1, Math.max(0, row + step[1]))];
-    planner.cursor = fromScreen(L, c, r);
+    // A step on the screen, as a step on the plan; off the bed's edge, on into the next bed that way, if one's near.
+    const L = bedLayout();
+    const [sx, sy] = L.turned ? [step[1], -step[0]] : step;
+    const { ox, oy } = /** @type {BedLayout["beds"][number]} */ (L.beds.find((b) => b.bed.name === bed.name));
+    const [x, y] = [planner.cursor[0] + sx, planner.cursor[1] + sy];
+    let next = x >= 0 && y >= 0 && x < bed.w && y < bed.d ? { bed: bed.name, at: /** @type {[number, number]} */ ([x, y]) } : null;
+    for (let n = 0; !next && n <= GARDEN_TOGETHER + 1; n++) {
+      const hit = plotSquare(L, ox + x + 0.5 + n * sx, oy + y + 0.5 + n * sy);
+      if (hit && hit.bed !== bed.name) next = hit;
+    }
+    if (!next) return;
+    const crossed = next.bed !== bed.name;
+    if (crossed) pickBed(next.bed);
+    planner.cursor = next.at;
+    const plantings = plantingsOf();
     const k = plantingAt(plantings, ...planner.cursor);
-    if (planner.moving != null) planner.ghost = { x: planner.cursor[0], y: planner.cursor[1], size: plantOf(plantings[planner.moving].plant).size };
-    say(k >= 0 ? plantOf(plantings[k].plant).name : `Empty square, ${planner.cursor[0] + 1} along and ${planner.cursor[1] + 1} from the back`);
-    drawBed();
+    if (planner.moving) planner.ghost = { bed: next.bed, x: planner.cursor[0], y: planner.cursor[1], size: movingPlant(planner.moving).size };
+    const said = k >= 0 ? plantOf(plantings[k].plant).name : `Empty square, ${planner.cursor[0] + 1} along and ${planner.cursor[1] + 1} from the back`;
+    if (crossed) renderPlanner();
+    else drawBed();
+    say(crossed ? `${next.bed}: ${said}` : said);
   } else if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
+    const plantings = plantingsOf();
     const k = plantingAt(plantings, ...planner.cursor);
-    if (planner.moving != null) movePlanting(planner.moving, ...planner.cursor);
+    if (planner.moving) movePlanting(planner.moving, bed.name, ...planner.cursor);
     else if (planner.brush) {
-      const drag = { x: 0, y: 0, at: -1, dx: 0, dy: 0, moved: false, paint: planner.brush, painted: new Set(), changed: false, before: plantings };
+      const drag = { x: 0, y: 0, from: bed.name, at: -1, dx: 0, dy: 0, moved: false, paint: planner.brush, painted: new Set(), before: new Map() };
       planner.drag = drag;
-      paint(planner.cursor);
+      paint({ bed: bed.name, at: planner.cursor });
       planner.drag = null;
-      if (drag.changed) pushUndo(bed.name, plantings);
+      if (drag.before.size) pushUndo([{ bed: bed.name, before: plantings }]);
       saveBed(bed.name);
       renderPlanner();
     } else {
@@ -866,12 +973,13 @@ function bedKey(event) {
     }
   } else if (event.key === "Delete" || event.key === "Backspace") {
     event.preventDefault();
+    const plantings = plantingsOf();
     const k = plantingAt(plantings, ...planner.cursor);
     if (k >= 0) commit(bed.name, plantings.filter((_, i) => i !== k), `Took out ${plantOf(plantings[k].plant).name}.`);
   } else if ((event.key === "m" || event.key === "M") && planner.selected != null) {
     startMove(planner.selected);
   } else if (event.key === "Escape") {
-    if (planner.moving != null || planner.brush || planner.selected != null) event.preventDefault();
+    if (planner.moving || planner.brush || planner.selected != null) event.preventDefault();
     planner.moving = null;
     planner.ghost = null;
     if (planner.brush) setBrush(null);
@@ -886,15 +994,17 @@ function bedKey(event) {
   }
 }
 
+// The planting picked in the bed shown, to be moved: to another square of it, or of a bed drawn with it.
 /** @param {number} k */
 function startMove(k) {
   const planner = state.planner;
+  const bed = /** @type {string} */ (planner.bed);
   const p = plantingsOf()[k];
-  planner.moving = k;
+  planner.moving = { bed, k };
   planner.brush = null;
-  planner.ghost = { x: p.x, y: p.y, size: plantOf(p.plant).size };
+  planner.ghost = { bed, x: p.x, y: p.y, size: plantOf(p.plant).size };
   planner.cursor = [p.x, p.y];
-  say(`Moving ${plantOf(p.plant).name}: click, tap or press Enter on the square for its back-left corner, or Escape to leave it.`);
+  say(`Moving ${plantOf(p.plant).name}: click, tap or press Enter on the square for its back-left corner${shownBeds().length > 1 ? ", in this bed or the other" : ""}, or Escape to leave it.`);
   renderPalette();
   renderTools();
   planner.svg.focus();
@@ -908,32 +1018,45 @@ function setPlantings(bed, plantings) {
   state.planner.plans = { ...state.planner.plans, [bed]: plantings };
 }
 
-/** @param {string} bed @param {Planting[]} before */
-function pushUndo(bed, before) {
-  const undo = (state.planner.undo[bed] ??= []);
-  undo.push(before);
+// A step to undo: each bed it changes, with its plantings as they were before.
+/** @param {{bed: string, before: Planting[]}[]} step */
+function pushUndo(step) {
+  const undo = state.planner.undo;
+  undo.push(step);
   if (undo.length > GARDEN_UNDO) undo.shift();
 }
 
-// A bed's plantings changed as one step to undo, saved, and said.
-/** @param {string} bed @param {Planting[]} plantings @param {string} said */
-function commit(bed, plantings, said) {
-  pushUndo(bed, plantingsOf(bed));
-  setPlantings(bed, plantings);
-  if (state.planner.selected != null && state.planner.selected >= plantings.length) state.planner.selected = null;
-  saveBed(bed);
+// Beds' plantings changed as one step to undo, saved, and said.
+/** @param {[string, Planting[]][]} changes @param {string} said */
+function commitBeds(changes, said) {
+  const planner = state.planner;
+  pushUndo(changes.map(([bed]) => ({ bed, before: plantingsOf(bed) })));
+  for (const [bed, plantings] of changes) {
+    setPlantings(bed, plantings);
+    saveBed(bed);
+  }
+  if (planner.selected != null && planner.selected >= plantingsOf().length) planner.selected = null;
   say(said);
   renderPlanner();
 }
 
+/** @param {string} bed @param {Planting[]} plantings @param {string} said */
+function commit(bed, plantings, said) {
+  commitBeds([[bed, plantings]], said);
+}
+
+// The last step undone, in whichever beds it changed; one not drawn now is shown, so what's undone is seen.
 function undoBed() {
   const planner = state.planner;
-  const bed = planner.bed;
-  const before = bed && planner.undo[bed]?.pop();
-  if (!bed || !before) return;
-  setPlantings(bed, before);
+  const step = planner.undo.pop();
+  if (!step) return;
+  for (const { bed, before } of step) {
+    setPlantings(bed, before);
+    saveBed(bed);
+  }
   planner.selected = planner.moving = null;
-  saveBed(bed);
+  planner.ghost = null;
+  if (!shownBeds().some((b) => step.some((s) => s.bed === b.name)) && bedNamed(step[0].bed)) pickBed(step[0].bed);
   say("Undone.");
   renderPlanner();
 }
@@ -1103,7 +1226,7 @@ function bedNotes(bed, plantings) {
   /** @type {Map<string, GardenNote & {least: number}>} */
   const short = new Map();
   plantings.forEach((p, k) => {
-    const hours = sunAt(p);
+    const hours = sunAt(p, bed);
     const plant = plantOf(p.plant);
     if (hours == null || hours >= plant.sun[0]) return;
     const note = short.get(p.plant) ?? { level: "warn", text: "", at: [], least: hours };
@@ -1198,6 +1321,7 @@ function renderNotes() {
   const planner = state.planner;
   const bed = currentBed();
   if (!bed || !planner.plants.size) return planner.notes.replaceChildren();
+  planner.notesTitle.textContent = shownBeds().length > 1 ? bed.name : "This bed";
   const plantings = plantingsOf();
   const used = plantings.reduce((n, p) => n + plantOf(p.plant).size ** 2, 0);
   const food = [...new Set(plantings.filter((p) => plantOf(p.plant).food).map((p) => plantOf(p.plant).name))];
@@ -1308,10 +1432,10 @@ function sunHours(bed, month) {
   return sun && sun !== "working" ? sun[GARDEN_MONTHS.indexOf(month)] : null;
 }
 
-// The sun a planting gets, on average over its squares and the months it grows; null if it isn't worked out.
-/** @param {Planting} p */
-function sunAt(p) {
-  const bed = currentBed();
+// The sun a planting in a bed, the one shown unless said, gets, on average over its squares and the months it grows;
+// null if it isn't worked out.
+/** @param {Planting} p @param {Bed | null} [bed] */
+function sunAt(p, bed = currentBed()) {
   const plant = plantOf(p.plant);
   const sun = bed && state.planner.sun.get(bed.name);
   if (!bed || !sun || sun === "working") return null;
@@ -1340,21 +1464,22 @@ function growingMonths(p) {
   return p.perennial ? [4, 5, 6, 7, 8] : [5, 6, 7];
 }
 
-// The sun worked out for the bed shown, if it isn't yet: the scene built in each season, its trees in leaf or bare,
-// and from just over each square's soil, a ray toward the sun every GARDEN_STEP hours of each month's middle day,
-// counted as sun unless it hits something. A step at a time, so the page keeps going.
+// The sun worked out for the beds drawn, those it isn't yet, a bed at a time: the scene built in each season, its trees
+// in leaf or bare, and from just over each square's soil, a ray toward the sun every GARDEN_STEP hours of each month's
+// middle day, counted as sun unless it hits something. A step at a time, so the page keeps going.
 async function ensureSun() {
   const planner = state.planner;
-  const bed = currentBed();
   const site = state.gardenSite;
-  if (!bed || !site || !state.details) return;
+  if (!site || !state.details) return;
   const key = houseKey();
   if (planner.sunFor !== key) {
     planner.sun = new Map();
     planner.casters = new Map();
     planner.sunFor = key;
   }
-  if (planner.sun.has(bed.name)) return;
+  if ([...planner.sun.values()].includes("working")) return; // it goes on to the next bed when it's done
+  const bed = shownBeds().find((b) => !planner.sun.has(b.name));
+  if (!bed) return;
   planner.sun.set(bed.name, "working");
   drawBed();
   await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1404,12 +1529,12 @@ async function ensureSun() {
     }
   }
   planner.sun.set(bed.name, hours);
-  if (planner.bed === bed.name) {
+  if (shownBeds().some((b) => b.name === bed.name)) {
     drawBed();
     renderCard();
     renderNotes();
   }
-  ensureSun(); // the bed shown now, if it's another
+  ensureSun(); // the next bed drawn, if there's one still to do
 }
 
 // The sun's direction on the plan, x, y and z, at an hour angle from solar noon (radians), or null when it's down:
@@ -1610,7 +1735,7 @@ function calendarRows() {
   const planner = state.planner;
   const site = state.gardenSite;
   if (!site || !planner.plants.size) return [];
-  const ids = [...new Set(plantingsOf().map((p) => p.plant))];
+  const ids = [...new Set(shownBeds().flatMap((b) => plantingsOf(b.name)).map((p) => p.plant))]; // in the beds drawn
   if (planner.brush && planner.brush !== "remove" && !ids.includes(planner.brush)) ids.push(planner.brush);
   const year = seasonYear(site);
   const first = (/** @type {string} */ id) => {
